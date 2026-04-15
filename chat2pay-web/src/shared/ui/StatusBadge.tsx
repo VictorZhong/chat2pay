@@ -24,12 +24,24 @@ export function StatusBadge({ value }: { value: string }) {
   return (
     <span
       className={cn(
-        'brand-chip',
-        tone === 'positive' && 'border-emerald-600 text-emerald-700',
-        tone === 'danger' && 'border-red-700 text-red-700',
-        tone === 'attention' && 'border-amber-600 text-amber-700',
+        'brand-status-badge',
+        value === 'ACTIVE' && 'border-brand-black bg-brand-black text-white',
+        tone === 'positive' && 'border-emerald-700 bg-emerald-50 text-emerald-800',
+        tone === 'danger' && 'border-red-700 bg-red-50 text-red-800',
+        tone === 'attention' && 'border-amber-600 bg-amber-50 text-amber-800',
+        tone === 'neutral' && value !== 'ACTIVE' && 'border-brand-line bg-white text-brand-charcoal',
       )}
     >
+      <span
+        className={cn(
+          'brand-status-indicator',
+          value === 'ACTIVE' && 'bg-brand-red animate-pulse text-brand-red',
+          tone === 'positive' && 'bg-emerald-700 text-emerald-700',
+          tone === 'danger' && 'bg-red-700 text-red-700',
+          tone === 'attention' && 'bg-amber-600 text-amber-600',
+          tone === 'neutral' && value !== 'ACTIVE' && 'bg-brand-black text-brand-black',
+        )}
+      />
       {value.replaceAll('_', ' ')}
     </span>
   );

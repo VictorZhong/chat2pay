@@ -11,7 +11,7 @@ import { EmptyStatePanel } from '@/shared/ui/EmptyStatePanel';
 import { BrandButton } from '@/shared/ui/BrandButton';
 import { BrandLoadingPanel } from '@/shared/ui/BrandLoadingPanel';
 import { StatusBadge } from '@/shared/ui/StatusBadge';
-import { formatWorkflowState } from '@/shared/lib/format';
+import { WorkflowOverview } from '@/shared/ui/WorkflowOverview';
 import { INTERACTION_DELAY_MS } from '@/shared/config/env';
 import { wait } from '@/shared/lib/time';
 
@@ -165,7 +165,10 @@ export function ChatWorkspacePage() {
           {activeSession ? (
             <div className="flex flex-wrap items-center gap-3">
               <StatusBadge value={activeSession.status} />
-              <span className="brand-chip">{formatWorkflowState(activeSession.workflowState)}</span>
+              <WorkflowOverview
+                workflowState={activeSession.workflowState}
+                sessionStatus={activeSession.status}
+              />
             </div>
           ) : null}
         </header>

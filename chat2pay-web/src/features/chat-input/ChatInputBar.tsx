@@ -31,7 +31,7 @@ export function ChatInputBar({
             Message
           </label>
           <textarea
-            className="brand-textarea"
+            className="brand-textarea brand-composer-textarea"
             placeholder="Type a transfer instruction, for example: Pay Tom 5000 HKD."
             value={value}
             onChange={(event) => setValue(event.target.value)}
@@ -53,6 +53,9 @@ export function ChatInputBar({
           >
             {busy ? 'Awaiting Response' : 'Send'}
           </BrandButton>
+          <p className="text-[11px] uppercase tracking-[0.12em] text-brand-gray">
+            Enter sends. Shift+Enter adds a new line.
+          </p>
         </div>
       </div>
     </div>

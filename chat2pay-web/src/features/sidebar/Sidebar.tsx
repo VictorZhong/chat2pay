@@ -1,10 +1,22 @@
+import {
+  BankOutlined,
+  HistoryOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
+  PlusOutlined,
+  TeamOutlined,
+} from '@ant-design/icons';
 import type { CurrentUserContext, ChatSessionSummary } from '@/shared/api/contracts';
 import { BrandButton } from '@/shared/ui/BrandButton';
 import { ChatHistoryList } from '@/features/session-history/ChatHistoryList';
 import { UserMenu } from '@/features/user-menu/UserMenu';
 import { cn } from '@/shared/lib/cn';
 
-const PLACEHOLDERS = ['My Account', 'My Payee', 'Transaction History'];
+const PLACEHOLDERS = [
+  { label: 'My Account', icon: BankOutlined },
+  { label: 'My Payee', icon: TeamOutlined },
+  { label: 'Transaction History', icon: HistoryOutlined },
+];
 
 export function Sidebar({
   user,
@@ -47,24 +59,34 @@ export function Sidebar({
             onClick={onToggleCollapsed}
             aria-label="Toggle sidebar"
           >
-            {collapsed ? '>' : '<'}
+            {collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
           </button>
         </div>
         <BrandButton fullWidth onClick={onNewChat}>
-          {collapsed ? '+' : '+ New Chat'}
+          <PlusOutlined />
+          {collapsed ? '' : 'New Chat'}
         </BrandButton>
       </div>
 
       <div className="border-b border-brand-line px-4 py-5">
         <div className="space-y-2">
-          {PLACEHOLDERS.map((item) => (
+          {PLACEHOLDERS.map((item) => {
+            const Icon = item.icon;
+
+            return (
             <div
-              key={item}
-              className="border border-dashed border-brand-line bg-white px-4 py-3 text-sm text-brand-gray"
+              key={item.label}
+              className={cn(
+                'flex items-center gap-3 border border-dashed border-brand-line bg-white px-4 py-3 text-sm text-brand-gray',
+                collapsed && 'justify-center px-0',
+              )}
+              title={collapsed ? item.label : undefined}
             >
-              {collapsed ? item.slice(0, 2) : item}
+              <Icon className="text-base text-brand-black" />
+              {!collapsed ? <span>{item.label}</span> : null}
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -85,7 +107,7 @@ export function Sidebar({
         </div>
       </div>
 
-      <div className="mt-auto border-t border-brand-line p-4">
+      <div className="mt-auto border-t border-brand-black bg-[linear-gradient(180deg,#141414_0%,#202020_100%)] p-4">
         <UserMenu user={user} collapsed={collapsed} onLogout={onLogout} />
       </div>
     </aside>
