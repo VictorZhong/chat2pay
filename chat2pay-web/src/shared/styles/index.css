@@ -26,7 +26,8 @@ body,
 body {
   margin: 0;
   background:
-    linear-gradient(180deg, rgba(219, 0, 17, 0.04) 0%, rgba(219, 0, 17, 0) 24%),
+    linear-gradient(180deg, rgba(219, 0, 17, 0.05) 0%, rgba(219, 0, 17, 0) 22%),
+    linear-gradient(135deg, rgba(17, 17, 17, 0.03) 0%, rgba(17, 17, 17, 0) 38%),
     linear-gradient(90deg, #ffffff 0%, #f8f8f8 100%);
   color: var(--brand-black);
   font-family: var(--font-sans);
@@ -62,15 +63,26 @@ select {
   inset: 0;
   pointer-events: none;
   background:
-    linear-gradient(135deg, rgba(219, 0, 17, 0.08), transparent 32%),
+    linear-gradient(135deg, rgba(219, 0, 17, 0.09), transparent 32%),
     radial-gradient(circle at top right, rgba(17, 17, 17, 0.1), transparent 28%);
 }
 
 .brand-panel {
+  position: relative;
   border: 1px solid var(--brand-line);
   border-radius: 0;
   background: rgba(255, 255, 255, 0.94);
   box-shadow: 0 18px 40px rgba(17, 17, 17, 0.08);
+}
+
+.brand-panel::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto auto 0;
+  height: 2px;
+  width: 72px;
+  background: linear-gradient(90deg, var(--brand-red), rgba(219, 0, 17, 0));
+  pointer-events: none;
 }
 
 .brand-button {
@@ -87,6 +99,7 @@ select {
   font-size: 14px;
   font-weight: 600;
   letter-spacing: 0.02em;
+  text-transform: uppercase;
   transition:
     background-color 140ms ease,
     border-color 140ms ease,
@@ -102,6 +115,16 @@ select {
 .brand-button:disabled {
   cursor: not-allowed;
   opacity: 0.45;
+}
+
+.brand-button-loader {
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 999px;
+  opacity: 0.72;
+  animation: brand-spin 0.9s linear infinite;
 }
 
 .brand-button-secondary {
@@ -135,6 +158,14 @@ select {
   resize: vertical;
 }
 
+.brand-input:disabled,
+.brand-textarea:disabled,
+.brand-select:disabled {
+  cursor: not-allowed;
+  background: #f4f4f4;
+  color: #8a8a8a;
+}
+
 .brand-input:focus,
 .brand-textarea:focus,
 .brand-select:focus {
@@ -157,6 +188,37 @@ select {
   letter-spacing: 0.06em;
 }
 
+.brand-loading-track {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.brand-loading-track-compact {
+  gap: 4px;
+}
+
+.brand-loading-bar {
+  width: 12px;
+  height: 12px;
+  background: var(--brand-red);
+  animation: brand-pulse-bars 1s ease-in-out infinite;
+}
+
+.brand-loading-bar:nth-child(2) {
+  animation-delay: 0.16s;
+}
+
+.brand-loading-bar:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
+.brand-message-surface {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.98)),
+    linear-gradient(90deg, rgba(219, 0, 17, 0.02), transparent 18%);
+}
+
 .brand-scrollbar {
   scrollbar-width: thin;
   scrollbar-color: #b8b8b8 transparent;
@@ -171,4 +233,23 @@ select {
   border-radius: 999px;
   background-color: #b8b8b8;
   background-clip: padding-box;
+}
+
+@keyframes brand-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes brand-pulse-bars {
+  0%,
+  100% {
+    transform: scaleY(0.55);
+    opacity: 0.35;
+  }
+
+  50% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
 }

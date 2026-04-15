@@ -8,10 +8,12 @@ export function MessageRenderer({
   message,
   assistantName,
   onSubmitUiEvent,
+  disabled = false,
 }: {
   message: ChatMessage;
   assistantName: string;
   onSubmitUiEvent: (request: UiEventRequest) => void;
+  disabled?: boolean;
 }) {
   const isUser = message.role === 'USER';
 
@@ -41,6 +43,7 @@ export function MessageRenderer({
             messageId={message.messageId}
             block={block}
             onSubmit={onSubmitUiEvent}
+            disabled={disabled}
           />
         ))}
       </div>

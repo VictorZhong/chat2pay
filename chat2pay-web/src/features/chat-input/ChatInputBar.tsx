@@ -45,12 +45,14 @@ export function ChatInputBar({
           />
         </div>
         <div className="flex flex-col gap-3">
-          <BrandButton className="min-w-[164px]" onClick={() => void handleSend()} disabled={disabled || busy}>
-            {busy ? 'Sending...' : 'Send'}
+          <BrandButton
+            className="min-w-[164px]"
+            onClick={() => void handleSend()}
+            disabled={disabled || busy}
+            loading={busy}
+          >
+            {busy ? 'Awaiting Response' : 'Send'}
           </BrandButton>
-          <p className="max-w-[164px] text-xs leading-5 text-brand-gray">
-            Press Enter to send. Sessions marked completed or cancelled are read-only.
-          </p>
         </div>
       </div>
     </div>

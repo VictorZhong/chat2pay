@@ -7,7 +7,7 @@ describe('mockServer transfer flow', () => {
   });
 
   it('creates a new session and completes a transfer through UI events', async () => {
-    const user = await profileLogin('profile_iris');
+    const user = await profileLogin('profile_victor');
     const created = await createChatSession(user.profileId);
     const sessionId = created.session.sessionId;
 

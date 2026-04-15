@@ -7,6 +7,7 @@ type BrandButtonProps = PropsWithChildren<
   ButtonHTMLAttributes<HTMLButtonElement> & {
     variant?: BrandButtonVariant;
     fullWidth?: boolean;
+    loading?: boolean;
   }
 >;
 
@@ -15,6 +16,7 @@ export function BrandButton({
   className,
   variant = 'primary',
   fullWidth = false,
+  loading = false,
   ...props
 }: BrandButtonProps) {
   return (
@@ -25,8 +27,10 @@ export function BrandButton({
         fullWidth && 'w-full',
         className,
       )}
+      aria-busy={loading}
       {...props}
     >
+      {loading ? <span className="brand-button-loader" aria-hidden="true" /> : null}
       {children}
     </button>
   );

@@ -800,10 +800,10 @@ function findSourceStage(record: MockSessionRecord, messageId: string, blockId: 
 function seedProfiles(): ProfileSummary[] {
   return [
     {
-      id: 'profile_iris',
+      id: 'profile_victor',
       code: 'HK_STAFF_001',
-      displayName: 'Iris Chen',
-      username: 'iris.chen',
+      displayName: 'Victor Zhong',
+      username: 'victor.zhong',
       avatarUrl: null,
       mockCustomerId: 'CUST0001',
       locale: 'en-HK',
@@ -888,7 +888,7 @@ function makeSeedSession(profileId: string, seed: 'proposal' | 'completed'): Moc
   };
 
   const messages: ChatMessage[] = [
-    buildAssistantMessage(sessionId, buildWelcomeBlocks('Iris Chen')),
+    buildAssistantMessage(sessionId, buildWelcomeBlocks('Victor Zhong')),
     buildUserTextMessage(sessionId, 'Pay Tom 5000 HKD'),
   ];
 
@@ -912,7 +912,7 @@ function createInitialDatabase(): MockDatabase {
   return {
     profiles,
     sessionsByProfile: {
-      profile_iris: [makeSeedSession('profile_iris', 'proposal'), makeSeedSession('profile_iris', 'completed')],
+      profile_victor: [makeSeedSession('profile_victor', 'proposal'), makeSeedSession('profile_victor', 'completed')],
       profile_tom: [],
       profile_sarah: [],
       profile_demo_a: [],

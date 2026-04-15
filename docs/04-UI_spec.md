@@ -77,8 +77,8 @@ The product is a desktop-oriented internal web application with:
 |                                                                                      |
 |  +-----------------------+   +-----------------------+   +-----------------------+   |
 |  | (avatar)              |   | (avatar)              |   | (avatar)              |   |
-|  | Iris Chen             |   | Tom Lee               |   | Sarah Wong            |   |
-|  | iris.chen             |   | tom.lee               |   | sarah.wong            |   |
+|  | Victor Zhong          |   | Tom Lee               |   | Sarah Wong            |   |
+|  | victor.zhong          |   | tom.lee               |   | sarah.wong            |   |
 |  | HK_STAFF_001          |   | HK_RETAIL_001         |   | SG_RETAIL_001         |   |
 |  | [ Enter ]             |   | [ Enter ]             |   | [ Enter ]             |   |
 |  +-----------------------+   +-----------------------+   +-----------------------+   |
@@ -108,7 +108,7 @@ The product is a desktop-oriented internal web application with:
 |---------------------------------------------------------------------------------------------------------------|
 | +------------------------------+  +--------------------------------------------------------------------------+ |
 | | [ + New Chat ]               |  | Assistant                                                                | |
-| |------------------------------|  | Hi Iris, I can help you transfer money, review recent payees, or       | |
+| |------------------------------|  | Hi Victor, I can help you transfer money, review recent payees, or     | |
 | | My Account        (disabled) |  | check transaction status. What would you like to do today?            | |
 | | My Payee          (disabled) |  |                                                                          | |
 | | Transaction History(disabled)|  | You                                                                      | |
@@ -128,8 +128,8 @@ The product is a desktop-oriented internal web application with:
 | |                              |  | [Type your message here...]                               [ Send ]      | |
 | |                              |  +--------------------------------------------------------------------------+ |
 | |------------------------------|                                                                             |
-| | (avatar) Iris Chen           |                                                                             |
-| | iris.chen                    |                                                                             |
+| | (avatar) Victor Zhong        |                                                                             |
+| | victor.zhong                 |                                                                             |
 | +------------------------------+                                                                             |
 +---------------------------------------------------------------------------------------------------------------+
 ```
@@ -221,8 +221,8 @@ The product is a desktop-oriented internal web application with:
 
 ```text
 +----------------------------------+
-| (avatar) Iris Chen               |
-| iris.chen                        |
+| (avatar) Victor Zhong            |
+| victor.zhong                     |
 |----------------------------------|
 | Logout                           |
 +----------------------------------+
@@ -240,7 +240,7 @@ The product is a desktop-oriented internal web application with:
 | Sidebar                                         | Existing Session: Transfer to Tom                           |
 |------------------------------------------------|--------------------------------------------------------------|
 | - New Chat                                      | Assistant                                                    |
-| - My Account                                    | Hi Iris, I can help with transfers.                          |
+| - My Account                                    | Hi Victor, I can help with transfers.                        |
 | - My Payee                                      |                                                              |
 | - Transaction History                           | You                                                          |
 | - Transfer to Tom     <-- selected              | Pay Tom 5000 HKD                                             |

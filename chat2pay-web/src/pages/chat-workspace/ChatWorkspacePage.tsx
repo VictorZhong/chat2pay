@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Spin } from 'antd';
 import { useNavigate, useParams } from 'react-router-dom';
-import type { UiEventRequest } from '@/shared/api/contracts';
+import type { ChatMessage, ContentBlock, UiEventRequest } from '@/shared/api/contracts';
 import { chat2payClient, queryKeys } from '@/shared/api/chat2payClient';
 import { useAuthStore } from '@/features/auth/useAuthStore';
 import { useSidebarStore } from '@/features/sidebar/useSidebarStore';
@@ -10,8 +9,55 @@ import { MessageList } from '@/features/message-renderer/MessageList';
 import { ChatInputBar } from '@/features/chat-input/ChatInputBar';
 import { EmptyStatePanel } from '@/shared/ui/EmptyStatePanel';
 import { BrandButton } from '@/shared/ui/BrandButton';
+import { BrandLoadingPanel } from '@/shared/ui/BrandLoadingPanel';
 import { StatusBadge } from '@/shared/ui/StatusBadge';
 import { formatWorkflowState } from '@/shared/lib/format';
+import { INTERACTION_DELAY_MS } from '@/shared/config/env';
+import { wait } from '@/shared/lib/time';
+
+function actionLabelFromSummaryBlock(block: ContentBlock | undefined, actionId: string) {
+  if (!block || block.type !== 'SUMMARY_CARD') {
+    return actionId;
+  }
+
+  const actions = Array.isArray(block.metadata?.actions) ? block.metadata.actions : [];
+  const matched = actions.find(
+    (item): item is { id: string; label: string } =>
+      typeof item === 'object' &&
+      item !== null &&
+      'id' in item &&
+      'label' in item &&
+      item.id === actionId &&
+      typeof item.label === 'string',
+  );
+
+  return matched?.label ?? actionId;
+}
+
+function derivePendingUiEventText(messages: ChatMessage[], payload: UiEventRequest) {
+  if (payload.eventType === 'SUBMIT_FORM') {
+    return 'Submitted transfer details';
+  }
+
+  const sourceMessage = messages.find((message) => message.messageId === payload.sourceMessageId);
+  const sourceBlock = sourceMessage?.contentBlocks?.find((block) => block.blockId === payload.sourceBlockId);
+  const selectedId = payload.selectedItemIds?.[0];
+
+  if (!selectedId) {
+    return 'Submitted action';
+  }
+
+  if (payload.eventType === 'CLICK_ACTION') {
+    return actionLabelFromSummaryBlock(sourceBlock, selectedId);
+  }
+
+  if (sourceBlock?.type === 'SELECTABLE_LIST') {
+    const item = sourceBlock.items.find((entry) => entry.itemId === selectedId);
+    return item ? `Selected ${item.label}` : 'Selected an option';
+  }
+
+  return 'Submitted action';
+}
 
 export function ChatWorkspacePage() {
   const navigate = useNavigate();
@@ -56,8 +102,10 @@ export function ChatWorkspacePage() {
   });
 
   const sendMessageMutation = useMutation({
-    mutationFn: (messageText: string) =>
-      chat2payClient.sendChatMessage(currentUser.profileId, sessionId ?? '', { messageText }),
+    mutationFn: async (messageText: string) => {
+      await wait(INTERACTION_DELAY_MS);
+      return chat2payClient.sendChatMessage(currentUser.profileId, sessionId ?? '', { messageText });
+    },
     onSuccess: async () => {
       if (sessionId) {
         await refreshCurrentSession(sessionId);
@@ -66,8 +114,10 @@ export function ChatWorkspacePage() {
   });
 
   const submitUiEventMutation = useMutation({
-    mutationFn: (payload: UiEventRequest) =>
-      chat2payClient.submitUiEvent(currentUser.profileId, sessionId ?? '', payload),
+    mutationFn: async (payload: UiEventRequest) => {
+      await wait(INTERACTION_DELAY_MS);
+      return chat2payClient.submitUiEvent(currentUser.profileId, sessionId ?? '', payload);
+    },
     onSuccess: async () => {
       if (sessionId) {
         await refreshCurrentSession(sessionId);
@@ -80,6 +130,12 @@ export function ChatWorkspacePage() {
   const messages = messagesQuery.data?.items ?? [];
   const busy = createSessionMutation.isPending || sendMessageMutation.isPending || submitUiEventMutation.isPending;
   const readOnly = !activeSession || activeSession.status !== 'ACTIVE';
+  const pendingUserText = sendMessageMutation.isPending
+    ? sendMessageMutation.variables
+    : submitUiEventMutation.isPending
+      ? derivePendingUiEventText(messages, submitUiEventMutation.variables)
+      : undefined;
+  const showAssistantLoading = sendMessageMutation.isPending || submitUiEventMutation.isPending;
 
   return (
     <main className="brand-shell flex min-h-screen flex-col gap-5 bg-transparent p-4 lg:h-screen lg:flex-row lg:p-5">
@@ -135,8 +191,11 @@ export function ChatWorkspacePage() {
               </EmptyStatePanel>
             </div>
           ) : sessionQuery.isLoading || messagesQuery.isLoading ? (
-            <div className="flex h-full items-center justify-center">
-              <Spin />
+            <div className="flex h-full items-center justify-center p-8">
+              <BrandLoadingPanel
+                title="Loading workspace"
+                description="Session details, draft state, and message history are being assembled for this conversation."
+              />
             </div>
           ) : (
             <>
@@ -144,6 +203,9 @@ export function ChatWorkspacePage() {
                 messages={messages}
                 assistantName="Assistant"
                 onSubmitUiEvent={(payload) => submitUiEventMutation.mutate(payload)}
+                disabled={showAssistantLoading}
+                pendingUserText={pendingUserText}
+                showAssistantLoading={showAssistantLoading}
               />
               <div className="border-t border-brand-line bg-brand-fog p-5">
                 <ChatInputBar

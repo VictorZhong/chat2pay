@@ -73,8 +73,7 @@ export function ProfileSelectorPage() {
           <p className="mb-4 text-xs font-semibold uppercase tracking-[0.24em] text-brand-red">Internal Transfer POC</p>
           <h1 className="text-5xl font-semibold tracking-tight text-brand-black">chat2pay</h1>
           <p className="mt-6 max-w-2xl text-base leading-8 text-brand-gray">
-            Select a predefined profile to enter the conversational transfer workspace. The experience is
-            designed as a controlled payment journey with structured guidance rather than free-form chat only.
+            Select a predefined profile to enter the conversational transfer workspace.
           </p>
         </div>
 

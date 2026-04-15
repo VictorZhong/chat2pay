@@ -276,10 +276,10 @@ components:
           example: HK_STAFF_001
         displayName:
           type: string
-          example: Iris Chen
+          example: Victor Zhong
         username:
           type: string
-          example: iris.chen
+          example: victor.zhong
         avatarUrl:
           type: string
           nullable: true
@@ -315,10 +315,10 @@ components:
           type: string
         username:
           type: string
-          example: iris.chen
+          example: victor.zhong
         displayName:
           type: string
-          example: Iris Chen
+          example: Victor Zhong
         avatarUrl:
           type: string
           nullable: true

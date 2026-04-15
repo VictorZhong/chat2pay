@@ -27,10 +27,20 @@ function blockStageActionList(block: SummaryCardBlock) {
     : [];
 }
 
-function renderFieldInput(field: FormField, value: string, onChange: (nextValue: string) => void) {
+function renderFieldInput(
+  field: FormField,
+  value: string,
+  onChange: (nextValue: string) => void,
+  disabled = false,
+) {
   if (field.fieldType === 'SELECT' || field.fieldType === 'CURRENCY') {
     return (
-      <select className="brand-select" value={value} onChange={(event) => onChange(event.target.value)}>
+      <select
+        className="brand-select"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        disabled={disabled}
+      >
         <option value="">Select</option>
         {field.options?.map((option) => (
           <option key={option.itemId} value={option.itemId}>
@@ -48,6 +58,7 @@ function renderFieldInput(field: FormField, value: string, onChange: (nextValue:
       placeholder={field.placeholder ?? ''}
       value={value}
       onChange={(event) => onChange(event.target.value)}
+      disabled={disabled}
     />
   );
 }
@@ -56,13 +67,15 @@ function SelectableListCard({
   messageId,
   block,
   onSubmit,
+  disabled,
 }: {
   messageId: string;
   block: SelectableListBlock;
   onSubmit: SubmitHandler;
+  disabled?: boolean;
 }) {
   return (
-    <div className="brand-panel p-5">
+    <div className="brand-panel bg-[linear-gradient(180deg,#ffffff_0%,#fcfcfc_100%)] p-5">
       <div className="mb-4 flex items-center justify-between gap-3">
         <h4 className="text-base font-semibold text-brand-black">{block.title}</h4>
         <span className="text-xs uppercase tracking-[0.14em] text-brand-gray">{block.selectionMode}</span>
@@ -71,7 +84,10 @@ function SelectableListCard({
         {block.items.map((item) => (
           <button
             key={item.itemId}
-            className="group w-full border border-brand-line bg-white px-4 py-4 text-left transition hover:border-brand-red hover:bg-[#fff4f5]"
+            className={cn(
+              'group w-full border border-brand-line bg-white px-4 py-4 text-left transition',
+              disabled ? 'cursor-not-allowed opacity-60' : 'hover:border-brand-red hover:bg-[#fff4f5]',
+            )}
             onClick={() =>
               onSubmit({
                 eventType: 'SELECT_ITEM',
@@ -80,6 +96,7 @@ function SelectableListCard({
                 selectedItemIds: [item.itemId],
               })
             }
+            disabled={disabled}
           >
             <div className="flex items-start justify-between gap-4">
               <div>
@@ -101,15 +118,17 @@ function SimpleFormCard({
   messageId,
   block,
   onSubmit,
+  disabled,
 }: {
   messageId: string;
   block: SimpleFormBlock;
   onSubmit: SubmitHandler;
+  disabled?: boolean;
 }) {
   const [values, setValues] = useState<Record<string, string>>({});
 
   return (
-    <div className="brand-panel p-5">
+    <div className="brand-panel bg-[linear-gradient(180deg,#ffffff_0%,#fcfcfc_100%)] p-5">
       <h4 className="mb-5 text-base font-semibold text-brand-black">{block.title}</h4>
       <div className="grid gap-4 md:grid-cols-2">
         {block.fields.map((field) => (
@@ -118,14 +137,19 @@ function SimpleFormCard({
               {field.label}
               {field.required ? ' *' : ''}
             </span>
-            {renderFieldInput(field, values[field.fieldId] ?? '', (nextValue) =>
-              setValues((current) => ({ ...current, [field.fieldId]: nextValue })),
+            {renderFieldInput(
+              field,
+              values[field.fieldId] ?? '',
+              (nextValue) => setValues((current) => ({ ...current, [field.fieldId]: nextValue })),
+              disabled,
             )}
           </label>
         ))}
       </div>
       <div className="mt-5 flex justify-end">
         <BrandButton
+          disabled={disabled}
+          loading={Boolean(disabled)}
           onClick={() =>
             onSubmit({
               eventType: 'SUBMIT_FORM',
@@ -146,15 +170,17 @@ function SummaryCardView({
   messageId,
   block,
   onSubmit,
+  disabled,
 }: {
   messageId: string;
   block: SummaryCardBlock;
   onSubmit: SubmitHandler;
+  disabled?: boolean;
 }) {
   const actions = blockStageActionList(block);
 
   return (
-    <div className="brand-panel p-5">
+    <div className="brand-panel bg-[linear-gradient(180deg,#ffffff_0%,#fcfcfc_100%)] p-5">
       <div className="mb-5 flex items-center justify-between gap-4">
         <h4 className="text-base font-semibold text-brand-black">{block.title}</h4>
         <div className="h-1 w-16 bg-brand-red" />
@@ -173,6 +199,8 @@ function SummaryCardView({
             <BrandButton
               key={action.id}
               variant={action.tone === 'secondary' ? 'secondary' : 'primary'}
+              disabled={disabled}
+              loading={Boolean(disabled)}
               onClick={() =>
                 onSubmit({
                   eventType: 'CLICK_ACTION',
@@ -193,7 +221,12 @@ function SummaryCardView({
 
 function TextCard({ title, text, accent = 'black' }: { title?: string | null; text: string; accent?: 'black' | 'red' }) {
   return (
-    <div className={cn('border bg-white px-5 py-4', accent === 'red' ? 'border-red-700' : 'border-brand-line')}>
+    <div
+      className={cn(
+        'border bg-[linear-gradient(180deg,#ffffff_0%,#fcfcfc_100%)] px-5 py-4',
+        accent === 'red' ? 'border-red-700' : 'border-brand-line',
+      )}
+    >
       {title ? <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-brand-gray">{title}</p> : null}
       <p className="text-sm leading-7 text-brand-black">{text}</p>
     </div>
@@ -204,10 +237,12 @@ export function StructuredBlock({
   messageId,
   block,
   onSubmit,
+  disabled = false,
 }: {
   messageId: string;
   block: ContentBlock;
   onSubmit: SubmitHandler;
+  disabled?: boolean;
 }) {
   if (block.type === 'TEXT') {
     return <TextCard title={block.title} text={block.text} />;
@@ -222,12 +257,12 @@ export function StructuredBlock({
   }
 
   if (block.type === 'SUMMARY_CARD') {
-    return <SummaryCardView messageId={messageId} block={block} onSubmit={onSubmit} />;
+    return <SummaryCardView messageId={messageId} block={block} onSubmit={onSubmit} disabled={disabled} />;
   }
 
   if (block.type === 'SELECTABLE_LIST') {
-    return <SelectableListCard messageId={messageId} block={block} onSubmit={onSubmit} />;
+    return <SelectableListCard messageId={messageId} block={block} onSubmit={onSubmit} disabled={disabled} />;
   }
 
-  return <SimpleFormCard messageId={messageId} block={block} onSubmit={onSubmit} />;
+  return <SimpleFormCard messageId={messageId} block={block} onSubmit={onSubmit} disabled={disabled} />;
 }
