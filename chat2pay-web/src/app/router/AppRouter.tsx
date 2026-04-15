@@ -1,7 +1,32 @@
+import { Suspense, lazy } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
-import { ChatWorkspacePage } from '@/pages/chat-workspace/ChatWorkspacePage';
-import { ProfileSelectorPage } from '@/pages/profile-selector/ProfileSelectorPage';
 import { useAuthStore } from '@/features/auth/useAuthStore';
+import { BrandLoadingPanel } from '@/shared/ui/BrandLoadingPanel';
+
+const ChatWorkspacePage = lazy(() =>
+  import('@/pages/chat-workspace/ChatWorkspacePage').then((module) => ({
+    default: module.ChatWorkspacePage,
+  })),
+);
+
+const ProfileSelectorPage = lazy(() =>
+  import('@/pages/profile-selector/ProfileSelectorPage').then((module) => ({
+    default: module.ProfileSelectorPage,
+  })),
+);
+
+function RouteFallback() {
+  return (
+    <div className="brand-shell flex min-h-screen items-center justify-center p-6">
+      <div className="w-full max-w-3xl">
+        <BrandLoadingPanel
+          title="Loading page"
+          description="The next workspace view is being prepared."
+        />
+      </div>
+    </div>
+  );
+}
 
 function ProtectedRoute({ children }: { children: JSX.Element }) {
   const currentUser = useAuthStore((state) => state.currentUser);
@@ -20,7 +45,11 @@ function RootRoute() {
     return <Navigate to="/chat" replace />;
   }
 
-  return <ProfileSelectorPage />;
+  return (
+    <Suspense fallback={<RouteFallback />}>
+      <ProfileSelectorPage />
+    </Suspense>
+  );
 }
 
 export function AppRouter() {
@@ -32,7 +61,9 @@ export function AppRouter() {
           path="/chat"
           element={
             <ProtectedRoute>
-              <ChatWorkspacePage />
+              <Suspense fallback={<RouteFallback />}>
+                <ChatWorkspacePage />
+              </Suspense>
             </ProtectedRoute>
           }
         />
@@ -40,7 +71,9 @@ export function AppRouter() {
           path="/chat/:sessionId"
           element={
             <ProtectedRoute>
-              <ChatWorkspacePage />
+              <Suspense fallback={<RouteFallback />}>
+                <ChatWorkspacePage />
+              </Suspense>
             </ProtectedRoute>
           }
         />

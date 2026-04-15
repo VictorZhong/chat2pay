@@ -255,26 +255,26 @@ select {
   text-transform: uppercase;
 }
 
-.brand-flow-modal .ant-modal-content {
+.brand-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(17, 17, 17, 0.42);
+  backdrop-filter: blur(4px);
+}
+
+.brand-dialog-panel {
+  position: relative;
+  width: min(760px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
   border: 1px solid var(--brand-black);
-  border-radius: 0;
-  padding: 0;
-  overflow: hidden;
-}
-
-.brand-flow-modal .ant-modal-header {
-  margin: 0;
-  padding: 20px 24px 0;
-  border-bottom: 0;
-}
-
-.brand-flow-modal .ant-modal-body {
-  padding: 0 24px 24px;
-}
-
-.brand-flow-modal .ant-modal-close {
-  inset-inline-end: 18px;
-  top: 18px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 248, 248, 0.98));
+  box-shadow: 0 28px 60px rgba(17, 17, 17, 0.22);
 }
 
 .brand-loading-track {

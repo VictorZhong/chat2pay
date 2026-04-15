@@ -1,7 +1,6 @@
-import { CheckOutlined, CloseOutlined, RightOutlined } from '@ant-design/icons';
-import { Modal } from 'antd';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ChatSessionStatus, WorkflowState } from '@/shared/api/contracts';
+import { CheckIcon, CloseIcon, RightIcon } from '@/shared/ui/icons';
 
 type FlowStage = {
   key: string;
@@ -118,6 +117,23 @@ export function WorkflowOverview({
 }) {
   const [open, setOpen] = useState(false);
 
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setOpen(false);
+      }
+    }
+
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [open]);
+
   const currentIndex = stageIndexForState(workflowState);
   const currentStage = currentStageForState(workflowState, sessionStatus);
   const terminalCopy = statusCopy(sessionStatus);
@@ -132,112 +148,127 @@ export function WorkflowOverview({
           <span>
             {Math.max(currentIndex + 1, 1)} / {FLOW_STAGES.length}
           </span>
-          <RightOutlined />
+          <RightIcon className="h-3 w-3" />
         </span>
       </button>
 
-      <Modal
-        open={open}
-        onCancel={() => setOpen(false)}
-        footer={null}
-        width={760}
-        rootClassName="brand-flow-modal"
-        title={
-          <div className="pr-10">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-red">Transfer Flow</p>
-            <h3 className="mt-2 text-lg font-semibold text-brand-black">{currentStage.title}</h3>
-          </div>
-        }
-      >
-        <div className="space-y-4">
-          <div className="flex flex-wrap items-center gap-3 border-b border-brand-line pb-4">
-            <span className="brand-chip border-brand-black text-brand-black">{terminalCopy.title}</span>
-            <p className="text-xs uppercase tracking-[0.14em] text-brand-gray">
-              Step {Math.max(currentIndex + 1, 1)} of {FLOW_STAGES.length}
-            </p>
-          </div>
+      {open ? (
+        <div className="brand-dialog-backdrop" onClick={() => setOpen(false)}>
+          <div className="brand-dialog-panel" onClick={(event) => event.stopPropagation()}>
+            <div className="border-b border-brand-line px-6 pb-4 pt-5">
+              <div className="pr-10">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-red">Transfer Flow</p>
+                <h3 className="mt-2 text-lg font-semibold text-brand-black">{currentStage.title}</h3>
+              </div>
+              <button
+                className="absolute right-5 top-5 flex h-9 w-9 items-center justify-center border border-brand-line bg-white text-brand-black transition hover:border-brand-red hover:text-brand-red"
+                onClick={() => setOpen(false)}
+                aria-label="Close flow dialog"
+              >
+                <CloseIcon className="h-4 w-4" />
+              </button>
+            </div>
 
-          <div className="space-y-2">
-            {FLOW_STAGES.map((stage, index) => {
-              const isCurrent = index === currentIndex;
-              const isCompleted = currentIndex > index || workflowState === 'COMPLETED';
-              const isUpcoming = index > currentIndex;
-
-              return (
-                <div
-                  key={stage.key}
-                  className={[
-                    'grid gap-3 border px-4 py-3 md:grid-cols-[40px_1fr_auto]',
-                    isCurrent && 'border-brand-red bg-[#fff4f5]',
-                    isCompleted && !isCurrent && 'border-brand-black bg-[linear-gradient(180deg,#ffffff_0%,#f7f7f7_100%)]',
-                    isUpcoming && 'border-brand-line bg-white',
-                  ]
-                    .filter(Boolean)
-                    .join(' ')}
-                >
-                  <div
-                    className={[
-                      'flex h-10 w-10 items-center justify-center border text-sm font-semibold',
-                      isCurrent && 'border-brand-red bg-brand-red text-white',
-                      isCompleted && !isCurrent && 'border-brand-black bg-brand-black text-white',
-                      isUpcoming && 'border-brand-line bg-brand-fog text-brand-gray',
-                    ]
-                      .filter(Boolean)
-                      .join(' ')}
-                  >
-                    {isCompleted && !isCurrent ? <CheckOutlined /> : isUpcoming ? index + 1 : index + 1}
-                  </div>
-
-                  <div>
-                    <div className="flex flex-wrap items-center gap-3">
-                      <h4 className="text-sm font-semibold text-brand-black">{stage.title}</h4>
-                      {isCurrent ? (
-                        <span className="brand-chip border-brand-red text-brand-red">Current</span>
-                      ) : null}
-                    </div>
-                    {isCurrent ? (
-                      <p className="mt-1 text-xs leading-6 text-brand-gray">{stage.description}</p>
-                    ) : null}
-                  </div>
-
-                  <div className="flex items-start justify-end">
-                    {isCurrent ? (
-                      <span className="brand-status-badge border-brand-red bg-[#fff4f5] text-brand-red">
-                        <span className="brand-status-indicator bg-brand-red text-brand-red" />
-                        Live
-                      </span>
-                    ) : isCompleted ? (
-                      <span className="brand-status-badge border-brand-black bg-brand-black text-white">
-                        <span className="brand-status-indicator bg-brand-red text-brand-red" />
-                        Done
-                      </span>
-                    ) : (
-                      <span className="brand-status-badge border-brand-line bg-white text-brand-gray">
-                        <span className="brand-status-indicator bg-brand-gray text-brand-gray" />
-                        Pending
-                      </span>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {(sessionStatus === 'CANCELLED' || workflowState === 'FAILED') && (
-            <div className="border border-red-700 bg-red-50 px-4 py-3">
-              <div className="mb-2 flex items-center gap-3">
-                <CloseOutlined className="text-red-700" />
-                <p className="text-sm font-semibold text-red-800">
-                  {sessionStatus === 'CANCELLED' ? 'Flow ended by user' : 'Flow ended with a failure'}
+            <div className="space-y-4 px-6 pb-6 pt-4">
+              <div className="flex flex-wrap items-center gap-3 border-b border-brand-line pb-4">
+                <span className="brand-chip border-brand-black text-brand-black">{terminalCopy.title}</span>
+                <p className="text-xs uppercase tracking-[0.14em] text-brand-gray">
+                  Step {Math.max(currentIndex + 1, 1)} of {FLOW_STAGES.length}
                 </p>
               </div>
-              <p className="text-xs leading-6 text-red-800">
-                The transfer did not reach the final completion step. Use the timeline above to review where it stopped.
-              </p>
+
+              <div className="space-y-2">
+                {FLOW_STAGES.map((stage, index) => {
+                  const isCurrent = index === currentIndex;
+                  const isCompleted = currentIndex > index || workflowState === 'COMPLETED';
+                  const isUpcoming = index > currentIndex;
+
+                  return (
+                    <div
+                      key={stage.key}
+                      className={[
+                        'grid gap-3 border px-4 py-3 md:grid-cols-[40px_1fr_auto]',
+                        isCurrent && 'border-brand-red bg-[#fff4f5]',
+                        isCompleted &&
+                          !isCurrent &&
+                          'border-brand-black bg-[linear-gradient(180deg,#ffffff_0%,#f7f7f7_100%)]',
+                        isUpcoming && 'border-brand-line bg-white',
+                      ]
+                        .filter(Boolean)
+                        .join(' ')}
+                    >
+                      <div
+                        className={[
+                          'flex h-10 w-10 items-center justify-center border text-sm font-semibold',
+                          isCurrent && 'border-brand-red bg-brand-red text-white',
+                          isCompleted && !isCurrent && 'border-brand-black bg-brand-black text-white',
+                          isUpcoming && 'border-brand-line bg-brand-fog text-brand-gray',
+                        ]
+                          .filter(Boolean)
+                          .join(' ')}
+                      >
+                        {isCompleted && !isCurrent ? (
+                          <CheckIcon className="h-4 w-4" />
+                        ) : isUpcoming ? (
+                          index + 1
+                        ) : (
+                          index + 1
+                        )}
+                      </div>
+
+                      <div>
+                        <div className="flex flex-wrap items-center gap-3">
+                          <h4 className="text-sm font-semibold text-brand-black">{stage.title}</h4>
+                          {isCurrent ? (
+                            <span className="brand-chip border-brand-red text-brand-red">Current</span>
+                          ) : null}
+                        </div>
+                        {isCurrent ? (
+                          <p className="mt-1 text-xs leading-6 text-brand-gray">{stage.description}</p>
+                        ) : null}
+                      </div>
+
+                      <div className="flex items-start justify-end">
+                        {isCurrent ? (
+                          <span className="brand-status-badge border-brand-red bg-[#fff4f5] text-brand-red">
+                            <span className="brand-status-indicator bg-brand-red text-brand-red" />
+                            Live
+                          </span>
+                        ) : isCompleted ? (
+                          <span className="brand-status-badge border-brand-black bg-brand-black text-white">
+                            <span className="brand-status-indicator bg-brand-red text-brand-red" />
+                            Done
+                          </span>
+                        ) : (
+                          <span className="brand-status-badge border-brand-line bg-white text-brand-gray">
+                            <span className="brand-status-indicator bg-brand-gray text-brand-gray" />
+                            Pending
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {(sessionStatus === 'CANCELLED' || workflowState === 'FAILED') && (
+                <div className="border border-red-700 bg-red-50 px-4 py-3">
+                  <div className="mb-2 flex items-center gap-3">
+                    <CloseIcon className="h-4 w-4 text-red-700" />
+                    <p className="text-sm font-semibold text-red-800">
+                      {sessionStatus === 'CANCELLED' ? 'Flow ended by user' : 'Flow ended with a failure'}
+                    </p>
+                  </div>
+                  <p className="text-xs leading-6 text-red-800">
+                    The transfer did not reach the final completion step. Use the timeline above to review where it
+                    stopped.
+                  </p>
+                </div>
+              )}
             </div>
-          )}
+          </div>
         </div>
-      </Modal>
+      ) : null}
     </>
   );
 }

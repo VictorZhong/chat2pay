@@ -1,10 +1,10 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Spin } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import { chat2payClient, queryKeys } from '@/shared/api/chat2payClient';
 import type { ProfileSummary } from '@/shared/api/contracts';
 import { BrandAvatar } from '@/shared/ui/BrandAvatar';
 import { BrandButton } from '@/shared/ui/BrandButton';
+import { BrandLoadingPanel } from '@/shared/ui/BrandLoadingPanel';
 import { useAuthStore } from '@/features/auth/useAuthStore';
 
 function ProfileCard({
@@ -79,7 +79,12 @@ export function ProfileSelectorPage() {
 
         {profilesQuery.isLoading ? (
           <div className="brand-panel flex min-h-[280px] items-center justify-center">
-            <Spin />
+            <div className="w-full max-w-2xl px-6">
+              <BrandLoadingPanel
+                title="Loading profiles"
+                description="Available demo identities are being prepared for this workspace."
+              />
+            </div>
           </div>
         ) : (
           <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">

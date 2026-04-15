@@ -1,21 +1,21 @@
-import {
-  BankOutlined,
-  HistoryOutlined,
-  MenuFoldOutlined,
-  MenuUnfoldOutlined,
-  PlusOutlined,
-  TeamOutlined,
-} from '@ant-design/icons';
 import type { CurrentUserContext, ChatSessionSummary } from '@/shared/api/contracts';
 import { BrandButton } from '@/shared/ui/BrandButton';
 import { ChatHistoryList } from '@/features/session-history/ChatHistoryList';
 import { UserMenu } from '@/features/user-menu/UserMenu';
 import { cn } from '@/shared/lib/cn';
+import {
+  BankIcon,
+  HistoryIcon,
+  MenuFoldIcon,
+  MenuUnfoldIcon,
+  PlusIcon,
+  TeamIcon,
+} from '@/shared/ui/icons';
 
 const PLACEHOLDERS = [
-  { label: 'My Account', icon: BankOutlined },
-  { label: 'My Payee', icon: TeamOutlined },
-  { label: 'Transaction History', icon: HistoryOutlined },
+  { label: 'My Account', icon: BankIcon },
+  { label: 'My Payee', icon: TeamIcon },
+  { label: 'Transaction History', icon: HistoryIcon },
 ];
 
 export function Sidebar({
@@ -59,11 +59,11 @@ export function Sidebar({
             onClick={onToggleCollapsed}
             aria-label="Toggle sidebar"
           >
-            {collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+            {collapsed ? <MenuUnfoldIcon className="h-4 w-4" /> : <MenuFoldIcon className="h-4 w-4" />}
           </button>
         </div>
         <BrandButton fullWidth onClick={onNewChat}>
-          <PlusOutlined />
+          <PlusIcon className="h-4 w-4" />
           {collapsed ? '' : 'New Chat'}
         </BrandButton>
       </div>
@@ -82,7 +82,7 @@ export function Sidebar({
               )}
               title={collapsed ? item.label : undefined}
             >
-              <Icon className="text-base text-brand-black" />
+              <Icon className="h-4 w-4 text-brand-black" />
               {!collapsed ? <span>{item.label}</span> : null}
             </div>
             );
