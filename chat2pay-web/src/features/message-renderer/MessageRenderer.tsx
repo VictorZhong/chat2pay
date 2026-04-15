@@ -1,0 +1,50 @@
+import type { ChatMessage, UiEventRequest } from '@/shared/api/contracts';
+import { BrandAvatar } from '@/shared/ui/BrandAvatar';
+import { StructuredBlock } from '@/features/ui-events/StructuredBlocks';
+import { formatDateTime } from '@/shared/lib/format';
+import { cn } from '@/shared/lib/cn';
+
+export function MessageRenderer({
+  message,
+  assistantName,
+  onSubmitUiEvent,
+}: {
+  message: ChatMessage;
+  assistantName: string;
+  onSubmitUiEvent: (request: UiEventRequest) => void;
+}) {
+  const isUser = message.role === 'USER';
+
+  return (
+    <div className={cn('flex gap-4', isUser && 'justify-end')}>
+      {!isUser ? <BrandAvatar name={assistantName} size="sm" /> : null}
+      <div className={cn('max-w-[840px] flex-1 space-y-3', isUser && 'flex max-w-[720px] flex-col items-end')}>
+        <div className={cn('flex items-center gap-3', isUser && 'justify-end')}>
+          <p className="text-sm font-semibold text-brand-black">{isUser ? 'You' : assistantName}</p>
+          <p className="text-[11px] uppercase tracking-[0.12em] text-brand-gray">{formatDateTime(message.createdAt)}</p>
+        </div>
+
+        {message.text && (!message.contentBlocks || message.contentBlocks.length === 0) ? (
+          <div
+            className={cn(
+              'max-w-[720px] border px-5 py-4 text-sm leading-7',
+              isUser ? 'border-brand-black bg-brand-black text-white' : 'border-brand-line bg-white text-brand-black',
+            )}
+          >
+            {message.text}
+          </div>
+        ) : null}
+
+        {message.contentBlocks?.map((block) => (
+          <StructuredBlock
+            key={block.blockId}
+            messageId={message.messageId}
+            block={block}
+            onSubmit={onSubmitUiEvent}
+          />
+        ))}
+      </div>
+      {isUser ? <BrandAvatar name="You" size="sm" /> : null}
+    </div>
+  );
+}
