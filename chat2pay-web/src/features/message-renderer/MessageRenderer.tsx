@@ -9,16 +9,21 @@ export function MessageRenderer({
   assistantName,
   onSubmitUiEvent,
   disabled = false,
+  entryIndex = 0,
 }: {
   message: ChatMessage;
   assistantName: string;
   onSubmitUiEvent: (request: UiEventRequest) => void;
   disabled?: boolean;
+  entryIndex?: number;
 }) {
   const isUser = message.role === 'USER';
 
   return (
-    <div className={cn('flex gap-4', isUser && 'justify-end')}>
+    <div
+      className={cn('brand-message-entry flex gap-4', isUser && 'justify-end')}
+      style={{ animationDelay: `${Math.min(entryIndex * 40, 240)}ms` }}
+    >
       {!isUser ? <BrandAvatar name={assistantName} size="sm" /> : null}
       <div className={cn('max-w-[840px] flex-1 space-y-3', isUser && 'flex max-w-[720px] flex-col items-end')}>
         <div className={cn('flex items-center gap-3', isUser && 'justify-end')}>

@@ -85,6 +85,13 @@ select {
   pointer-events: none;
 }
 
+.brand-sidebar-shell {
+  transition:
+    width 180ms ease,
+    max-height 180ms ease,
+    box-shadow 180ms ease;
+}
+
 .brand-button {
   display: inline-flex;
   align-items: center;
@@ -265,6 +272,7 @@ select {
   padding: 24px;
   background: rgba(17, 17, 17, 0.42);
   backdrop-filter: blur(4px);
+  animation: brand-fade-in 180ms ease forwards;
 }
 
 .brand-dialog-panel {
@@ -275,6 +283,7 @@ select {
   border: 1px solid var(--brand-black);
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 248, 248, 0.98));
   box-shadow: 0 28px 60px rgba(17, 17, 17, 0.22);
+  animation: brand-dialog-rise 220ms cubic-bezier(0.2, 0.7, 0.2, 1) forwards;
 }
 
 .brand-loading-track {
@@ -308,6 +317,53 @@ select {
     linear-gradient(90deg, rgba(219, 0, 17, 0.02), transparent 18%);
 }
 
+.brand-message-entry {
+  opacity: 0;
+  transform: translateY(12px);
+  animation: brand-fade-up 260ms cubic-bezier(0.2, 0.7, 0.2, 1) forwards;
+}
+
+.brand-history-item {
+  position: relative;
+  overflow: hidden;
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    background-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.brand-history-item::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  background: var(--brand-red);
+  transition: width 160ms ease;
+}
+
+.brand-history-item:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px rgba(17, 17, 17, 0.06);
+}
+
+.brand-history-item-active::before {
+  width: 4px;
+}
+
+.brand-sidebar-nav-item {
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    background-color 160ms ease;
+}
+
+.brand-sidebar-nav-item:hover {
+  transform: translateX(2px);
+  border-color: var(--brand-black);
+  background: linear-gradient(180deg, #ffffff, #fff7f7);
+}
+
 .brand-scrollbar {
   scrollbar-width: thin;
   scrollbar-color: #b8b8b8 transparent;
@@ -330,6 +386,40 @@ select {
   }
 }
 
+@keyframes brand-fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes brand-dialog-rise {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes brand-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @keyframes brand-pulse-bars {
   0%,
   100% {
@@ -340,5 +430,21 @@ select {
   50% {
     transform: scaleY(1);
     opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brand-button,
+  .brand-history-item,
+  .brand-sidebar-nav-item,
+  .brand-sidebar-shell,
+  .brand-dialog-backdrop,
+  .brand-dialog-panel,
+  .brand-message-entry,
+  .brand-loading-bar,
+  .brand-button-loader {
+    animation: none !important;
+    transition-duration: 0ms !important;
+    transform: none !important;
   }
 }

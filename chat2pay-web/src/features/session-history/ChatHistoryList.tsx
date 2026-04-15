@@ -20,9 +20,9 @@ export function ChatHistoryList({
         <button
           key={session.sessionId}
           className={cn(
-            'w-full border px-4 py-4 text-left transition',
+            'brand-history-item w-full border px-4 py-4 text-left transition',
             selectedSessionId === session.sessionId
-              ? 'border-brand-red bg-[#fff4f5]'
+              ? 'brand-history-item-active border-brand-red bg-[#fff4f5]'
               : 'border-brand-line bg-white hover:border-brand-black',
           )}
           onClick={() => onSelect(session.sessionId)}

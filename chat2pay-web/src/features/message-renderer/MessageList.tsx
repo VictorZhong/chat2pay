@@ -33,13 +33,14 @@ export function MessageList({
   return (
     <div ref={containerRef} className="brand-message-surface brand-scrollbar min-h-0 flex-1 overflow-y-auto">
       <div className="space-y-8 px-6 py-6">
-        {messages.map((message) => (
+        {messages.map((message, index) => (
           <MessageRenderer
             key={message.messageId}
             message={message}
             assistantName={assistantName}
             onSubmitUiEvent={onSubmitUiEvent}
             disabled={disabled}
+            entryIndex={index}
           />
         ))}
         {pendingUserText ? (

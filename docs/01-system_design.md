@@ -662,12 +662,13 @@ Block variants:
 - Jackson for JSON and JSONB payload mapping
 
 ### Frontend
-- **React**
-- **Ant Design 6**
+- **React + TypeScript**
+- **Vite**
 - **Tailwind CSS**
+- custom branded UI primitives and icons
 - React Router
-- TanStack Query or equivalent for API fetching/caching
-- Zustand / Redux Toolkit / Context for local session state
+- TanStack Query for API fetching/caching
+- Zustand for lightweight local UI/session state
 
 ### Database
 - **PostgreSQL**

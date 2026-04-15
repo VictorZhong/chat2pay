@@ -40,7 +40,7 @@ export function Sidebar({
   return (
     <aside
       className={cn(
-        'brand-panel flex max-h-[42vh] w-full flex-col bg-[#fcfcfc] lg:max-h-none',
+        'brand-panel brand-sidebar-shell flex max-h-[42vh] w-full flex-col bg-[#fcfcfc] lg:max-h-none',
         collapsed ? 'lg:w-[108px]' : 'lg:w-[360px]',
       )}
     >
@@ -74,17 +74,17 @@ export function Sidebar({
             const Icon = item.icon;
 
             return (
-            <div
-              key={item.label}
-              className={cn(
-                'flex items-center gap-3 border border-dashed border-brand-line bg-white px-4 py-3 text-sm text-brand-gray',
-                collapsed && 'justify-center px-0',
-              )}
-              title={collapsed ? item.label : undefined}
-            >
-              <Icon className="h-4 w-4 text-brand-black" />
-              {!collapsed ? <span>{item.label}</span> : null}
-            </div>
+              <div
+                key={item.label}
+                className={cn(
+                  'brand-sidebar-nav-item flex items-center gap-3 border border-dashed border-brand-line bg-white px-4 py-3 text-sm text-brand-gray',
+                  collapsed && 'justify-center px-0',
+                )}
+                title={collapsed ? item.label : undefined}
+              >
+                <Icon className="h-4 w-4 text-brand-black" />
+                {!collapsed ? <span>{item.label}</span> : null}
+              </div>
             );
           })}
         </div>
