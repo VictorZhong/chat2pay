@@ -25,11 +25,11 @@ export function ChatInputBar({
 
   return (
     <div className="brand-panel p-4">
-      <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-end">
-        <div>
-          <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.16em] text-brand-gray">
-            Message
-          </label>
+      <label className="mb-3 block text-xs font-semibold uppercase tracking-[0.16em] text-brand-gray">
+        Message
+      </label>
+      <div className="flex items-end gap-3">
+        <div className="min-w-0 flex-1">
           <textarea
             className="brand-textarea brand-composer-textarea"
             placeholder="Type a transfer instruction, for example: Pay Tom 5000 HKD."
@@ -44,20 +44,18 @@ export function ChatInputBar({
             disabled={disabled || busy}
           />
         </div>
-        <div className="flex flex-col gap-3">
-          <BrandButton
-            className="min-w-[164px]"
-            onClick={() => void handleSend()}
-            disabled={disabled || busy}
-            loading={busy}
-          >
-            {busy ? 'Awaiting Response' : 'Send'}
-          </BrandButton>
-          <p className="text-[11px] uppercase tracking-[0.12em] text-brand-gray">
-            Enter sends. Shift+Enter adds a new line.
-          </p>
-        </div>
+        <BrandButton
+          className="h-[44px] min-w-[164px] shrink-0"
+          onClick={() => void handleSend()}
+          disabled={disabled || busy}
+          loading={busy}
+        >
+          {busy ? 'Awaiting Response' : 'Send'}
+        </BrandButton>
       </div>
+      <p className="mt-3 text-[11px] uppercase tracking-[0.12em] text-brand-gray">
+        Enter sends. Shift+Enter adds a new line.
+      </p>
     </div>
   );
 }

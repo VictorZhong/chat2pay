@@ -1,4 +1,4 @@
-import { ApartmentOutlined, CheckOutlined, CloseOutlined, InfoCircleOutlined, RightOutlined } from '@ant-design/icons';
+import { CheckOutlined, CloseOutlined, RightOutlined } from '@ant-design/icons';
 import { Modal } from 'antd';
 import { useState } from 'react';
 import type { ChatSessionStatus, WorkflowState } from '@/shared/api/contracts';
@@ -89,27 +89,23 @@ function statusCopy(sessionStatus: ChatSessionStatus) {
   if (sessionStatus === 'COMPLETED') {
     return {
       title: 'Execution completed',
-      description: 'The session is complete. The flow below shows the full path that was executed.',
     };
   }
 
   if (sessionStatus === 'CANCELLED') {
     return {
       title: 'Execution cancelled',
-      description: 'The transfer was cancelled before completion. Review the flow to see where the session stopped.',
     };
   }
 
   if (sessionStatus === 'ARCHIVED') {
     return {
       title: 'Session archived',
-      description: 'This conversation has been archived. The flow remains available for review.',
     };
   }
 
   return {
     title: 'Execution in progress',
-    description: 'The workflow is still active. The highlighted stage shows the current position of the transfer.',
   };
 }
 
@@ -129,21 +125,15 @@ export function WorkflowOverview({
   return (
     <>
       <button className="brand-workflow-trigger" onClick={() => setOpen(true)}>
-        <span className="brand-workflow-icon">
-          <ApartmentOutlined />
+        <span className="min-w-0 flex-1 truncate text-sm font-semibold text-brand-black">
+          {currentStage.title}
         </span>
-        <span className="min-w-0 flex-1">
-          <span className="block text-[11px] font-semibold uppercase tracking-[0.16em] text-brand-gray">
-            Current Flow Step
+        <span className="brand-workflow-count">
+          <span>
+            {Math.max(currentIndex + 1, 1)} / {FLOW_STAGES.length}
           </span>
-          <span className="mt-1 block truncate text-sm font-semibold text-brand-black">{currentStage.title}</span>
-          <span className="mt-1 block text-xs uppercase tracking-[0.12em] text-brand-gray">
-            {'subtitle' in currentStage
-              ? currentStage.subtitle
-              : `Step ${Math.max(currentIndex + 1, 1)} of ${FLOW_STAGES.length} • View Full Flow`}
-          </span>
+          <RightOutlined />
         </span>
-        <RightOutlined className="text-brand-gray" />
       </button>
 
       <Modal
@@ -155,20 +145,19 @@ export function WorkflowOverview({
         title={
           <div className="pr-10">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-red">Transfer Flow</p>
-            <h3 className="mt-2 text-xl font-semibold text-brand-black">{currentStage.title}</h3>
+            <h3 className="mt-2 text-lg font-semibold text-brand-black">{currentStage.title}</h3>
           </div>
         }
       >
-        <div className="space-y-6">
-          <div className="border border-brand-black bg-[linear-gradient(180deg,#ffffff_0%,#f7f7f7_100%)] p-5">
-            <div className="mb-3 flex items-center gap-3">
-              <InfoCircleOutlined className="text-brand-red" />
-              <p className="text-sm font-semibold text-brand-black">{terminalCopy.title}</p>
-            </div>
-            <p className="text-sm leading-7 text-brand-gray">{terminalCopy.description}</p>
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-3 border-b border-brand-line pb-4">
+            <span className="brand-chip border-brand-black text-brand-black">{terminalCopy.title}</span>
+            <p className="text-xs uppercase tracking-[0.14em] text-brand-gray">
+              Step {Math.max(currentIndex + 1, 1)} of {FLOW_STAGES.length}
+            </p>
           </div>
 
-          <div className="space-y-3">
+          <div className="space-y-2">
             {FLOW_STAGES.map((stage, index) => {
               const isCurrent = index === currentIndex;
               const isCompleted = currentIndex > index || workflowState === 'COMPLETED';
@@ -178,7 +167,7 @@ export function WorkflowOverview({
                 <div
                   key={stage.key}
                   className={[
-                    'grid gap-4 border p-5 md:grid-cols-[56px_1fr_auto]',
+                    'grid gap-3 border px-4 py-3 md:grid-cols-[40px_1fr_auto]',
                     isCurrent && 'border-brand-red bg-[#fff4f5]',
                     isCompleted && !isCurrent && 'border-brand-black bg-[linear-gradient(180deg,#ffffff_0%,#f7f7f7_100%)]',
                     isUpcoming && 'border-brand-line bg-white',
@@ -188,7 +177,7 @@ export function WorkflowOverview({
                 >
                   <div
                     className={[
-                      'flex h-14 w-14 items-center justify-center border text-sm font-semibold',
+                      'flex h-10 w-10 items-center justify-center border text-sm font-semibold',
                       isCurrent && 'border-brand-red bg-brand-red text-white',
                       isCompleted && !isCurrent && 'border-brand-black bg-brand-black text-white',
                       isUpcoming && 'border-brand-line bg-brand-fog text-brand-gray',
@@ -201,12 +190,14 @@ export function WorkflowOverview({
 
                   <div>
                     <div className="flex flex-wrap items-center gap-3">
-                      <h4 className="text-base font-semibold text-brand-black">{stage.title}</h4>
+                      <h4 className="text-sm font-semibold text-brand-black">{stage.title}</h4>
                       {isCurrent ? (
                         <span className="brand-chip border-brand-red text-brand-red">Current</span>
                       ) : null}
                     </div>
-                    <p className="mt-2 text-sm leading-7 text-brand-gray">{stage.description}</p>
+                    {isCurrent ? (
+                      <p className="mt-1 text-xs leading-6 text-brand-gray">{stage.description}</p>
+                    ) : null}
                   </div>
 
                   <div className="flex items-start justify-end">
@@ -233,16 +224,15 @@ export function WorkflowOverview({
           </div>
 
           {(sessionStatus === 'CANCELLED' || workflowState === 'FAILED') && (
-            <div className="border border-red-700 bg-red-50 p-5">
-              <div className="mb-3 flex items-center gap-3">
+            <div className="border border-red-700 bg-red-50 px-4 py-3">
+              <div className="mb-2 flex items-center gap-3">
                 <CloseOutlined className="text-red-700" />
                 <p className="text-sm font-semibold text-red-800">
                   {sessionStatus === 'CANCELLED' ? 'Flow ended by user' : 'Flow ended with a failure'}
                 </p>
               </div>
-              <p className="text-sm leading-7 text-red-800">
-                This session did not reach the final transfer completion step. The timeline above shows the expected
-                control path for the transfer journey.
+              <p className="text-xs leading-6 text-red-800">
+                The transfer did not reach the final completion step. Use the timeline above to review where it stopped.
               </p>
             </div>
           )}
