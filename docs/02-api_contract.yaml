@@ -1,0 +1,943 @@
+openapi: 3.0.3
+info:
+  title: chat2pay API
+  version: 0.1.0
+  description: |
+    OpenAPI contract for the chat2pay POC.
+    The POC uses profile selection as a lightweight login model.
+    After profile login, the frontend sends X-Profile-Id on protected endpoints.
+servers:
+  - url: /api
+    description: Relative API base path
+
+tags:
+  - name: Profiles
+  - name: Auth
+  - name: Chat Sessions
+  - name: Chat Messages
+
+paths:
+  /profiles:
+    get:
+      tags: [Profiles]
+      summary: List available POC profiles
+      operationId: listProfiles
+      responses:
+        '200':
+          description: Available profiles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ProfileSummary'
+
+  /auth/profile-login:
+    post:
+      tags: [Auth]
+      summary: Select a profile and create a lightweight user context
+      operationId: profileLogin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfileLoginRequest'
+      responses:
+        '200':
+          description: Profile login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CurrentUserContext'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Logout current pseudo-login session
+      operationId: logout
+      parameters:
+        - $ref: '#/components/parameters/XProfileId'
+      responses:
+        '204':
+          description: Logged out successfully
+
+  /me:
+    get:
+      tags: [Auth]
+      summary: Get current user context
+      operationId: getCurrentUser
+      parameters:
+        - $ref: '#/components/parameters/XProfileId'
+      responses:
+        '200':
+          description: Current selected profile context
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CurrentUserContext'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /chat/sessions:
+    get:
+      tags: [Chat Sessions]
+      summary: List chat sessions for the selected profile
+      operationId: listChatSessions
+      parameters:
+        - $ref: '#/components/parameters/XProfileId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - in: query
+          name: status
+          required: false
+          schema:
+            $ref: '#/components/schemas/ChatSessionStatus'
+      responses:
+        '200':
+          description: Session page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatSessionSummaryPage'
+    post:
+      tags: [Chat Sessions]
+      summary: Create a new chat session
+      operationId: createChatSession
+      parameters:
+        - $ref: '#/components/parameters/XProfileId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateChatSessionRequest'
+      responses:
+        '201':
+          description: Created chat session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatSessionCreateResponse'
+
+  /chat/sessions/{sessionId}:
+    get:
+      tags: [Chat Sessions]
+      summary: Get one chat session with state snapshot
+      operationId: getChatSession
+      parameters:
+        - $ref: '#/components/parameters/XProfileId'
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: Session detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatSessionDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /chat/sessions/{sessionId}/messages:
+    get:
+      tags: [Chat Messages]
+      summary: Get ordered messages for a session
+      operationId: listChatMessages
+      parameters:
+        - $ref: '#/components/parameters/XProfileId'
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Message page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatMessagePage'
+    post:
+      tags: [Chat Messages]
+      summary: Send a free-text user message
+      operationId: sendChatMessage
+      parameters:
+        - $ref: '#/components/parameters/XProfileId'
+        - $ref: '#/components/parameters/SessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendMessageRequest'
+      responses:
+        '200':
+          description: Result of one user turn
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatTurnResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /chat/sessions/{sessionId}/events:
+    post:
+      tags: [Chat Messages]
+      summary: Submit a structured UI event from selectable list or simple form
+      operationId: submitUiEvent
+      parameters:
+        - $ref: '#/components/parameters/XProfileId'
+        - $ref: '#/components/parameters/SessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UiEventRequest'
+      responses:
+        '200':
+          description: Result of one structured UI interaction
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatTurnResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  parameters:
+    XProfileId:
+      in: header
+      name: X-Profile-Id
+      required: true
+      description: Selected POC profile identifier
+      schema:
+        type: string
+        example: 01HX8QYP8W4G9Y0S2AY2J67NZB
+    SessionId:
+      in: path
+      name: sessionId
+      required: true
+      schema:
+        type: string
+        example: 01HX8R5A1NQY39XK0D28S5B3EW
+    Page:
+      in: query
+      name: page
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PageSize:
+      in: query
+      name: pageSize
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    ProfileSummary:
+      type: object
+      required:
+        - id
+        - code
+        - displayName
+        - mockCustomerId
+        - locale
+        - status
+      properties:
+        id:
+          type: string
+          example: 01HX8QYP8W4G9Y0S2AY2J67NZB
+        code:
+          type: string
+          example: HK_STAFF_001
+        displayName:
+          type: string
+          example: Iris Chen
+        username:
+          type: string
+          example: iris.chen
+        avatarUrl:
+          type: string
+          nullable: true
+          example: /assets/avatar-iris.png
+        mockCustomerId:
+          type: string
+          example: CUST0001
+        locale:
+          type: string
+          example: en-HK
+        status:
+          $ref: '#/components/schemas/ProfileStatus'
+
+    ProfileLoginRequest:
+      type: object
+      required:
+        - profileId
+      properties:
+        profileId:
+          type: string
+          example: 01HX8QYP8W4G9Y0S2AY2J67NZB
+
+    CurrentUserContext:
+      type: object
+      required:
+        - profileId
+        - username
+        - displayName
+        - locale
+        - loginMode
+      properties:
+        profileId:
+          type: string
+        username:
+          type: string
+          example: iris.chen
+        displayName:
+          type: string
+          example: Iris Chen
+        avatarUrl:
+          type: string
+          nullable: true
+        locale:
+          type: string
+          example: en-HK
+        loginMode:
+          type: string
+          enum: [PROFILE_SELECTION]
+
+    CreateChatSessionRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          maxLength: 120
+          example: New transfer
+
+    ChatSessionCreateResponse:
+      type: object
+      required:
+        - session
+        - assistantMessages
+      properties:
+        session:
+          $ref: '#/components/schemas/ChatSessionDetail'
+        assistantMessages:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatMessage'
+
+    ChatSessionSummary:
+      type: object
+      required:
+        - sessionId
+        - title
+        - status
+        - workflowState
+        - createdAt
+        - updatedAt
+      properties:
+        sessionId:
+          type: string
+        title:
+          type: string
+          example: Transfer to Tom
+        status:
+          $ref: '#/components/schemas/ChatSessionStatus'
+        workflowState:
+          $ref: '#/components/schemas/WorkflowState'
+        lastAssistantText:
+          type: string
+          nullable: true
+          example: Please select which Tom you want to pay.
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ChatSessionSummaryPage:
+      type: object
+      required:
+        - items
+        - page
+        - pageSize
+        - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatSessionSummary'
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        total:
+          type: integer
+
+    ChatSessionDetail:
+      type: object
+      required:
+        - sessionId
+        - title
+        - status
+        - workflowState
+        - createdAt
+        - updatedAt
+      properties:
+        sessionId:
+          type: string
+        title:
+          type: string
+        status:
+          $ref: '#/components/schemas/ChatSessionStatus'
+        workflowState:
+          $ref: '#/components/schemas/WorkflowState'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        activeDraft:
+          allOf:
+            - $ref: '#/components/schemas/TransactionDraft'
+          nullable: true
+
+    ChatMessage:
+      type: object
+      required:
+        - messageId
+        - sessionId
+        - role
+        - messageType
+        - createdAt
+      properties:
+        messageId:
+          type: string
+        sessionId:
+          type: string
+        role:
+          $ref: '#/components/schemas/MessageRole'
+        messageType:
+          $ref: '#/components/schemas/MessageType'
+        text:
+          type: string
+          nullable: true
+        contentBlocks:
+          type: array
+          items:
+            $ref: '#/components/schemas/ContentBlock'
+        createdAt:
+          type: string
+          format: date-time
+
+    ChatMessagePage:
+      type: object
+      required:
+        - items
+        - page
+        - pageSize
+        - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatMessage'
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        total:
+          type: integer
+
+    SendMessageRequest:
+      type: object
+      required:
+        - messageText
+      properties:
+        messageText:
+          type: string
+          minLength: 1
+          maxLength: 4000
+          example: Pay Tom 5000 HKD from my savings account.
+        clientMessageId:
+          type: string
+          nullable: true
+          example: cli-msg-001
+
+    UiEventRequest:
+      type: object
+      required:
+        - eventType
+        - sourceMessageId
+        - sourceBlockId
+      properties:
+        eventType:
+          $ref: '#/components/schemas/UiEventType'
+        sourceMessageId:
+          type: string
+        sourceBlockId:
+          type: string
+        selectedItemIds:
+          type: array
+          items:
+            type: string
+        formValues:
+          type: object
+          additionalProperties:
+            type: string
+        clientEventId:
+          type: string
+          nullable: true
+
+    ChatTurnResponse:
+      type: object
+      required:
+        - session
+        - assistantMessages
+        - workflowState
+        - serverTimestamp
+      properties:
+        session:
+          $ref: '#/components/schemas/ChatSessionDetail'
+        userEchoMessage:
+          allOf:
+            - $ref: '#/components/schemas/ChatMessage'
+          nullable: true
+        assistantMessages:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatMessage'
+        draftSummary:
+          allOf:
+            - $ref: '#/components/schemas/TransactionDraft'
+          nullable: true
+        workflowState:
+          $ref: '#/components/schemas/WorkflowState'
+        suggestedActions:
+          type: array
+          items:
+            $ref: '#/components/schemas/SuggestedAction'
+        serverTimestamp:
+          type: string
+          format: date-time
+
+    SuggestedAction:
+      type: object
+      required:
+        - actionType
+        - label
+      properties:
+        actionType:
+          type: string
+          enum:
+            - SEND_TEXT_HINT
+            - SELECT_FROM_LIST
+            - SUBMIT_FORM
+            - CONFIRM_TRANSFER
+            - CANCEL_TRANSFER
+            - START_NEW_CHAT
+        label:
+          type: string
+          example: Confirm transfer
+        value:
+          type: string
+          nullable: true
+
+    TransactionDraft:
+      type: object
+      required:
+        - draftId
+        - sessionId
+        - status
+        - workflowState
+        - lastUpdatedAt
+      properties:
+        draftId:
+          type: string
+        sessionId:
+          type: string
+        status:
+          $ref: '#/components/schemas/TransferStatus'
+        workflowState:
+          $ref: '#/components/schemas/WorkflowState'
+        sourceAccountId:
+          type: string
+          nullable: true
+        sourceAccountDisplay:
+          type: string
+          nullable: true
+        payeeId:
+          type: string
+          nullable: true
+        payeeDisplay:
+          type: string
+          nullable: true
+        amount:
+          type: number
+          format: decimal
+          nullable: true
+          example: 5000
+        currency:
+          type: string
+          nullable: true
+          example: HKD
+        paymentRail:
+          $ref: '#/components/schemas/PaymentRail'
+        note:
+          type: string
+          nullable: true
+        limitCheckStatus:
+          $ref: '#/components/schemas/LimitCheckStatus'
+        proposalId:
+          type: string
+          nullable: true
+        proposalSummary:
+          type: object
+          nullable: true
+          additionalProperties: true
+        transferReference:
+          type: string
+          nullable: true
+        lastUpdatedAt:
+          type: string
+          format: date-time
+
+    ContentBlock:
+      oneOf:
+        - $ref: '#/components/schemas/TextBlock'
+        - $ref: '#/components/schemas/SummaryCardBlock'
+        - $ref: '#/components/schemas/SelectableListBlock'
+        - $ref: '#/components/schemas/SimpleFormBlock'
+        - $ref: '#/components/schemas/ErrorCardBlock'
+        - $ref: '#/components/schemas/InfoCardBlock'
+      discriminator:
+        propertyName: type
+        mapping:
+          TEXT: '#/components/schemas/TextBlock'
+          SUMMARY_CARD: '#/components/schemas/SummaryCardBlock'
+          SELECTABLE_LIST: '#/components/schemas/SelectableListBlock'
+          SIMPLE_FORM: '#/components/schemas/SimpleFormBlock'
+          ERROR_CARD: '#/components/schemas/ErrorCardBlock'
+          INFO_CARD: '#/components/schemas/InfoCardBlock'
+
+    TextBlock:
+      type: object
+      required:
+        - blockId
+        - type
+        - text
+      properties:
+        blockId:
+          type: string
+        type:
+          type: string
+          enum: [TEXT]
+        title:
+          type: string
+          nullable: true
+        text:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+
+    SummaryCardBlock:
+      type: object
+      required:
+        - blockId
+        - type
+        - title
+        - fields
+      properties:
+        blockId:
+          type: string
+        type:
+          type: string
+          enum: [SUMMARY_CARD]
+        title:
+          type: string
+          example: Transfer summary
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/DisplayField'
+        metadata:
+          type: object
+          additionalProperties: true
+
+    SelectableListBlock:
+      type: object
+      required:
+        - blockId
+        - type
+        - title
+        - selectionMode
+        - items
+      properties:
+        blockId:
+          type: string
+        type:
+          type: string
+          enum: [SELECTABLE_LIST]
+        title:
+          type: string
+        selectionMode:
+          type: string
+          enum: [SINGLE, MULTI]
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SelectableItem'
+        metadata:
+          type: object
+          additionalProperties: true
+
+    SimpleFormBlock:
+      type: object
+      required:
+        - blockId
+        - type
+        - title
+        - fields
+      properties:
+        blockId:
+          type: string
+        type:
+          type: string
+          enum: [SIMPLE_FORM]
+        title:
+          type: string
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/FormField'
+        submitLabel:
+          type: string
+          nullable: true
+          example: Submit
+        metadata:
+          type: object
+          additionalProperties: true
+
+    ErrorCardBlock:
+      type: object
+      required:
+        - blockId
+        - type
+        - title
+        - text
+      properties:
+        blockId:
+          type: string
+        type:
+          type: string
+          enum: [ERROR_CARD]
+        title:
+          type: string
+          example: Unable to continue
+        text:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+
+    InfoCardBlock:
+      type: object
+      required:
+        - blockId
+        - type
+        - title
+        - text
+      properties:
+        blockId:
+          type: string
+        type:
+          type: string
+          enum: [INFO_CARD]
+        title:
+          type: string
+        text:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+
+    SelectableItem:
+      type: object
+      required:
+        - itemId
+        - label
+      properties:
+        itemId:
+          type: string
+        label:
+          type: string
+        description:
+          type: string
+          nullable: true
+        value:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+
+    FormField:
+      type: object
+      required:
+        - fieldId
+        - label
+        - fieldType
+      properties:
+        fieldId:
+          type: string
+        label:
+          type: string
+        fieldType:
+          type: string
+          enum: [TEXT, NUMBER, CURRENCY, SELECT]
+        required:
+          type: boolean
+          default: false
+        placeholder:
+          type: string
+          nullable: true
+        options:
+          type: array
+          items:
+            $ref: '#/components/schemas/SelectableItem'
+
+    DisplayField:
+      type: object
+      required:
+        - label
+        - value
+      properties:
+        label:
+          type: string
+        value:
+          type: string
+
+    ErrorResponse:
+      type: object
+      required:
+        - code
+        - message
+        - timestamp
+      properties:
+        code:
+          type: string
+          example: CHAT2PAY-400
+        message:
+          type: string
+          example: Invalid request payload.
+        details:
+          type: array
+          items:
+            type: string
+        timestamp:
+          type: string
+          format: date-time
+
+    ProfileStatus:
+      type: string
+      enum:
+        - ACTIVE
+        - INACTIVE
+
+    ChatSessionStatus:
+      type: string
+      enum:
+        - ACTIVE
+        - COMPLETED
+        - CANCELLED
+        - ARCHIVED
+
+    WorkflowState:
+      type: string
+      enum:
+        - IDLE
+        - COLLECTING_TRANSFER_INFO
+        - RESOLVING_AMBIGUITY
+        - READY_FOR_PAYMENT_OPTIONS
+        - READY_FOR_LIMIT_CHECK
+        - READY_FOR_PROPOSE
+        - AWAITING_USER_CONFIRMATION
+        - READY_FOR_CONFIRM
+        - COMPLETED
+        - FAILED
+        - CANCELLED
+
+    TransferStatus:
+      type: string
+      enum:
+        - DRAFT
+        - PROPOSED
+        - CONFIRMED
+        - FAILED
+        - CANCELLED
+
+    MessageRole:
+      type: string
+      enum:
+        - USER
+        - ASSISTANT
+        - SYSTEM
+
+    MessageType:
+      type: string
+      enum:
+        - TEXT
+        - CARD
+        - LIST
+        - FORM
+        - UI_EVENT
+
+    UiEventType:
+      type: string
+      enum:
+        - SELECT_ITEM
+        - SUBMIT_FORM
+        - CLICK_ACTION
+
+    PaymentRail:
+      type: string
+      nullable: true
+      enum:
+        - GDLV
+        - GDRIA
+        - ORTT
+
+    LimitCheckStatus:
+      type: string
+      nullable: true
+      enum:
+        - NOT_STARTED
+        - PASSED
+        - FAILED
