@@ -1,0 +1,48 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: chat2pay-app
+
+chat2pay:
+  security:
+    shared-password: tb123
+  llm:
+    enabled: true
+    base-url: http://localhost:8000
+    chat-path: /api/chat
+    fallback-to-heuristics: true
+  demo:
+    default-source-account-id: acct_hk_primary_savings
+    default-source-account-display: Primary Savings • 123-456-001
+    profiles:
+      - id: 01J0CHAT2PAYPROFILE000000001
+        code: HK_STAFF_001
+        username: payment10
+        display-name: Payment 10
+        avatar-url:
+        mock-customer-id: CUST0001
+        locale: en-HK
+        status: ACTIVE
+        supported-journey-types:
+          - DOMESTIC_EXISTING_PAYEE
+  downstream:
+    mock-enabled: true
+    login:
+      url-template: https://testdataservices.apps.cf.wgdc-dn-03.cloud.uk.abcd/dsp/entity/HK/{username}/SAML3/30
+      code: 123123
+    payee:
+      url: https://mmf-payee-management--hk-tktk-banking-1.abcd-dsvc-papi-hk01-tktk-cert.svc.default.shp.ape1.pre-prod.cloud.abcd/payees
+      payee-category: INDIVIDUAL
+      payee-type: "2"
+      mock-payees:
+        - payee-id-index: demo-payee-001
+          payee-type: "6"
+          name: BOB
+          description: Registered local payee
+    payment:
+      confirm-url: https://dcc-hk-tktk-mvmny-domestic-payments-papi-3.abcd-dsvc-papi-hk01-tktk-cert.svc.default.shp.ape1.pre-prod.cloud.abcd/confirm-domestic-payments
+      default-currency: HKD
+      debit-account-acn: VEdTRlNCU0dTQlNHEpP3avL8TimV5LF2nbqGbba2fUVfkHsOGmwg9K1t43GQJgS5mnXu3_EvF0zwJmeFRslRn_min_CT9p_wuTR7nwoWHNdZuxAFiVO2GPQ=
+      product-category-code: CUR
