@@ -49,10 +49,11 @@ never calls downstream payment APIs directly.
    The current UI stays largely as-is, but the business flow must move into the
    Spring Boot backend.
 
-2. **LLM assists; backend decides.**
-   LLM output may help with intent detection, slot extraction, and response
-   phrasing. Workflow transitions and downstream side effects remain deterministic
-   backend decisions.
+2. **LLM plans within guardrails; backend executes.**
+   The backend should expose a bounded tool set to the LLM-backed planner so the
+   model can decide whether to ask the user for more information, call a
+   downstream-backed tool, show a confirmation, or stop. High-risk side effects
+   still require backend guardrails and explicit user confirmation.
 
 3. **Current domestic payment matching is deterministic.**
    For the first POC slice, payee resolution should mirror
@@ -198,8 +199,9 @@ not be materially redesigned.
 | `DomesticExistingPayeeJourney` | Current POC flow implementation |
 | `UnsupportedRequestResponder` | Return stable unsupported-operation responses |
 | `ConversationManager` | Load and persist session, messages, draft, and workflow logs |
-| `LlmGateway` | Provider-neutral LLM adapter |
+| `LlmGateway` | Provider-neutral backend planning agent adapter |
 | `PayeeMatcher` | Deterministically match free-text payee names against payee list data |
+| `JourneyToolRegistry` | Register backend tools that the planner may choose from |
 | `DownstreamTokenService` | Obtain SAML token from `LOGIN_URL` for every downstream call |
 | `PayeeClient` | Call `PAYEE_URL` using the current profile context after SAML acquisition |
 | `ConfirmPaymentClient` | Call `CONFIRM_PAYMENT_URL` using the current draft and downstream auth context |
@@ -236,16 +238,20 @@ the local service described in `docs/10-local_LLM.md`, typically through
 
 Typical uses:
 
-- detect whether the user is asking for a supported payment journey
+- plan the next backend action from a bounded set such as `ASK_USER`,
+  `CALL_TOOL`, `SHOW_CONFIRMATION`, `COMPLETE`, `UNSUPPORTED`, or `CANCEL`
 - extract payee and amount candidates from free text
+- consume backend tool results and decide whether to continue, clarify, or stop
 - produce short clarification phrasing when deterministic templates are not
   enough
 
 Important limitation for the first journey:
 
-- do not use the LLM to decide the final payee match
-- use backend deterministic matching against `commonPayeeDetail.name`
-- do not require function calling for the first POC slice
+- do not let the LLM free-form arbitrary backend actions
+- expose only bounded backend tools such as registered payee lookup and domestic
+  payment confirmation
+- keep final payee matching deterministic against `commonPayeeDetail.name`
+- do not require provider-specific function calling for the first POC slice
 
 ### 7.2 Future Provider Compatibility
 
@@ -253,9 +259,8 @@ The backend must not expose provider-specific behavior to the frontend.
 Introduce a provider-neutral interface such as:
 
 ```java
-public interface LlmProvider {
-    ParsedIntent parseIntent(ChatTurnContext context);
-    AssistantCopy generateAssistantCopy(AssistantCopyRequest request);
+public interface JourneyAgentPlanner {
+    JourneyAgentDecision plan(JourneyAgentContext context);
 }
 ```
 

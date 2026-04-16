@@ -1,5 +1,6 @@
 package com.chat2pay.app.domain;
 
+import com.chat2pay.app.integration.downstream.RegisteredPayee;
 import java.util.List;
 
 public record PayeeMatchResult(List<RegisteredPayee> matches) {

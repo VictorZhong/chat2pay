@@ -1,4 +1,4 @@
-package com.chat2pay.app.domain;
+package com.chat2pay.app.integration.downstream;
 
 public record RegisteredPayee(
         String payeeIdIndex,

@@ -1,16 +1,11 @@
-package com.chat2pay.app.integration.downstream.payment;
+package com.chat2pay.app.integration.downstream;
 
-import com.chat2pay.app.application.journey.DomesticPaymentClient;
 import com.chat2pay.app.config.Chat2PayProperties;
-import com.chat2pay.app.domain.PaymentConfirmationResult;
 import com.chat2pay.app.domain.PaymentDraft;
 import com.chat2pay.app.domain.Profile;
-import com.chat2pay.app.integration.downstream.DownstreamHeadersFactory;
-import com.chat2pay.app.integration.downstream.auth.DownstreamTokenService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.LocalDate;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpHeaders;
@@ -62,24 +57,23 @@ public class HttpDomesticPaymentClient implements DomesticPaymentClient {
         }
     }
 
-    private Map<String, Object> buildPayload(PaymentDraft draft) {
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("debitAccount", Map.of(
-                "debitAccountIdentifier", Map.of(
-                        "acn", properties.getDownstream().getPayment().getDebitAccountAcn(),
-                        "productCategoryCode", properties.getDownstream().getPayment().getProductCategoryCode()),
-                "currency", properties.getDownstream().getPayment().getDefaultCurrency()));
-        payload.put("transactionAmount", Map.of(
-                "amount", draft.getAmount(),
-                "currencyCode", draft.getCurrency()));
-        payload.put("transactionSchedule", Map.of(
-                "scheduleType", "NOW",
-                "scheduledDate", LocalDate.now().toString()));
-        payload.put("transactionMemo", Map.of());
-        payload.put("payeeType", draft.getPayeeType());
-        payload.put("pyeeIdIndex", draft.getPayeeIdIndex());
-        payload.put("payeeSuspiciousIndicator", false);
-        payload.put("creditAmount", Map.of("currencyCode", draft.getCurrency()));
-        return payload;
+    private ConfirmDomesticPaymentRequest buildPayload(PaymentDraft draft) {
+        return new ConfirmDomesticPaymentRequest(
+                new ConfirmDomesticPaymentRequest.DebitAccount(
+                        new ConfirmDomesticPaymentRequest.DebitAccountIdentifier(
+                                properties.getDownstream().getPayment().getDebitAccountAcn(),
+                                properties.getDownstream().getPayment().getProductCategoryCode()),
+                        properties.getDownstream().getPayment().getDefaultCurrency()),
+                new ConfirmDomesticPaymentRequest.TransactionAmount(
+                        draft.getAmount(),
+                        draft.getCurrency()),
+                new ConfirmDomesticPaymentRequest.TransactionSchedule(
+                        "NOW",
+                        LocalDate.now().toString()),
+                Map.of(),
+                draft.getPayeeType(),
+                draft.getPayeeIdIndex(),
+                false,
+                new ConfirmDomesticPaymentRequest.CreditAmount(draft.getCurrency()));
     }
 }

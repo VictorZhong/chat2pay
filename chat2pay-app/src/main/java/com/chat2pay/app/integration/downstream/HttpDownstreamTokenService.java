@@ -1,4 +1,4 @@
-package com.chat2pay.app.integration.downstream.auth;
+package com.chat2pay.app.integration.downstream;
 
 import com.chat2pay.app.config.Chat2PayProperties;
 import com.chat2pay.app.domain.Profile;

@@ -106,9 +106,6 @@ chat2pay-app/
     │   ├── integration/
     │   │   ├── llm/
     │   │   └── downstream/
-    │   │       ├── auth/
-    │   │       ├── payee/
-    │   │       └── payment/
     │   ├── persistence/
     │   ├── config/
     │   └── common/
@@ -123,11 +120,9 @@ chat2pay-app/
 |---|---|
 | `api/` | REST controllers exposed to the frontend |
 | `application/chat/` | Turn orchestration and response assembly |
-| `application/journey/` | Journey registry and specific handlers such as domestic existing payee |
+| `application/journey/` | Journey handlers, backend planning agent loop, and tool registry/handlers that turn tool results into next-step decisions |
 | `integration/llm/` | Local HTTP LLM adapter and future remote provider adapter |
-| `integration/downstream/auth/` | Login-to-SAML token handling |
-| `integration/downstream/payee/` | `PAYEE_URL` client |
-| `integration/downstream/payment/` | `CONFIRM_PAYMENT_URL` client |
+| `integration/downstream/` | All downstream clients, auth helpers, and downstream request/response models |
 | `persistence/` | Repositories and database mappings |
 
 ## 7. Contract Placement

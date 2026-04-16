@@ -1,7 +1,6 @@
-package com.chat2pay.app.application.journey;
+package com.chat2pay.app.integration.downstream;
 
 import com.chat2pay.app.domain.Profile;
-import com.chat2pay.app.domain.RegisteredPayee;
 import java.util.List;
 
 public interface RegisteredPayeeDirectoryClient {

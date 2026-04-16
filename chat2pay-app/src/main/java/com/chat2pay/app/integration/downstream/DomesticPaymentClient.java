@@ -1,6 +1,5 @@
-package com.chat2pay.app.application.journey;
+package com.chat2pay.app.integration.downstream;
 
-import com.chat2pay.app.domain.PaymentConfirmationResult;
 import com.chat2pay.app.domain.PaymentDraft;
 import com.chat2pay.app.domain.Profile;
 

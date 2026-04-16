@@ -1,9 +1,7 @@
-package com.chat2pay.app.integration.downstream.payee;
+package com.chat2pay.app.integration.downstream;
 
-import com.chat2pay.app.application.journey.RegisteredPayeeDirectoryClient;
 import com.chat2pay.app.config.Chat2PayProperties;
 import com.chat2pay.app.domain.Profile;
-import com.chat2pay.app.domain.RegisteredPayee;
 import java.util.List;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;

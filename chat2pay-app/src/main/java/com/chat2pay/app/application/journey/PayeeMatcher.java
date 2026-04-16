@@ -1,7 +1,7 @@
 package com.chat2pay.app.application.journey;
 
 import com.chat2pay.app.domain.PayeeMatchResult;
-import com.chat2pay.app.domain.RegisteredPayee;
+import com.chat2pay.app.integration.downstream.RegisteredPayee;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
