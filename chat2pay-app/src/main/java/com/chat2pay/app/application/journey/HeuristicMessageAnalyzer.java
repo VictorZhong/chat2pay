@@ -16,10 +16,19 @@ public class HeuristicMessageAnalyzer {
             Pattern.CASE_INSENSITIVE);
     private static final Pattern NOTE_PATTERN = Pattern.compile("\\b(?:for|note|remark)\\s+(.+)$", Pattern.CASE_INSENSITIVE);
     private static final Pattern SUPPORTED_INTENT_PATTERN = Pattern.compile("\\b(pay|send|transfer|remit)\\b", Pattern.CASE_INSENSITIVE);
+    private static final Pattern BROWSE_PAYEES_PATTERN = Pattern.compile(
+            "\\b(show|list|see|view|display|what(?:'s|\\s+are)?|which)\\b.*\\b(payees?|beneficiaries?)\\b",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern CREATE_PAYEE_PATTERN = Pattern.compile(
+            "\\b(add|create|new|register)\\b.*\\b(payee|beneficiary)\\b",
+            Pattern.CASE_INSENSITIVE);
     private static final Pattern CONFIRM_PATTERN = Pattern.compile("\\b(confirm|approve|go ahead)\\b", Pattern.CASE_INSENSITIVE);
     private static final Pattern CANCEL_PATTERN = Pattern.compile("\\b(cancel|stop|abort)\\b", Pattern.CASE_INSENSITIVE);
+    private static final Pattern CHANGE_PAYEE_PATTERN = Pattern.compile(
+            "\\b(change|switch)\\b.*\\b(payee|person|recipient|beneficiary)\\b|\\b(another|someone else|different person|different payee)\\b",
+            Pattern.CASE_INSENSITIVE);
     private static final Pattern UNSUPPORTED_PATTERN = Pattern.compile(
-            "\\b(international|overseas|abroad|swift|fx|foreign|new payee|add payee|register payee)\\b",
+            "\\b(international|overseas|abroad|swift|fx|foreign)\\b",
             Pattern.CASE_INSENSITIVE);
 
     public MessageAnalysis analyze(String message) {
@@ -32,9 +41,12 @@ public class HeuristicMessageAnalyzer {
 
         return new MessageAnalysis(
                 SUPPORTED_INTENT_PATTERN.matcher(normalizedMessage).find(),
-                UNSUPPORTED_PATTERN.matcher(normalizedMessage).find(),
+                BROWSE_PAYEES_PATTERN.matcher(normalizedMessage).find(),
+                UNSUPPORTED_PATTERN.matcher(normalizedMessage).find() || CREATE_PAYEE_PATTERN.matcher(normalizedMessage).find(),
+                CREATE_PAYEE_PATTERN.matcher(normalizedMessage).find(),
                 CONFIRM_PATTERN.matcher(normalizedMessage).find(),
                 CANCEL_PATTERN.matcher(normalizedMessage).find(),
+                CHANGE_PAYEE_PATTERN.matcher(normalizedMessage).find(),
                 parsePayeeName(normalizedMessage),
                 amount,
                 currency,

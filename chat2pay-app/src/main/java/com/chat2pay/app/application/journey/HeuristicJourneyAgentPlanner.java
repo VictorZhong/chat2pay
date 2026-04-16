@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class HeuristicJourneyAgentPlanner implements JourneyAgentPlanner {
 
+    public static final String TOOL_BROWSE_REGISTERED_PAYEES = "browse_registered_payees";
     public static final String TOOL_LIST_REGISTERED_PAYEES = "list_registered_payees";
     public static final String TOOL_CONFIRM_DOMESTIC_PAYMENT = "confirm_domestic_payment";
 
@@ -44,6 +45,15 @@ public class HeuristicJourneyAgentPlanner implements JourneyAgentPlanner {
                 return new JourneyAgentDecision(
                         JourneyAction.FAIL,
                         "The last backend step failed. Please review the details and try again.",
+                        null,
+                        List.of(),
+                        update);
+            }
+
+            if (TOOL_BROWSE_REGISTERED_PAYEES.equals(latestToolResult.toolName())) {
+                return new JourneyAgentDecision(
+                        JourneyAction.SHOW_PAYEE_LIST,
+                        "Here are your registered payees. Select one to view its details.",
                         null,
                         List.of(),
                         update);
@@ -117,13 +127,46 @@ public class HeuristicJourneyAgentPlanner implements JourneyAgentPlanner {
                     update);
         }
 
-        if (analysis != null && analysis.unsupportedRequest() && context.draft() == null) {
+        if (analysis != null && analysis.createPayeeIntent()) {
             return new JourneyAgentDecision(
                     JourneyAction.UNSUPPORTED,
-                    "This POC currently supports domestic payments to existing payees only.",
+                    "Creating a new payee is not supported in this POC yet. I can still show your registered payees or help you pay an existing payee.",
                     null,
                     List.of(),
                     update);
+        }
+
+        if (analysis != null && analysis.browsePayeesIntent()) {
+            return new JourneyAgentDecision(
+                    JourneyAction.CALL_TOOL,
+                    "I'll fetch your registered payees now.",
+                    TOOL_BROWSE_REGISTERED_PAYEES,
+                    List.of(),
+                    update);
+        }
+
+        if (analysis != null && analysis.unsupportedRequest()) {
+            return new JourneyAgentDecision(
+                    JourneyAction.UNSUPPORTED,
+                    "This POC currently supports browsing registered payees and domestic payments to existing payees only.",
+                    null,
+                    List.of(),
+                    update);
+        }
+
+        if (signal.explicitPayeeChangeRequested() && update.payeeNameInput() == null) {
+            return new JourneyAgentDecision(
+                    JourneyAction.ASK_USER,
+                    "Sure. Which registered payee would you like instead?",
+                    null,
+                    List.of("payeeName"),
+                    new JourneyDraftUpdate(
+                            update.payeeNameInput(),
+                            update.amount(),
+                            update.currency(),
+                            update.note(),
+                            update.selectedPayeeId(),
+                            true));
         }
 
         if (signal.explicitConfirmationRequested()) {
@@ -147,7 +190,7 @@ public class HeuristicJourneyAgentPlanner implements JourneyAgentPlanner {
         if (!signal.hasStartedJourneySignal() && context.draft() == null) {
             return new JourneyAgentDecision(
                     JourneyAction.UNSUPPORTED,
-                    "This POC currently supports domestic payments to existing payees only.",
+                    "This POC currently supports browsing registered payees and domestic payments to existing payees only.",
                     null,
                     List.of(),
                     update);
@@ -184,8 +227,8 @@ public class HeuristicJourneyAgentPlanner implements JourneyAgentPlanner {
         String payeeName = coalesce(
                 emptyToNull(formValues.get("payee")),
                 analysis != null ? emptyToNull(analysis.payeeName()) : null);
-        java.math.BigDecimal amount = formValues.containsKey("amount") && formValues.get("amount") != null && !formValues.get("amount").isBlank()
-                ? new java.math.BigDecimal(formValues.get("amount").trim())
+        BigDecimal amount = formValues.containsKey("amount") && formValues.get("amount") != null && !formValues.get("amount").isBlank()
+                ? new BigDecimal(formValues.get("amount").trim())
                 : analysis != null ? analysis.amount() : null;
         String currency = coalesce(
                 emptyToNull(formValues.get("currency")),
@@ -199,7 +242,8 @@ public class HeuristicJourneyAgentPlanner implements JourneyAgentPlanner {
                 amount,
                 currency,
                 note,
-                signal.selectedItemId());
+                signal.selectedItemId(),
+                false);
     }
 
     private List<String> missingInputs(EffectiveDraftState effectiveDraft) {
@@ -239,9 +283,11 @@ public class HeuristicJourneyAgentPlanner implements JourneyAgentPlanner {
             RegisteredPayee selectedPayee = draft == null || update.selectedPayeeId() == null
                     ? null
                     : draft.getCandidatePayees().get(update.selectedPayeeId());
-            String payeeNameInput = update.payeeNameInput() != null && !update.payeeNameInput().isBlank()
-                    ? update.payeeNameInput().trim()
-                    : draft != null ? draft.getPayeeNameInput() : null;
+            String payeeNameInput = update.resetPayeeSelection()
+                    ? null
+                    : update.payeeNameInput() != null && !update.payeeNameInput().isBlank()
+                            ? update.payeeNameInput().trim()
+                            : draft != null ? draft.getPayeeNameInput() : null;
             BigDecimal amount = update.amount() != null
                     ? update.amount()
                     : draft != null ? draft.getAmount() : null;
@@ -250,9 +296,11 @@ public class HeuristicJourneyAgentPlanner implements JourneyAgentPlanner {
                     : draft != null && draft.getCurrency() != null && !draft.getCurrency().isBlank()
                             ? draft.getCurrency()
                             : amount != null ? "HKD" : null;
-            String payeeIdIndex = selectedPayee != null
-                    ? selectedPayee.payeeIdIndex()
-                    : draft != null ? draft.getPayeeIdIndex() : null;
+            String payeeIdIndex = update.resetPayeeSelection()
+                    ? null
+                    : selectedPayee != null
+                            ? selectedPayee.payeeIdIndex()
+                            : draft != null ? draft.getPayeeIdIndex() : null;
             return new EffectiveDraftState(payeeNameInput, amount, currency, payeeIdIndex);
         }
     }

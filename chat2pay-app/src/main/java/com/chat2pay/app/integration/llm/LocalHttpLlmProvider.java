@@ -108,10 +108,12 @@ public class LocalHttpLlmProvider implements JourneyAgentPlanner {
                 You do not call APIs directly. You choose the next backend action.
 
                 Supported journey in this session: domestic payment to an existing registered payee only.
+                Additional supported utility in this session: browse the registered payee directory.
 
                 Available actions:
                 - ASK_USER
                 - CALL_TOOL
+                - SHOW_PAYEE_LIST
                 - SHOW_CONFIRMATION
                 - COMPLETE
                 - FAIL
@@ -123,15 +125,17 @@ public class LocalHttpLlmProvider implements JourneyAgentPlanner {
 
                 Guardrails:
                 - never choose %s unless the latest user signal is an explicit confirmation
+                - if the user asks to browse registered payees, call the browse payees tool and then choose SHOW_PAYEE_LIST
                 - if information is missing, choose ASK_USER
                 - if the last tool result is ambiguous, ask the user to select the payee
                 - if the last tool result is unique and the draft is complete, choose SHOW_CONFIRMATION
                 - if the last confirm tool result succeeded, choose COMPLETE
-                - if the request is outside this POC, choose UNSUPPORTED
+                - if the user asks to create a new payee or make an unsupported payment type, choose UNSUPPORTED
+                - if the user wants to change to another payee and no new payee name is known yet, choose ASK_USER and set draftUpdate.resetPayeeSelection=true
 
                 Return JSON only with this exact shape:
                 {
-                  "action": "ASK_USER|CALL_TOOL|SHOW_CONFIRMATION|COMPLETE|FAIL|UNSUPPORTED|CANCEL",
+                  "action": "ASK_USER|CALL_TOOL|SHOW_PAYEE_LIST|SHOW_CONFIRMATION|COMPLETE|FAIL|UNSUPPORTED|CANCEL",
                   "assistantMessage": "string",
                   "toolName": "string|null",
                   "requiredInputs": ["payeeName"|"amount"|"currency"|"selectedPayeeId"],
@@ -140,7 +144,8 @@ public class LocalHttpLlmProvider implements JourneyAgentPlanner {
                     "amount": 123.45,
                     "currency": "string|null",
                     "note": "string|null",
-                    "selectedPayeeId": "string|null"
+                    "selectedPayeeId": "string|null",
+                    "resetPayeeSelection": true
                   }
                 }
 
@@ -180,7 +185,8 @@ public class LocalHttpLlmProvider implements JourneyAgentPlanner {
                             parsed.draftUpdate().amount(),
                             parsed.draftUpdate().currency(),
                             parsed.draftUpdate().note(),
-                            parsed.draftUpdate().selectedPayeeId());
+                            parsed.draftUpdate().selectedPayeeId(),
+                            Boolean.TRUE.equals(parsed.draftUpdate().resetPayeeSelection()));
             return new JourneyAgentDecision(
                     action,
                     parsed.assistantMessage(),
@@ -224,6 +230,7 @@ public class LocalHttpLlmProvider implements JourneyAgentPlanner {
             BigDecimal amount,
             String currency,
             String note,
-            String selectedPayeeId) {
+            String selectedPayeeId,
+            Boolean resetPayeeSelection) {
     }
 }

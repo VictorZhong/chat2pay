@@ -18,7 +18,7 @@ public record JourneyUserSignal(
         return hasStructuredFormInput()
                 || selectedItemId != null
                 || clickedActionId != null
-                || (analysis != null && analysis.supportedPaymentIntent());
+                || (analysis != null && (analysis.supportedPaymentIntent() || analysis.browsePayeesIntent()));
     }
 
     public boolean explicitConfirmationRequested() {
@@ -29,5 +29,10 @@ public record JourneyUserSignal(
     public boolean explicitCancellationRequested() {
         return "CANCEL_TRANSFER".equals(clickedActionId)
                 || (analysis != null && analysis.cancelIntent());
+    }
+
+    public boolean explicitPayeeChangeRequested() {
+        return "CHANGE_PAYEE".equals(clickedActionId)
+                || (analysis != null && analysis.changePayeeIntent());
     }
 }

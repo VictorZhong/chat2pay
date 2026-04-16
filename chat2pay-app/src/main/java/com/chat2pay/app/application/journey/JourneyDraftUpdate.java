@@ -7,10 +7,11 @@ public record JourneyDraftUpdate(
         BigDecimal amount,
         String currency,
         String note,
-        String selectedPayeeId) {
+        String selectedPayeeId,
+        boolean resetPayeeSelection) {
 
     public static JourneyDraftUpdate empty() {
-        return new JourneyDraftUpdate(null, null, null, null, null);
+        return new JourneyDraftUpdate(null, null, null, null, null, false);
     }
 
     public boolean isEmpty() {
@@ -18,7 +19,8 @@ public record JourneyDraftUpdate(
                 && amount == null
                 && currency == null
                 && note == null
-                && selectedPayeeId == null;
+                && selectedPayeeId == null
+                && !resetPayeeSelection;
     }
 
     public JourneyDraftUpdate mergePreferNonNull(JourneyDraftUpdate fallback) {
@@ -31,6 +33,7 @@ public record JourneyDraftUpdate(
                 amount != null ? amount : fallback.amount,
                 currency != null && !currency.isBlank() ? currency : fallback.currency,
                 note != null && !note.isBlank() ? note : fallback.note,
-                selectedPayeeId != null && !selectedPayeeId.isBlank() ? selectedPayeeId : fallback.selectedPayeeId);
+                selectedPayeeId != null && !selectedPayeeId.isBlank() ? selectedPayeeId : fallback.selectedPayeeId,
+                resetPayeeSelection || fallback.resetPayeeSelection);
     }
 }

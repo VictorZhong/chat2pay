@@ -29,6 +29,11 @@ public class JourneyToolRegistry {
                 .toList();
     }
 
+    public boolean requiresDraft(String toolName) {
+        JourneyToolHandler handler = handlersByName.get(toolName);
+        return handler != null && handler.definition().requiresDraft();
+    }
+
     public JourneyToolResult execute(String toolName, JourneyToolExecutionContext context) {
         JourneyToolHandler handler = handlersByName.get(toolName);
         if (handler == null) {

@@ -126,6 +126,10 @@ public class DomesticExistingPayeeJourney {
                 case ASK_USER -> {
                     return askUserOutcome(session, draft, decision);
                 }
+                case SHOW_PAYEE_LIST -> {
+                    JourneyToolResult latestToolResult = toolResults.isEmpty() ? null : toolResults.getLast();
+                    return showPayeeListOutcome(session, latestToolResult, decision.assistantMessage());
+                }
                 case SHOW_CONFIRMATION -> {
                     return showConfirmationOutcome(session, draft, decision);
                 }
@@ -169,7 +173,8 @@ public class DomesticExistingPayeeJourney {
 
     private boolean decisionRequiresDraft(JourneyAgentDecision decision) {
         return decision.action() == JourneyAction.ASK_USER
-                || decision.action() == JourneyAction.CALL_TOOL
+                || (decision.action() == JourneyAction.CALL_TOOL
+                        && journeyToolRegistry.requiresDraft(decision.toolName()))
                 || decision.action() == JourneyAction.SHOW_CONFIRMATION
                 || decision.action() == JourneyAction.COMPLETE
                 || decision.action() == JourneyAction.FAIL;
@@ -181,9 +186,6 @@ public class DomesticExistingPayeeJourney {
             PaymentDraft draft,
             JourneyUserSignal signal,
             JourneyAgentDecision decision) {
-        if (draft == null) {
-            return JourneyToolResult.failure(decision.toolName(), "No active payment draft exists.");
-        }
         return journeyToolRegistry.execute(
                 decision.toolName(),
                 new JourneyToolExecutionContext(profile, session, draft, signal));
@@ -228,6 +230,44 @@ public class DomesticExistingPayeeJourney {
                 buildMissingInputForm(decision.requiredInputs(), draft)));
     }
 
+    private TurnOutcome showPayeeListOutcome(
+            ConversationSession session,
+            JourneyToolResult latestToolResult,
+            String assistantMessage) {
+        if (latestToolResult == null
+                || !HeuristicJourneyAgentPlanner.TOOL_BROWSE_REGISTERED_PAYEES.equals(latestToolResult.toolName())) {
+            return failOutcome(session, session.getActiveDraft(), "The payee directory step is missing its browse result.");
+        }
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> payees = (List<Map<String, Object>>) latestToolResult.payload()
+                .getOrDefault("payees", List.of());
+
+        if (session.getActiveDraft() == null) {
+            session.setWorkflowState(WorkflowState.IDLE);
+        }
+
+        if (payees.isEmpty()) {
+            return TurnOutcome.of(List.of(blockFactory.info(
+                    "No registered payees",
+                    defaultMessage(assistantMessage, "No registered payees were returned for this profile."))));
+        }
+
+        return TurnOutcome.of(List.of(
+                blockFactory.text(defaultMessage(
+                        assistantMessage,
+                        "Here are your registered payees. Select one to view its details.")),
+                blockFactory.selectableList(
+                        "Registered payees",
+                        payees.stream()
+                                .map(this::toPayeeDirectoryItem)
+                                .toList(),
+                        Map.of(
+                                "stage", "PAYEE_DIRECTORY",
+                                "interactionMode", "OPEN_DETAIL_MODAL",
+                                "detailModalTitle", "Registered payee details"))));
+    }
+
     private TurnOutcome showConfirmationOutcome(ConversationSession session, PaymentDraft draft, JourneyAgentDecision decision) {
         if (draft == null || draft.getPayeeIdIndex() == null || draft.getAmount() == null) {
             return askUserOutcome(session, draft, new JourneyAgentDecision(
@@ -255,6 +295,7 @@ public class DomesticExistingPayeeJourney {
                                 buildReviewFields(draft),
                                 Map.of("actions", List.of(
                                         Map.of("id", "CONFIRM_TRANSFER", "label", "Confirm", "tone", "primary"),
+                                        Map.of("id", "CHANGE_PAYEE", "label", "Change payee", "tone", "secondary"),
                                         Map.of("id", "CANCEL_TRANSFER", "label", "Cancel", "tone", "secondary"))))),
                 List.of(
                         new ApiModels.SuggestedActionResponse("CONFIRM_TRANSFER", "Confirm transfer", "CONFIRM_TRANSFER"),
@@ -315,7 +356,7 @@ public class DomesticExistingPayeeJourney {
     private TurnOutcome unsupportedOutcome(String assistantMessage) {
         return TurnOutcome.of(List.of(blockFactory.info(
                 "Not supported in this POC",
-                defaultMessage(assistantMessage, "This POC currently supports domestic payments to existing payees only."))));
+                defaultMessage(assistantMessage, "This POC currently supports browsing registered payees and domestic payments to existing payees only."))));
     }
 
     private TurnOutcome failOutcome(ConversationSession session, PaymentDraft draft, String assistantMessage) {
@@ -349,6 +390,11 @@ public class DomesticExistingPayeeJourney {
     private void applyDraftUpdate(PaymentDraft draft, JourneyDraftUpdate update) {
         if (draft == null || update == null || update.isEmpty()) {
             return;
+        }
+
+        if (update.resetPayeeSelection()) {
+            draft.setPayeeNameInput(null);
+            clearResolvedPayee(draft);
         }
 
         if (update.payeeNameInput() != null && !update.payeeNameInput().isBlank()) {
@@ -469,6 +515,28 @@ public class DomesticExistingPayeeJourney {
             fields.add(new ApiModels.DisplayField("Note", draft.getNote()));
         }
         return List.copyOf(fields);
+    }
+
+    private ApiModels.SelectableItem toPayeeDirectoryItem(Map<String, Object> payee) {
+        String payeeIdIndex = String.valueOf(payee.getOrDefault("payeeIdIndex", ""));
+        String payeeType = String.valueOf(payee.getOrDefault("payeeType", ""));
+        String name = String.valueOf(payee.getOrDefault("name", "Registered payee"));
+        String description = String.valueOf(payee.getOrDefault("description", "Registered payee"));
+        List<Map<String, String>> detailFields = List.of(
+                Map.of("label", "Name", "value", name),
+                Map.of("label", "Payee ID", "value", payeeIdIndex),
+                Map.of("label", "Payee type", "value", payeeType),
+                Map.of("label", "Description", "value", description));
+        return new ApiModels.SelectableItem(
+                payeeIdIndex,
+                name,
+                description,
+                null,
+                Map.of(
+                        "detailTitle", name,
+                        "detailFields", detailFields,
+                        "payeeIdIndex", payeeIdIndex,
+                        "payeeType", payeeType));
     }
 
     private boolean requiresPayeeSelection(JourneyAgentDecision decision) {

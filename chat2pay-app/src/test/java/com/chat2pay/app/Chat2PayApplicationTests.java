@@ -100,6 +100,95 @@ class Chat2PayApplicationTests {
                 .contains("existing payees only");
     }
 
+    @Test
+    void browseRegisteredPayeesReturnsDirectoryListWithDetailMetadata() throws Exception {
+        String profileId = fetchFirstProfileId();
+        String sessionId = createSession(profileId);
+
+        JsonNode response = readJson(mockMvc.perform(post("/api/chat/sessions/{sessionId}/messages", sessionId)
+                        .header("X-Profile-Id", profileId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"messageText":"Show my payees"}
+                                """))
+                .andExpect(status().isOk())
+                .andReturn());
+
+        assertThat(response.path("session").path("status").asText()).isEqualTo("ACTIVE");
+        assertThat(response.path("workflowState").asText()).isEqualTo("IDLE");
+        assertThat(response.path("draftSummary").isMissingNode() || response.path("draftSummary").isNull()).isTrue();
+
+        JsonNode listBlock = response.path("assistantMessages").get(0).path("contentBlocks").get(1);
+        assertThat(listBlock.path("type").asText()).isEqualTo("SELECTABLE_LIST");
+        assertThat(listBlock.path("metadata").path("interactionMode").asText()).isEqualTo("OPEN_DETAIL_MODAL");
+        assertThat(listBlock.path("items").get(0).path("metadata").path("detailFields").isArray()).isTrue();
+    }
+
+    @Test
+    void changePayeeDuringReviewClearsResolvedPayeeAndAsksForReplacement() throws Exception {
+        String profileId = fetchFirstProfileId();
+        String sessionId = createSession(profileId);
+
+        readJson(mockMvc.perform(post("/api/chat/sessions/{sessionId}/messages", sessionId)
+                        .header("X-Profile-Id", profileId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"messageText":"Pay BOB 500 HKD"}
+                                """))
+                .andExpect(status().isOk())
+                .andReturn());
+
+        JsonNode changePayee = readJson(mockMvc.perform(post("/api/chat/sessions/{sessionId}/events", sessionId)
+                        .header("X-Profile-Id", profileId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "eventType":"CLICK_ACTION",
+                                  "sourceMessageId":"msg-review",
+                                  "sourceBlockId":"blk-review",
+                                  "selectedItemIds":["CHANGE_PAYEE"]
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andReturn());
+
+        assertThat(changePayee.path("session").path("status").asText()).isEqualTo("ACTIVE");
+        assertThat(changePayee.path("workflowState").asText()).isEqualTo("COLLECTING_PAYMENT_DETAILS");
+        assertThat(changePayee.path("draftSummary").path("payeeIdIndex").isNull()).isTrue();
+        assertThat(changePayee.path("draftSummary").path("payeeNameInput").isNull()).isTrue();
+        assertThat(changePayee.path("draftSummary").path("amount").decimalValue()).isEqualByComparingTo("500");
+
+        JsonNode formFields = changePayee.path("assistantMessages").get(0).path("contentBlocks").get(1).path("fields");
+        assertThat(formFields).hasSize(2);
+        assertThat(formFields.get(0).path("fieldId").asText()).isEqualTo("payee");
+    }
+
+    @Test
+    void cancelledSessionBecomesReadOnly() throws Exception {
+        String profileId = fetchFirstProfileId();
+        String sessionId = createSession(profileId);
+
+        JsonNode cancelled = readJson(mockMvc.perform(post("/api/chat/sessions/{sessionId}/messages", sessionId)
+                        .header("X-Profile-Id", profileId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"messageText":"Cancel"}
+                                """))
+                .andExpect(status().isOk())
+                .andReturn());
+
+        assertThat(cancelled.path("session").path("status").asText()).isEqualTo("CANCELLED");
+        assertThat(cancelled.path("workflowState").asText()).isEqualTo("CANCELLED");
+
+        mockMvc.perform(post("/api/chat/sessions/{sessionId}/messages", sessionId)
+                        .header("X-Profile-Id", profileId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"messageText":"Pay BOB 100 HKD"}
+                                """))
+                .andExpect(status().isBadRequest());
+    }
+
     private String createSession(String profileId) throws Exception {
         login(profileId);
         JsonNode createSession = readJson(mockMvc.perform(post("/api/chat/sessions")

@@ -22,7 +22,8 @@ public class ConfirmDomesticPaymentToolHandler implements JourneyToolHandler {
         return new JourneyToolDefinition(
                 HeuristicJourneyAgentPlanner.TOOL_CONFIRM_DOMESTIC_PAYMENT,
                 "Submit the domestic payment confirm API for the resolved payee and amount.",
-                "Use only after an explicit user confirmation and only when payeeIdIndex and amount are already known.");
+                "Use only after an explicit user confirmation and only when payeeIdIndex and amount are already known.",
+                true);
     }
 
     @Override

@@ -62,10 +62,10 @@ public class ChatApplicationService {
                 null,
                 List.of(
                         blockFactory.text("Hi " + firstName(profile.displayName())
-                                + ", I can help with domestic payments to existing payees."),
+                                + ", I can help with registered payee lookups and domestic payments to existing payees."),
                         blockFactory.info(
                                 "Try this",
-                                "Send a message like \"Pay BOB 500 HKD\" to start.")));
+                                "Try \"Show my payees\" or \"Pay BOB 500 HKD\".")));
         session.addMessage(welcomeMessage);
         conversationSessionRepository.save(session);
 

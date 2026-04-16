@@ -26,7 +26,8 @@ public class ListRegisteredPayeesToolHandler implements JourneyToolHandler {
         return new JourneyToolDefinition(
                 HeuristicJourneyAgentPlanner.TOOL_LIST_REGISTERED_PAYEES,
                 "Fetch the current user's registered payees and resolve the requested payee name against them.",
-                "Use only when draft.payeeNameInput exists and draft.payeeIdIndex is not resolved.");
+                "Use only when draft.payeeNameInput exists and draft.payeeIdIndex is not resolved.",
+                true);
     }
 
     @Override

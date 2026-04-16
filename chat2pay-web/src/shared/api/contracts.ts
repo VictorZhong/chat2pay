@@ -4,6 +4,9 @@ export type ChatSessionStatus = 'ACTIVE' | 'COMPLETED' | 'CANCELLED' | 'ARCHIVED
 
 export type WorkflowState =
   | 'IDLE'
+  | 'COLLECTING_PAYMENT_DETAILS'
+  | 'RESOLVING_PAYEE'
+  | 'CONFIRMING_PAYMENT'
   | 'COLLECTING_TRANSFER_INFO'
   | 'RESOLVING_AMBIGUITY'
   | 'READY_FOR_PAYMENT_OPTIONS'
@@ -15,7 +18,16 @@ export type WorkflowState =
   | 'FAILED'
   | 'CANCELLED';
 
-export type TransferStatus = 'DRAFT' | 'PROPOSED' | 'CONFIRMED' | 'FAILED' | 'CANCELLED';
+export type TransferStatus =
+  | 'DRAFT'
+  | 'READY_FOR_CONFIRMATION'
+  | 'CONFIRMING'
+  | 'PROPOSED'
+  | 'CONFIRMED'
+  | 'FAILED'
+  | 'CANCELLED';
+
+export type JourneyType = 'DOMESTIC_EXISTING_PAYEE';
 
 export type MessageRole = 'USER' | 'ASSISTANT' | 'SYSTEM';
 
@@ -36,6 +48,7 @@ export interface ProfileSummary {
   mockCustomerId: string;
   locale: string;
   status: ProfileStatus;
+  supportedJourneyTypes?: JourneyType[];
 }
 
 export interface CurrentUserContext {
@@ -45,6 +58,7 @@ export interface CurrentUserContext {
   avatarUrl: string | null;
   locale: string;
   loginMode: 'PROFILE_SELECTION';
+  supportedJourneyTypes?: JourneyType[];
 }
 
 export interface ProfileLoginRequest {
@@ -57,12 +71,22 @@ export interface DisplayField {
   value: string;
 }
 
+export type SelectableListInteractionMode = 'SUBMIT_SELECTION' | 'OPEN_DETAIL_MODAL';
+
+export interface SelectableItemDetailField {
+  label: string;
+  value: string;
+}
+
 export interface SelectableItem {
   itemId: string;
   label: string;
   description?: string | null;
   value?: string | null;
-  metadata?: Record<string, unknown>;
+  metadata?: Record<string, unknown> & {
+    detailTitle?: string;
+    detailFields?: SelectableItemDetailField[];
+  };
 }
 
 export interface FormField {
@@ -96,7 +120,10 @@ export interface SelectableListBlock {
   title: string;
   selectionMode: 'SINGLE' | 'MULTI';
   items: SelectableItem[];
-  metadata?: Record<string, unknown>;
+  metadata?: Record<string, unknown> & {
+    interactionMode?: SelectableListInteractionMode;
+    detailModalTitle?: string;
+  };
 }
 
 export interface SimpleFormBlock {
@@ -145,19 +172,26 @@ export interface ChatMessage {
 export interface TransactionDraft {
   draftId: string;
   sessionId: string;
+  journeyType?: JourneyType;
   status: TransferStatus;
   workflowState: WorkflowState;
   sourceAccountId?: string | null;
   sourceAccountDisplay?: string | null;
+  payeeNameInput?: string | null;
+  payeeIdIndex?: string | null;
+  payeeType?: string | null;
   payeeId?: string | null;
   payeeDisplay?: string | null;
   amount?: number | null;
   currency?: string | null;
-  paymentRail: PaymentRail;
+  paymentRail?: PaymentRail;
   note?: string | null;
-  limitCheckStatus: LimitCheckStatus;
+  limitCheckStatus?: LimitCheckStatus;
   proposalId?: string | null;
   proposalSummary?: Record<string, unknown> | null;
+  reviewSummary?: Record<string, unknown> | null;
+  downstreamReferences?: Record<string, unknown> | null;
+  additionalContext?: Record<string, unknown> | null;
   transferReference?: string | null;
   lastUpdatedAt: string;
 }
@@ -167,6 +201,7 @@ export interface ChatSessionSummary {
   title: string;
   status: ChatSessionStatus;
   workflowState: WorkflowState;
+  journeyType?: JourneyType | null;
   lastAssistantText?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -177,6 +212,7 @@ export interface ChatSessionDetail {
   title: string;
   status: ChatSessionStatus;
   workflowState: WorkflowState;
+  journeyType?: JourneyType | null;
   createdAt: string;
   updatedAt: string;
   activeDraft?: TransactionDraft | null;
