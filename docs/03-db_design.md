@@ -113,7 +113,7 @@ Stores the predefined mock profiles shown on the landing page.
 ### Key Notes
 - small and static for the POC
 - can be seeded by Flyway
-- acts as the trusted source for pseudo-login
+- acts as the trusted source for selectable demo identities; the shared access password is enforced separately by the app
 
 ### Important Columns
 

@@ -188,6 +188,11 @@ select {
   box-shadow: inset 0 0 0 1px var(--brand-red);
 }
 
+.brand-input-error {
+  border-color: var(--brand-red);
+  box-shadow: inset 0 0 0 1px var(--brand-red);
+}
+
 .brand-chip {
   display: inline-flex;
   align-items: center;

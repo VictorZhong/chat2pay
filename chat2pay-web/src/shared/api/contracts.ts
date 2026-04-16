@@ -47,6 +47,11 @@ export interface CurrentUserContext {
   loginMode: 'PROFILE_SELECTION';
 }
 
+export interface ProfileLoginRequest {
+  profileId: string;
+  password: string;
+}
+
 export interface DisplayField {
   label: string;
   value: string;

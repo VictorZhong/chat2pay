@@ -3,7 +3,7 @@
 ## 1. Overview
 
 **chat2pay** is an internal web-based POC that allows a user to complete a money transfer through a conversational interface.  
-The user first selects a predefined **profile** on the landing page. For the POC, profile selection acts as a lightweight login.  
+The user first selects a predefined **profile** on the landing page, then passes a shared POC password gate before entering the workspace.  
 After login, the user enters a ChatGPT-style workspace with:
 
 - a collapsible left sidebar
@@ -19,7 +19,7 @@ The system is intentionally designed as a **deterministic transfer orchestration
 ### In Scope
 
 - Web-based internal POC
-- Profile-based pseudo-login
+- Profile-based entry with a shared password gate
 - Conversational transfer journey
 - Chat history persistence in PostgreSQL
 - Structured assistant responses:
@@ -156,7 +156,8 @@ flowchart LR
 #### A. Profile Selection Page
 - Landing page for the POC
 - Shows 4–5 mock profiles
-- Selecting a profile acts as login
+- Selecting a profile opens a password dialog
+- A shared internal password is required before workspace entry
 - On success, routes to the main chat page
 
 #### B. Main Workspace
@@ -184,7 +185,7 @@ Layout:
 
 | Module | Responsibility |
 |---|---|
-| `ProfileSelectorPage` | Fetch profiles, display cards, perform pseudo-login |
+| `ProfileSelectorPage` | Fetch profiles, display cards, collect the shared password, perform POC login |
 | `AppLayout` | Overall layout shell and routing |
 | `Sidebar` | New chat, placeholders, chat history list |
 | `UserMenu` | Bottom fixed avatar + username + logout popover |
@@ -348,10 +349,11 @@ sequenceDiagram
     DB-->>API: Profiles
     API-->>FE: Profile list
 
-    U->>FE: Select profile
+    U->>FE: Select profile and submit password
     FE->>API: POST /api/auth/profile-login
     API->>DB: Validate profile exists
     DB-->>API: Profile details
+    API->>API: Validate shared POC password
     API-->>FE: Current user context
 
     FE-->>U: Route to main workspace

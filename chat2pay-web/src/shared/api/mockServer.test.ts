@@ -7,7 +7,10 @@ describe('mockServer transfer flow', () => {
   });
 
   it('creates a new session and completes a transfer through UI events', async () => {
-    const user = await profileLogin('profile_victor');
+    const user = await profileLogin({
+      profileId: 'profile_victor',
+      password: 'tb123',
+    });
     const created = await createChatSession(user.profileId);
     const sessionId = created.session.sessionId;
 
@@ -65,5 +68,14 @@ describe('mockServer transfer flow', () => {
 
     const messagePage = await listChatMessages(user.profileId, sessionId);
     expect(messagePage.total).toBeGreaterThan(4);
+  });
+
+  it('rejects profile login when the shared password is incorrect', async () => {
+    await expect(
+      profileLogin({
+        profileId: 'profile_victor',
+        password: 'wrong-password',
+      }),
+    ).rejects.toThrow('Incorrect password.');
   });
 });

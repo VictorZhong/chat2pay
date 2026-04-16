@@ -42,7 +42,7 @@ Implemented in:
 Current behavior:
 - shows predefined mock profiles
 - branded card layout
-- pseudo-login by profile selection
+- clicking `Enter` opens a shared-password dialog before access is granted
 - loading state uses the same branded message-panel language as the chat area
 
 ### 4.2 Chat Workspace

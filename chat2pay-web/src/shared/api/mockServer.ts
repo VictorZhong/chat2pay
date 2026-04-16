@@ -11,6 +11,7 @@ import type {
   DisplayField,
   FormField,
   PaymentRail,
+  ProfileLoginRequest,
   ProfileSummary,
   SelectableItem,
   SendMessageRequest,
@@ -39,6 +40,7 @@ type MockDatabase = {
 const STORAGE_KEY = 'chat2pay-mock-db-v1';
 let memoryDb: MockDatabase | null = null;
 const storageFallback = new Map<string, string>();
+const POC_PROFILE_PASSWORD = 'tb123';
 
 const SOURCE_ACCOUNT = {
   id: 'acct_hk_primary_savings',
@@ -97,8 +99,14 @@ const PAYMENT_RAILS: Array<{
 ];
 
 function withLatency<T>(factory: () => T) {
-  return new Promise<T>((resolve) => {
-    window.setTimeout(() => resolve(factory()), MOCK_API_LATENCY_MS);
+  return new Promise<T>((resolve, reject) => {
+    window.setTimeout(() => {
+      try {
+        resolve(factory());
+      } catch (error) {
+        reject(error);
+      }
+    }, MOCK_API_LATENCY_MS);
   });
 }
 
@@ -983,9 +991,13 @@ export function listProfiles() {
   return withLatency(() => loadDatabase().profiles.filter((profile) => profile.status === 'ACTIVE'));
 }
 
-export function profileLogin(profileId: string) {
+export function profileLogin(input: ProfileLoginRequest) {
   return withLatency<CurrentUserContext>(() => {
-    const profile = getProfile(profileId);
+    const profile = getProfile(input.profileId);
+
+    if (input.password.trim() !== POC_PROFILE_PASSWORD) {
+      throw new Error('Incorrect password.');
+    }
 
     return {
       profileId: profile.id,

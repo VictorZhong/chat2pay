@@ -4,7 +4,7 @@ info:
   version: 0.1.0
   description: |
     OpenAPI contract for the chat2pay POC.
-    The POC uses profile selection as a lightweight login model.
+    The POC uses profile selection plus a shared password gate as a lightweight access model.
     After profile login, the frontend sends X-Profile-Id on protected endpoints.
 servers:
   - url: /api
@@ -35,7 +35,7 @@ paths:
   /auth/profile-login:
     post:
       tags: [Auth]
-      summary: Select a profile and create a lightweight user context
+      summary: Select a profile, validate the shared password, and create a lightweight user context
       operationId: profileLogin
       requestBody:
         required: true
@@ -50,13 +50,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CurrentUserContext'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
 
   /auth/logout:
     post:
       tags: [Auth]
-      summary: Logout current pseudo-login session
+      summary: Logout current profile session
       operationId: logout
       parameters:
         - $ref: '#/components/parameters/XProfileId'
@@ -256,6 +258,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Authentication failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
 
   schemas:
     ProfileSummary:
@@ -297,10 +305,14 @@ components:
       type: object
       required:
         - profileId
+        - password
       properties:
         profileId:
           type: string
           example: 01HX8QYP8W4G9Y0S2AY2J67NZB
+        password:
+          type: string
+          example: tb123
 
     CurrentUserContext:
       type: object

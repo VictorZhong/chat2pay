@@ -1,4 +1,4 @@
-import type { SendMessageRequest, UiEventRequest } from '@/shared/api/contracts';
+import type { ProfileLoginRequest, SendMessageRequest, UiEventRequest } from '@/shared/api/contracts';
 import { USE_MOCK_API } from '@/shared/config/env';
 import * as mockServer from '@/shared/api/mockServer';
 
@@ -20,9 +20,9 @@ export const chat2payClient = {
     assertMockMode();
     return mockServer.listProfiles();
   },
-  profileLogin(profileId: string) {
+  profileLogin(payload: ProfileLoginRequest) {
     assertMockMode();
-    return mockServer.profileLogin(profileId);
+    return mockServer.profileLogin(payload);
   },
   listChatSessions(profileId: string) {
     assertMockMode();
