@@ -2,69 +2,80 @@
 
 ## 1. Overview
 
-**chat2pay** is an internal web-based POC that allows a user to complete a money transfer through a conversational interface.  
-The user first selects a predefined **profile** on the landing page, then passes a shared POC password gate before entering the workspace.  
-After login, the user enters a ChatGPT-style workspace with:
+**chat2pay** is an internal web-based POC that lets a user complete a payment
+journey through a conversational interface.
 
-- a collapsible left sidebar
-- a right-side chat workspace
-- chat history
-- a fixed profile section at the bottom of the expanded sidebar
-- assistant responses rendered as text, structured cards, selectable lists, and simple forms
+The frontend keeps the current high-fidelity layout and styling:
 
-The system is intentionally designed as a **deterministic transfer orchestration backend with LLM assistance**, not as a fully autonomous agent.
+- profile selection page
+- shared password dialog
+- sidebar + chat workspace
+- structured assistant blocks inside the conversation
 
-## 2. Goals
+The backend is the control plane. The frontend never calls an LLM directly and
+never calls downstream payment APIs directly.
+
+## 2. Current POC Scope
 
 ### In Scope
 
-- Web-based internal POC
-- Profile-based entry with a shared password gate
-- Conversational transfer journey
-- Chat history persistence in PostgreSQL
-- Structured assistant responses:
-  - text
-  - summary cards
-  - selectable lists
-  - simple forms
-- Integration with existing downstream APIs over HTTP + JSON:
-  - account list / details
-  - payee list / details
-  - transaction history
-  - payment options
-  - limit check / update
-  - propose transaction
-  - confirm transaction
-- Lightweight workflow state machine
-- Internal LLM integration (for example Copilot 5.4-compatible internal model endpoints)
+- profile list returned by backend API
+- shared password gate retained in the frontend flow
+- one backend-owned conversational payment journey
+- current supported journey:
+  - `DOMESTIC_EXISTING_PAYEE`
+- local LLM integration through the backend calling the local HTTP + JSON
+  service documented in `docs/10-local_LLM.md`
+- downstream API integration through Spring Boot
+- existing payee lookup through `PAYEE_URL`
+- final payment submission through `CONFIRM_PAYMENT_URL`
+- downstream SAML acquisition through `LOGIN_URL` before every downstream call
+- chat history and workflow persistence in PostgreSQL
+- unsupported user requests answered with a clear "not supported in this POC"
+  response
 
-### Out of Scope
+### Out of Scope for This POC
 
-- Real authentication / authorization
-- MFA / step-up verification
-- Production-grade fraud controls
-- Voice input
-- File upload
-- Full admin console
-- Full implementation of left-menu utility features such as **My Account**, **My Payee**, and **Transaction History**
+- direct frontend-to-LLM calls
+- direct frontend-to-downstream API calls
+- new payee creation
+- international payment execution
+- limit check, bank check, FX rate, or proposal flows in the first POC slice
+- MFA, fraud controls, production authn/authz
 
 ## 3. Design Principles
 
-1. **LLM assists; backend controls.**  
-   The LLM is used for intent parsing, entity extraction, clarification phrasing, and response generation.  
-   The backend remains responsible for workflow progression and all downstream transaction actions.
+1. **Frontend is presentation only.**
+   The current UI stays largely as-is, but the business flow must move into the
+   Spring Boot backend.
 
-2. **One session, one active transfer draft at a time.**  
-   Each chat session can carry one active `TransactionDraft` that is gradually enriched through the conversation.
+2. **LLM assists; backend decides.**
+   LLM output may help with intent detection, slot extraction, and response
+   phrasing. Workflow transitions and downstream side effects remain deterministic
+   backend decisions.
 
-3. **Deterministic transfer execution.**  
-   Downstream APIs such as propose / confirm are never called directly by the model.
+3. **Current domestic payment matching is deterministic.**
+   For the first POC slice, payee resolution should mirror
+   `docs/11-backend-skill.md`: fetch registered payees, then match the
+   user-provided payee name against `commonPayeeDetail.name` inside the backend.
 
-4. **UI is conversational but structured.**  
-   Free-text remains the primary input, but the assistant can return structured UI blocks to reduce ambiguity and speed up completion.
+4. **All downstream calls share one auth pattern.**
+   Every call to a downstream business API must first obtain a SAML token from
+   `LOGIN_URL`, then place that token in the downstream request header.
 
-5. **Persistence focuses on user value and recoverability.**  
-   Chat history, workflow state, and transfer draft must survive page refresh and history reopening.
+5. **`username` is the downstream identity key.**
+   The profile field named `username` is the `payment10` value used in
+   downstream URLs and auth context.
+
+6. **Payment journeys must be pluggable.**
+   The first implementation only supports domestic transfer to an existing payee,
+   but the backend must be structured so future journeys can add extra checks and
+   steps without rewriting the chat controller or frontend.
+
+7. **Conversation stays stable; orchestration evolves behind it.**
+   The frontend continues to render text, summary cards, selectable lists, and
+   simple forms. New journey complexity should appear as backend-generated blocks,
+   not as frontend-specific orchestration logic.
 
 ## 4. High-Level Architecture
 
@@ -72,25 +83,25 @@ The system is intentionally designed as a **deterministic transfer orchestration
 flowchart LR
     subgraph FE[React Web Frontend]
         A[Profile Selector]
-        B[App Shell]
+        B[Password Dialog]
         C[Sidebar]
         D[Chat Workspace]
-        E[Message Renderer]
-        F[Text Input]
-        G[Settings Popover<br/>Logout only]
+        E[Structured Block Renderer]
     end
 
     subgraph BE[Spring Boot Backend]
-        H[Chat API]
-        I[Profile API]
-        J[Chat Orchestrator]
-        K[Conversation Manager]
-        L[Intent and Slot Service]
-        M[LLM Gateway]
-        N[Transfer Workflow Engine]
-        O[Transfer Domain Service]
-        P[Response Renderer]
-        Q[External API Clients]
+        F[Profile API]
+        G[Chat API]
+        H[Chat Orchestrator]
+        I[Journey Registry]
+        J[Domestic Existing Payee Journey]
+        K[Unsupported Request Responder]
+        L[LLM Gateway]
+        M[Downstream Token Service]
+        N[Payee Client]
+        O[Confirm Payment Client]
+        P[Conversation Manager]
+        Q[Response Renderer]
     end
 
     subgraph DB[PostgreSQL]
@@ -101,102 +112,78 @@ flowchart LR
         V[(workflow_transition_log)]
     end
 
-    subgraph LLM[Internal LLM]
-        W[Copilot 5.4 / compatible models]
+    subgraph LLM[LLM Providers]
+        W[Local HTTP LLM :8000]
+        X[Future Remote LLM API / function calling]
     end
 
-    subgraph DS[Existing Transfer APIs]
-        X[Account APIs]
-        Y[Payee APIs]
-        Z[Txn History APIs]
-        AA[Payment Option APIs]
-        AB[Limit APIs]
-        AC[Propose APIs]
-        AD[Confirm APIs]
+    subgraph DS[Downstream APIs]
+        Y[LOGIN_URL]
+        Z[PAYEE_URL]
+        AA[CONFIRM_PAYMENT_URL]
     end
 
-    A --> I
-    B --> H
-    C --> H
-    D --> H
-    F --> H
-    G --> I
+    A --> F
+    B --> F
+    C --> G
+    D --> G
+    E --> G
 
-    H --> J
+    F --> P
+    G --> H
+    H --> I
+    I --> J
     I --> K
-    J --> K
-    J --> L
-    L --> M
-    M --> W
+    H --> L
+    H --> P
+    H --> Q
 
+    J --> M
     J --> N
-    N --> O
-    O --> Q
-    J --> P
+    J --> O
+    M --> Y
+    N --> Z
+    O --> AA
 
-    K --> S
-    K --> T
-    K --> U
-    N --> V
-    I --> R
+    L --> W
+    L --> X
 
-    Q --> X
-    Q --> Y
-    Q --> Z
-    Q --> AA
-    Q --> AB
-    Q --> AC
-    Q --> AD
+    P --> R
+    P --> S
+    P --> T
+    P --> U
+    P --> V
 ```
 
 ## 5. Frontend Architecture
 
-### 5.1 Pages and Major Areas
+The frontend layout and visual language are already close to target and should
+not be materially redesigned.
 
-#### A. Profile Selection Page
-- Landing page for the POC
-- Shows 4–5 mock profiles
-- Selecting a profile opens a password dialog
-- A shared internal password is required before workspace entry
-- On success, routes to the main chat page
+### 5.1 Kept UX Structure
 
-#### B. Main Workspace
-Layout:
-- **Left sidebar**
-  - New Chat
-  - Placeholder utility items:
-    - My Account
-    - My Payee
-    - Transaction History
-  - Chat History list
-  - Fixed bottom user identity area with avatar + username
-- **Right workspace**
-  - chat title / session header
-  - assistant and user messages
-  - structured cards / lists / forms
-  - primary text input box
+- landing page with selectable profiles
+- shared password dialog
+- left sidebar with chat history and current user identity
+- right chat workspace with message stream and structured cards
 
-#### C. User Settings Popover
-- Triggered from the bottom-left avatar/username section
-- POC options:
-  - Logout
+### 5.2 Frontend Responsibilities
 
-### 5.2 Frontend Modules
-
-| Module | Responsibility |
+| Area | Responsibility |
 |---|---|
-| `ProfileSelectorPage` | Fetch profiles, display cards, collect the shared password, perform POC login |
-| `AppLayout` | Overall layout shell and routing |
-| `Sidebar` | New chat, placeholders, chat history list |
-| `UserMenu` | Bottom fixed avatar + username + logout popover |
-| `ChatPage` | Main conversation workspace |
-| `MessageList` | Render ordered message stream |
-| `MessageRenderer` | Render text, cards, lists, forms, error blocks |
-| `ChatInputBar` | Free-text input, send action, busy state |
-| `StructuredActionPanel` | Handle selectable list and form events |
-| `HistoryLoader` | Load and display an existing session |
-| `ProfileStore` | Keep selected profile in client state |
-| `ChatStore` | Current session, message stream, pagination, draft snapshot |
+| Profile selector | Fetch profiles from backend and collect the shared password |
+| Session shell | Create sessions, switch history, render current workflow summary |
+| Message renderer | Render backend-provided text, cards, lists, and forms |
+| Chat input | Collect free text only |
+| Structured UI events | Send list and button interactions back to backend |
+
+### 5.3 Explicit Non-Responsibilities
+
+- no frontend LLM client
+- no frontend payee lookup client
+- no frontend payment confirm client
+- no frontend SAML token handling
+- no frontend branching logic for domestic vs international flows
 
 ## 6. Backend Architecture
 
@@ -204,137 +191,182 @@ Layout:
 
 | Module | Responsibility |
 |---|---|
-| `ProfileApiController` | Public endpoints for profile list, profile login, logout, current user context |
-| `ChatApiController` | Session and message endpoints consumed by the frontend |
-| `ChatOrchestrator` | Central application coordinator for every user turn |
-| `ConversationManager` | Load / save session, messages, active draft, workflow snapshots |
-| `IntentAndSlotService` | Convert user input into structured intent + entities |
-| `LlmGateway` | Prompt management, model calls, schema-constrained parsing |
-| `TransferWorkflowEngine` | Lightweight state machine for transfer progression |
-| `TransferDomainService` | Business-oriented orchestration and downstream decisioning |
+| `ProfileApiController` | List POC profiles, validate shared password, return current user context |
+| `ChatApiController` | Create sessions, accept free-text messages, accept structured UI events |
+| `ChatOrchestrator` | Central application coordinator for every turn |
+| `JourneyRegistry` | Select the correct payment journey handler for the current intent |
+| `DomesticExistingPayeeJourney` | Current POC flow implementation |
+| `UnsupportedRequestResponder` | Return stable unsupported-operation responses |
+| `ConversationManager` | Load and persist session, messages, draft, and workflow logs |
+| `LlmGateway` | Provider-neutral LLM adapter |
+| `PayeeMatcher` | Deterministically match free-text payee names against payee list data |
+| `DownstreamTokenService` | Obtain SAML token from `LOGIN_URL` for every downstream call |
+| `PayeeClient` | Call `PAYEE_URL` using the current profile context after SAML acquisition |
+| `ConfirmPaymentClient` | Call `CONFIRM_PAYMENT_URL` using the current draft and downstream auth context |
 | `ResponseRenderer` | Convert domain outcomes into frontend-ready content blocks |
-| `ExternalApiClients` | Typed HTTP clients for account, payee, payment, limit, propose, confirm, history APIs |
-| `WorkflowTransitionLogger` | Persist state transitions and action results for diagnostics |
 
-### 6.2 Why the Orchestrator-Centric Design
+### 6.2 Recommended Package Direction
 
-The backend is deliberately centered around a **Chat Orchestrator** because the conversation may require:
-
-- loading prior state
-- extracting new slots from the latest user message
-- resolving ambiguity
-- calling downstream APIs
-- deciding whether to ask for more input or proceed
-- rendering a structured response
-
-This reduces controller complexity and prevents workflow logic from leaking into transport or client code.
-
-## 7. Message Handling Flow
-
-```mermaid
-flowchart TD
-    A[User submits text or structured UI event] --> B[Chat API]
-    B --> C[Chat Orchestrator]
-    C --> D[Load session, messages, draft]
-    D --> E[Intent and slot parsing]
-    E --> F[Merge extracted data into draft]
-    F --> G[Workflow engine evaluates current state]
-
-    G --> H{Need more user input?}
-    H -- Yes --> I[Build clarification or selection response]
-    I --> J[Persist assistant message blocks]
-    J --> K[Return response to frontend]
-
-    H -- No --> L{Need downstream calls?}
-    L -- Yes --> M[Call domain service and external APIs]
-    M --> N[Update draft and state]
-    N --> O{Ready for propose or confirm?}
-    O -- No --> I
-    O -- Yes --> P[Run controlled transaction step]
-    P --> Q[Persist outcome]
-    Q --> R[Render summary / success / error response]
-    R --> K
+```text
+chat2pay-app/
+└── src/main/java/.../chat2pay/
+    ├── api/
+    ├── application/
+    │   ├── chat/
+    │   ├── profile/
+    │   └── journey/
+    ├── domain/
+    │   ├── conversation/
+    │   └── payment/
+    ├── integration/
+    │   ├── llm/
+    │   └── downstream/
+    ├── persistence/
+    ├── config/
+    └── common/
 ```
 
-## 8. Transfer Workflow
+## 7. LLM Strategy
 
-### 8.1 Workflow State Machine
+### 7.1 Current Provider
 
-```mermaid
-stateDiagram-v2
-    [*] --> IDLE
-    IDLE --> COLLECTING_TRANSFER_INFO: transfer intent detected
+The first implementation should use a backend-only local provider that talks to
+the local service described in `docs/10-local_LLM.md`, typically through
+`POST /api/chat` on `http://localhost:8000`.
 
-    COLLECTING_TRANSFER_INFO --> RESOLVING_AMBIGUITY: multiple accounts / payees / rails
-    COLLECTING_TRANSFER_INFO --> READY_FOR_PAYMENT_OPTIONS: mandatory slots filled
-    COLLECTING_TRANSFER_INFO --> CANCELLED: cancel requested
+Typical uses:
 
-    RESOLVING_AMBIGUITY --> COLLECTING_TRANSFER_INFO: ambiguity resolved
-    RESOLVING_AMBIGUITY --> READY_FOR_PAYMENT_OPTIONS: resolution completed
-    RESOLVING_AMBIGUITY --> CANCELLED: cancel requested
+- detect whether the user is asking for a supported payment journey
+- extract payee and amount candidates from free text
+- produce short clarification phrasing when deterministic templates are not
+  enough
 
-    READY_FOR_PAYMENT_OPTIONS --> READY_FOR_LIMIT_CHECK: payment option selected
-    READY_FOR_PAYMENT_OPTIONS --> FAILED: option retrieval failure
+Important limitation for the first journey:
 
-    READY_FOR_LIMIT_CHECK --> READY_FOR_PROPOSE: limit passed
-    READY_FOR_LIMIT_CHECK --> FAILED: limit failed
+- do not use the LLM to decide the final payee match
+- use backend deterministic matching against `commonPayeeDetail.name`
+- do not require function calling for the first POC slice
 
-    READY_FOR_PROPOSE --> AWAITING_USER_CONFIRMATION: propose succeeded
-    READY_FOR_PROPOSE --> FAILED: propose failed
+### 7.2 Future Provider Compatibility
 
-    AWAITING_USER_CONFIRMATION --> READY_FOR_CONFIRM: user confirmed
-    AWAITING_USER_CONFIRMATION --> CANCELLED: user cancelled
+The backend must not expose provider-specific behavior to the frontend.
+Introduce a provider-neutral interface such as:
 
-    READY_FOR_CONFIRM --> COMPLETED: confirm succeeded
-    READY_FOR_CONFIRM --> FAILED: confirm failed
-
-    FAILED --> [*]
-    COMPLETED --> [*]
-    CANCELLED --> [*]
+```java
+public interface LlmProvider {
+    ParsedIntent parseIntent(ChatTurnContext context);
+    AssistantCopy generateAssistantCopy(AssistantCopyRequest request);
+}
 ```
 
-### 8.2 Workflow State Enumeration
+The first implementation can be `LocalHttpLlmProvider`.
+A future implementation can be `RemoteApiLlmProvider` that uses real remote API
+calls and function calling, while preserving the same backend-facing contract.
+
+## 8. Downstream Auth and Client Strategy
+
+Every downstream business call follows the same sequence:
+
+1. read the current profile `username`
+2. treat that value as downstream `payment10`
+3. build the configured `LOGIN_URL` with that `payment10`
+4. obtain a SAML token
+5. call the business API with the SAML token in the required header
+
+For the first POC slice, assume this happens on every downstream call. Do not
+design around frontend token reuse.
+
+This applies to `PAYEE_URL`, `CONFIRM_PAYMENT_URL`, and future downstream APIs.
+
+Recommended backend abstraction:
+
+```java
+public interface DownstreamAuthenticatedCaller {
+    <T> T execute(ProfileContext profile, DownstreamRequest<T> request);
+}
+```
+
+That abstraction lets later integrations add more clients without duplicating
+the login-before-call pattern.
+
+## 9. Payment Journey Model
+
+### 9.1 Generic Journey Contract
+
+The orchestration layer should route each turn to a journey handler instead of
+embedding all payment logic in one service.
+
+Suggested shape:
+
+```java
+public interface PaymentJourneyHandler {
+    boolean supports(JourneyType journeyType);
+    JourneyTurnResult handleText(TurnContext context);
+    JourneyTurnResult handleUiEvent(TurnContext context);
+}
+```
+
+### 9.2 Current Journey: `DOMESTIC_EXISTING_PAYEE`
+
+The current POC supports only this journey.
+
+Happy path:
+
+1. user expresses intent to pay a registered domestic payee
+2. backend extracts or asks for payee and amount
+3. backend calls `PAYEE_URL`
+4. backend matches the user-provided name against `commonPayeeDetail.name`
+5. backend stops if there is no unique match
+6. backend renders a confirmation summary
+7. user confirms
+8. backend calls `CONFIRM_PAYMENT_URL` using `payeeIdIndex`, `payeeType`,
+   amount, and configured payload defaults
+9. backend returns success or failure
+
+### 9.3 Unsupported Requests
+
+If the user asks for anything outside this journey, the assistant should return
+an explicit unsupported response, for example:
+
+- international transfer
+- new payee setup
+- balance inquiry
+- transaction history actions
+
+The session stays usable; the user can still start a supported domestic transfer.
+
+### 9.4 Future Journeys
+
+Future journey handlers can add extra steps such as:
+
+- limit check
+- bank check
+- FX quote retrieval
+- compliance screening
+- new payee verification
+
+Those steps should live inside journey-specific handlers, not inside the chat
+controller or frontend.
+
+## 10. Workflow States
+
+The current backend contract should use a smaller state set that matches the
+first POC slice.
 
 | State | Meaning |
 |---|---|
-| `IDLE` | Session created, no active transfer flow yet |
-| `COLLECTING_TRANSFER_INFO` | User is providing source account, payee, amount, currency, or note |
-| `RESOLVING_AMBIGUITY` | Backend needs the user to resolve multiple candidates |
-| `READY_FOR_PAYMENT_OPTIONS` | Basic draft is complete; payment method options must be loaded or selected |
-| `READY_FOR_LIMIT_CHECK` | Draft is sufficient for a limit check |
-| `READY_FOR_PROPOSE` | Draft is sufficient for propose |
-| `AWAITING_USER_CONFIRMATION` | Propose completed; assistant is waiting for explicit user confirmation |
-| `READY_FOR_CONFIRM` | User confirmed and backend may call confirm |
-| `COMPLETED` | Transfer successfully completed |
-| `FAILED` | Flow failed due to business or technical error |
-| `CANCELLED` | User explicitly cancelled the in-progress transfer |
+| `IDLE` | Session created, no active payment yet |
+| `COLLECTING_PAYMENT_DETAILS` | Backend is collecting payee and amount |
+| `RESOLVING_PAYEE` | Backend is resolving an existing payee candidate |
+| `AWAITING_USER_CONFIRMATION` | Summary is ready and user confirmation is required |
+| `CONFIRMING_PAYMENT` | Backend is calling downstream confirm APIs |
+| `COMPLETED` | Payment succeeded |
+| `FAILED` | Payment failed due to business or technical error |
+| `CANCELLED` | User cancelled the active journey |
 
-### 8.3 Workflow Event Enumeration
+## 11. Core Sequences
 
-| Event | Meaning |
-|---|---|
-| `SESSION_CREATED` | New chat session created |
-| `USER_TEXT_RECEIVED` | User submitted free-text input |
-| `USER_UI_EVENT_RECEIVED` | User interacted with a list or form |
-| `TRANSFER_INTENT_DETECTED` | Intent parser recognized transfer initiation |
-| `SLOTS_UPDATED` | One or more draft fields were merged |
-| `AMBIGUITY_DETECTED` | Multiple candidate accounts / payees / rails found |
-| `AMBIGUITY_RESOLVED` | User selected a concrete candidate |
-| `PAYMENT_OPTIONS_LOADED` | Payment options returned successfully |
-| `PAYMENT_OPTION_SELECTED` | User or system selected the final transfer rail |
-| `LIMIT_CHECK_PASSED` | Limit API returned success |
-| `LIMIT_CHECK_FAILED` | Limit API returned failure |
-| `PROPOSE_SUCCEEDED` | Propose API succeeded |
-| `PROPOSE_FAILED` | Propose API failed |
-| `USER_CONFIRMED` | User explicitly confirmed the transfer |
-| `USER_CANCELLED` | User explicitly cancelled the transfer |
-| `CONFIRM_SUCCEEDED` | Confirm API succeeded |
-| `CONFIRM_FAILED` | Confirm API failed |
-| `SYSTEM_ERROR` | Unexpected internal error |
-
-## 9. Core End-to-End Sequences
-
-### 9.1 Profile Login and Workspace Entry
+### 11.1 Profile Login
 
 ```mermaid
 sequenceDiagram
@@ -343,23 +375,20 @@ sequenceDiagram
     participant API as Profile API
     participant DB as PostgreSQL
 
-    U->>FE: Open chat2pay landing page
+    U->>FE: Open landing page
     FE->>API: GET /api/profiles
-    API->>DB: Load predefined profiles
-    DB-->>API: Profiles
+    API->>DB: Load available demo profiles
+    DB-->>API: Profile rows
     API-->>FE: Profile list
 
     U->>FE: Select profile and submit password
     FE->>API: POST /api/auth/profile-login
     API->>DB: Validate profile exists
-    DB-->>API: Profile details
     API->>API: Validate shared POC password
     API-->>FE: Current user context
-
-    FE-->>U: Route to main workspace
 ```
 
-### 9.2 New Chat and Transfer Journey
+### 11.2 Domestic Existing Payee Payment
 
 ```mermaid
 sequenceDiagram
@@ -367,337 +396,57 @@ sequenceDiagram
     participant FE as Frontend
     participant API as Chat API
     participant ORC as Chat Orchestrator
-    participant CM as Conversation Manager
-    participant IS as Intent and Slot Service
+    participant J as Domestic Journey
     participant LLM as LLM Gateway
-    participant WF as Workflow Engine
-    participant DS as Transfer Domain Service
-    participant EXT as External APIs
+    participant AUTH as Downstream Token Service
+    participant PAYEE as PAYEE_URL
+    participant CONFIRM as CONFIRM_PAYMENT_URL
     participant DB as PostgreSQL
 
-    U->>FE: Click New Chat
-    FE->>API: POST /api/chat/sessions
-    API->>CM: Create session
-    CM->>DB: Insert chat_session and welcome message
-    DB-->>CM: Session created
-    CM-->>API: Session + welcome block
-    API-->>FE: Display new session
-
-    U->>FE: "Pay Tom 5000 HKD"
+    U->>FE: "Pay Alex 500 HKD"
     FE->>API: POST /api/chat/sessions/{id}/messages
     API->>ORC: handleMessage()
+    ORC->>LLM: optionally parse supported intent + rough slots
+    LLM-->>ORC: intent + candidate payee name + candidate amount
+    ORC->>J: continue domestic existing payee flow
 
-    ORC->>CM: Load session + active draft
-    CM->>DB: Query session, messages, draft
-    DB-->>CM: Context
-    CM-->>ORC: Context
+    J->>AUTH: fetch SAML token for current username
+    AUTH-->>J: SAML token
+    J->>PAYEE: list registered payees with current profile context + SAML header
+    PAYEE-->>J: payee list
+    J->>J: match payee name against commonPayeeDetail.name
+    J->>DB: persist draft + assistant blocks
+    J-->>API: confirmation summary or clarification blocks
+    API-->>FE: render summary/list/form
 
-    ORC->>IS: Parse intent and slots
-    IS->>LLM: Structured parsing request
-    LLM-->>IS: intent + entities
-    IS-->>ORC: Parsed result
-
-    ORC->>WF: Evaluate state transition
-    WF-->>ORC: Need account/payee resolution
-
-    ORC->>DS: Resolve candidates
-    DS->>EXT: Account / Payee APIs
-    EXT-->>DS: Candidate data
-    DS-->>ORC: Resolved or ambiguous candidates
-
-    ORC->>CM: Persist updated draft + assistant blocks
-    CM->>DB: Save draft and messages
-    DB-->>CM: Saved
-    CM-->>ORC: Done
-    ORC-->>API: Response blocks
-    API-->>FE: Render text + selectable lists
-
-    U->>FE: Select payee/account or send more details
-    FE->>API: POST /api/chat/sessions/{id}/events or /messages
-    API->>ORC: Continue orchestration
-
-    ORC->>WF: Re-evaluate
-    WF-->>ORC: READY_FOR_LIMIT_CHECK
-
-    ORC->>DS: Run limit check
-    DS->>EXT: Limit API
-    EXT-->>DS: Pass
-    DS-->>ORC: Limit ok
-
-    ORC->>DS: Run propose
-    DS->>EXT: Propose API
-    EXT-->>DS: Summary + proposalId
-    DS-->>ORC: Proposal result
-
-    ORC->>CM: Persist proposal summary
-    CM->>DB: Save draft
-    DB-->>CM: Saved
-
-    ORC-->>API: Summary card + ask for confirmation
-    API-->>FE: Render summary card
-
-    U->>FE: "Confirm"
-    FE->>API: POST /api/chat/sessions/{id}/messages
-    API->>ORC: handleMessage()
-
-    ORC->>DS: Confirm transfer
-    DS->>EXT: Confirm API
-    EXT-->>DS: Success + reference
-    DS-->>ORC: Completion result
-
-    ORC->>CM: Persist success state
-    CM->>DB: Save messages, draft, workflow log
-    DB-->>CM: Saved
-
-    ORC-->>API: Success card
-    API-->>FE: Render completed state
+    U->>FE: Confirm
+    FE->>API: POST /api/chat/sessions/{id}/events
+    API->>ORC: handleUiEvent()
+    ORC->>J: confirm payment
+    J->>AUTH: fetch SAML token for current username
+    AUTH-->>J: SAML token
+    J->>CONFIRM: submit payment request with payeeIdIndex + payeeType + amount
+    CONFIRM-->>J: success or failure
+    J->>DB: persist terminal outcome
+    J-->>API: success or error blocks
+    API-->>FE: render final state
 ```
 
-### 9.3 Open Existing Chat History
+### 11.3 Unsupported Operation
 
 ```mermaid
 sequenceDiagram
     participant U as User
     participant FE as Frontend
     participant API as Chat API
-    participant CM as Conversation Manager
-    participant DB as PostgreSQL
+    participant ORC as Chat Orchestrator
+    participant LLM as LLM Gateway
 
-    U->>FE: Click a chat session in sidebar history
-    FE->>API: GET /api/chat/sessions/{sessionId}
-    API->>CM: Load session details
-    CM->>DB: Query session, draft, latest state
-    DB-->>CM: Session details
-    CM-->>API: Session detail payload
-    API-->>FE: Session metadata + state snapshot
-
-    FE->>API: GET /api/chat/sessions/{sessionId}/messages
-    API->>CM: Load messages
-    CM->>DB: Query ordered messages
-    DB-->>CM: Message list
-    CM-->>API: Message list
-    API-->>FE: Render history
-
-    alt session status is ACTIVE
-        FE-->>U: Input remains enabled
-    else session status is COMPLETED / CANCELLED
-        FE-->>U: Read-only history view
-    end
+    U->>FE: "Make an international transfer"
+    FE->>API: POST /api/chat/sessions/{id}/messages
+    API->>ORC: handleMessage()
+    ORC->>LLM: classify request
+    LLM-->>ORC: unsupported for current POC
+    ORC-->>API: info card saying this action is not supported
+    API-->>FE: render unsupported message
 ```
-
-## 10. Transfer Flowchart
-
-```mermaid
-flowchart TD
-    A[User starts or continues a chat] --> B{Transfer intent?}
-
-    B -- No --> C[Handle as general chat or future utility query]
-    B -- Yes --> D[Create or load active TransactionDraft]
-
-    D --> E[Extract slots from user input]
-    E --> F{Mandatory fields complete?}
-
-    F -- No --> G[Ask for missing fields]
-    G --> Z[Return assistant response]
-
-    F -- Yes --> H{Ambiguity exists?}
-    H -- Yes --> I[Render selectable list or form]
-    I --> Z
-
-    H -- No --> J[Load payment options]
-    J --> K{Payment rail selected?}
-    K -- No --> L[Ask user to choose a payment option]
-    L --> Z
-
-    K -- Yes --> M[Run limit check]
-    M --> N{Limit passed?}
-    N -- No --> O[Render business failure message]
-    O --> Z
-
-    N -- Yes --> P[Run propose]
-    P --> Q{Propose success?}
-    Q -- No --> R[Render propose failure]
-    R --> Z
-
-    Q -- Yes --> S[Render transfer summary]
-    S --> T[Wait for explicit confirmation]
-
-    T --> U{User confirms?}
-    U -- No, cancel --> V[Mark cancelled]
-    V --> Z
-    U -- Yes --> W[Run confirm]
-    W --> X{Confirm success?}
-    X -- No --> Y[Render confirm failure]
-    X -- Yes --> AA[Render success reference]
-
-    Y --> Z
-    AA --> Z
-```
-
-## 11. Key DTOs
-
-### 11.1 Current User and Profile
-
-#### `ProfileSummary`
-- `id`
-- `code`
-- `displayName`
-- `avatarUrl`
-- `mockCustomerId`
-- `locale`
-- `status`
-
-#### `CurrentUserContext`
-- `profileId`
-- `username`
-- `displayName`
-- `avatarUrl`
-- `locale`
-- `loginMode` = `PROFILE_SELECTION`
-
-### 11.2 Chat Session
-
-#### `ChatSessionSummary`
-- `sessionId`
-- `title`
-- `status`
-- `createdAt`
-- `updatedAt`
-- `lastAssistantText`
-- `workflowState`
-
-#### `ChatSessionDetail`
-- `sessionId`
-- `title`
-- `status`
-- `createdAt`
-- `updatedAt`
-- `activeDraft`
-- `workflowSnapshot`
-
-### 11.3 Messages
-
-#### `ChatMessage`
-- `messageId`
-- `sessionId`
-- `role` (`USER`, `ASSISTANT`, `SYSTEM`)
-- `messageType` (`TEXT`, `CARD`, `LIST`, `FORM`, `UI_EVENT`)
-- `text`
-- `contentBlocks`
-- `createdAt`
-
-#### `ContentBlock`
-Shared fields:
-- `blockId`
-- `type`
-- `title`
-- `metadata`
-
-Block variants:
-- `TextBlock`
-- `SummaryCardBlock`
-- `SelectableListBlock`
-- `SimpleFormBlock`
-- `ErrorCardBlock`
-- `InfoCardBlock`
-
-### 11.4 Requests
-
-#### `CreateChatSessionRequest`
-- `title` (optional)
-
-#### `SendMessageRequest`
-- `messageText`
-- `clientMessageId` (optional)
-
-#### `UiEventRequest`
-- `eventType`
-- `sourceMessageId`
-- `sourceBlockId`
-- `selectedItemIds`
-- `formValues`
-- `clientEventId` (optional)
-
-### 11.5 Chat Turn Response
-
-#### `ChatTurnResponse`
-- `session`
-- `userEchoMessage` (optional)
-- `assistantMessages`
-- `draftSummary`
-- `workflowState`
-- `suggestedActions`
-- `serverTimestamp`
-
-### 11.6 Transaction Draft
-
-#### `TransactionDraft`
-- `draftId`
-- `sessionId`
-- `status`
-- `workflowState`
-- `sourceAccountId`
-- `sourceAccountDisplay`
-- `payeeId`
-- `payeeDisplay`
-- `amount`
-- `currency`
-- `paymentRail`
-- `note`
-- `limitCheckStatus`
-- `proposalId`
-- `proposalSummary`
-- `transferReference`
-- `lastUpdatedAt`
-
-## 12. Technology Choices
-
-### Backend
-- **Java 21**
-- **Spring Boot 3**
-- Spring Web
-- Spring Validation
-- Spring Data JPA
-- PostgreSQL
-- OpenAPI-generated DTOs / interfaces
-- Feign or Spring HTTP Interface / RestClient for downstream API integration
-- Jackson for JSON and JSONB payload mapping
-
-### Frontend
-- **React + TypeScript**
-- **Vite**
-- **Tailwind CSS**
-- custom branded UI primitives and icons
-- React Router
-- TanStack Query for API fetching/caching
-- Zustand for lightweight local UI/session state
-
-### Database
-- **PostgreSQL**
-- JSONB for structured message blocks and proposal summaries
-- Application-generated ULIDs for ordered identifiers
-
-## 13. Suggested Non-Functional Rules for the POC
-
-- One active draft per session
-- Explicit confirmation required before confirm API call
-- Every state transition logged
-- Every assistant structured block persisted
-- Recoverable page refresh:
-  - current session reloads from backend
-  - history view can reconstruct the full conversation
-- Protected APIs trust the selected profile in POC mode
-
-## 14. Future Evolution
-
-The current design leaves room for:
-
-- real authentication
-- MFA / transaction signing
-- richer profile settings
-- reusable utility flows for **My Account**, **My Payee**, and **Transaction History**
-- recommendation cards
-- multi-step draft editing
-- observability dashboards
-- policy-based transfer validation
-- model routing across multiple internal LLMs

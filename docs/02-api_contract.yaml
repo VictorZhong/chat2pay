@@ -1,11 +1,13 @@
 openapi: 3.0.3
 info:
   title: chat2pay API
-  version: 0.1.0
+  version: 0.2.0
   description: |
     OpenAPI contract for the chat2pay POC.
-    The POC uses profile selection plus a shared password gate as a lightweight access model.
-    After profile login, the frontend sends X-Profile-Id on protected endpoints.
+    The frontend keeps the current UI shell, but all LLM and downstream payment
+    orchestration happens in the Spring Boot backend.
+    The first supported payment journey is domestic transfer to a registered
+    payee only.
 servers:
   - url: /api
     description: Relative API base path
@@ -187,7 +189,7 @@ paths:
   /chat/sessions/{sessionId}/events:
     post:
       tags: [Chat Messages]
-      summary: Submit a structured UI event from selectable list or simple form
+      summary: Submit a structured UI event from a selectable list, button, or simple form
       operationId: submitUiEvent
       parameters:
         - $ref: '#/components/parameters/XProfileId'
@@ -271,10 +273,12 @@ components:
       required:
         - id
         - code
+        - username
         - displayName
         - mockCustomerId
         - locale
         - status
+        - supportedJourneyTypes
       properties:
         id:
           type: string
@@ -282,12 +286,13 @@ components:
         code:
           type: string
           example: HK_STAFF_001
+        username:
+          type: string
+          description: Downstream username, equivalent to payment10.
+          example: payment10
         displayName:
           type: string
           example: Victor Zhong
-        username:
-          type: string
-          example: victor.zhong
         avatarUrl:
           type: string
           nullable: true
@@ -300,6 +305,11 @@ components:
           example: en-HK
         status:
           $ref: '#/components/schemas/ProfileStatus'
+        supportedJourneyTypes:
+          type: array
+          items:
+            $ref: '#/components/schemas/JourneyType'
+          example: [DOMESTIC_EXISTING_PAYEE]
 
     ProfileLoginRequest:
       type: object
@@ -322,12 +332,14 @@ components:
         - displayName
         - locale
         - loginMode
+        - supportedJourneyTypes
       properties:
         profileId:
           type: string
         username:
           type: string
-          example: victor.zhong
+          description: Downstream username, equivalent to payment10.
+          example: payment10
         displayName:
           type: string
           example: Victor Zhong
@@ -340,6 +352,11 @@ components:
         loginMode:
           type: string
           enum: [PROFILE_SELECTION]
+        supportedJourneyTypes:
+          type: array
+          items:
+            $ref: '#/components/schemas/JourneyType'
+          example: [DOMESTIC_EXISTING_PAYEE]
 
     CreateChatSessionRequest:
       type: object
@@ -347,7 +364,7 @@ components:
         title:
           type: string
           maxLength: 120
-          example: New transfer
+          example: Domestic payment
 
     ChatSessionCreateResponse:
       type: object
@@ -376,15 +393,19 @@ components:
           type: string
         title:
           type: string
-          example: Transfer to Tom
+          example: Pay Bob
         status:
           $ref: '#/components/schemas/ChatSessionStatus'
         workflowState:
           $ref: '#/components/schemas/WorkflowState'
+        journeyType:
+          allOf:
+            - $ref: '#/components/schemas/JourneyType'
+          nullable: true
         lastAssistantText:
           type: string
           nullable: true
-          example: Please select which Tom you want to pay.
+          example: Please confirm the payee and amount.
         createdAt:
           type: string
           format: date-time
@@ -429,6 +450,10 @@ components:
           $ref: '#/components/schemas/ChatSessionStatus'
         workflowState:
           $ref: '#/components/schemas/WorkflowState'
+        journeyType:
+          allOf:
+            - $ref: '#/components/schemas/JourneyType'
+          nullable: true
         createdAt:
           type: string
           format: date-time
@@ -496,7 +521,7 @@ components:
           type: string
           minLength: 1
           maxLength: 4000
-          example: Pay Tom 5000 HKD from my savings account.
+          example: Pay Bob 500 HKD
         clientMessageId:
           type: string
           nullable: true
@@ -586,6 +611,7 @@ components:
       required:
         - draftId
         - sessionId
+        - journeyType
         - status
         - workflowState
         - lastUpdatedAt
@@ -594,6 +620,8 @@ components:
           type: string
         sessionId:
           type: string
+        journeyType:
+          $ref: '#/components/schemas/JourneyType'
         status:
           $ref: '#/components/schemas/TransferStatus'
         workflowState:
@@ -604,38 +632,50 @@ components:
         sourceAccountDisplay:
           type: string
           nullable: true
-        payeeId:
+        payeeNameInput:
           type: string
           nullable: true
+          example: Bob
+        payeeIdIndex:
+          type: string
+          nullable: true
+        payeeType:
+          type: string
+          nullable: true
+          example: '6'
         payeeDisplay:
           type: string
           nullable: true
+          example: BOB
         amount:
           type: number
           format: decimal
           nullable: true
-          example: 5000
+          example: 500
         currency:
           type: string
           nullable: true
           example: HKD
-        paymentRail:
-          $ref: '#/components/schemas/PaymentRail'
         note:
           type: string
           nullable: true
-        limitCheckStatus:
-          $ref: '#/components/schemas/LimitCheckStatus'
-        proposalId:
-          type: string
-          nullable: true
-        proposalSummary:
+        reviewSummary:
           type: object
           nullable: true
           additionalProperties: true
+          description: Normalized summary rendered to the user before final confirmation.
+        downstreamReferences:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: Downstream identifiers such as quote IDs, limit IDs, or confirm references.
         transferReference:
           type: string
           nullable: true
+        additionalContext:
+          type: object
+          nullable: true
+          additionalProperties: true
         lastUpdatedAt:
           type: string
           format: date-time
@@ -694,7 +734,7 @@ components:
           enum: [SUMMARY_CARD]
         title:
           type: string
-          example: Transfer summary
+          example: Payment summary
         fields:
           type: array
           items:
@@ -752,7 +792,7 @@ components:
         submitLabel:
           type: string
           nullable: true
-          example: Submit
+          example: Continue
         metadata:
           type: object
           additionalProperties: true
@@ -895,13 +935,10 @@ components:
       type: string
       enum:
         - IDLE
-        - COLLECTING_TRANSFER_INFO
-        - RESOLVING_AMBIGUITY
-        - READY_FOR_PAYMENT_OPTIONS
-        - READY_FOR_LIMIT_CHECK
-        - READY_FOR_PROPOSE
+        - COLLECTING_PAYMENT_DETAILS
+        - RESOLVING_PAYEE
         - AWAITING_USER_CONFIRMATION
-        - READY_FOR_CONFIRM
+        - CONFIRMING_PAYMENT
         - COMPLETED
         - FAILED
         - CANCELLED
@@ -910,7 +947,8 @@ components:
       type: string
       enum:
         - DRAFT
-        - PROPOSED
+        - READY_FOR_CONFIRMATION
+        - CONFIRMING
         - CONFIRMED
         - FAILED
         - CANCELLED
@@ -938,18 +976,10 @@ components:
         - SUBMIT_FORM
         - CLICK_ACTION
 
-    PaymentRail:
+    JourneyType:
       type: string
-      nullable: true
       enum:
-        - GDLV
-        - GDRIA
-        - ORTT
-
-    LimitCheckStatus:
-      type: string
-      nullable: true
-      enum:
-        - NOT_STARTED
-        - PASSED
-        - FAILED
+        - DOMESTIC_EXISTING_PAYEE
+        - DOMESTIC_NEW_PAYEE
+        - INTERNATIONAL_EXISTING_PAYEE
+        - INTERNATIONAL_NEW_PAYEE

@@ -2,20 +2,23 @@
 
 ## 1. Purpose
 
-This document describes the **current repository structure** used by the POC.
+This document describes the repository structure that should support the current
+POC direction:
 
-It replaces the earlier `apps/`-based recommendation.
+- existing frontend UI kept mostly intact
+- new Spring Boot backend added under `chat2pay-app/`
+- design and contract docs updated for backend-owned LLM and payment
+  orchestration
 
 ## 2. Repository Strategy
 
-The project remains a single repository, but the top-level application folders
-now live directly under the repo root:
+The project remains a single repository with application folders directly under
+the repo root:
 
 - `chat2pay-web/` for the frontend
-- `chat2pay-app/` reserved for the backend
-
-This keeps the repo simple while still separating frontend, backend, contract,
-and design assets.
+- `chat2pay-app/` for the Spring Boot backend
+- `docs/` for design references
+- `api-contract/` for the implementation-facing contract copy
 
 ## 3. Current Top-Level Structure
 
@@ -28,7 +31,9 @@ chat2pay/
 │   ├── 02-api_contract.yaml
 │   ├── 03-db_design.md
 │   ├── 05-project_structure.md
-│   └── 06-ui_implementation.md
+│   ├── 06-ui_implementation.md
+│   ├── 10-local_LLM.md
+│   └── 11-backend-skill.md
 ├── api-contract/
 │   └── chat2pay-api.yaml
 ├── chat2pay-web/
@@ -36,23 +41,18 @@ chat2pay/
 └── db/   (reserved for future migrations / seed data)
 ```
 
-## 4. Frontend Technology Direction
+## 4. Frontend Direction
 
-The current frontend implementation uses:
+The frontend remains the current React + TypeScript implementation in
+`chat2pay-web/`.
 
-- React + TypeScript
-- Vite
-- React Router
-- TanStack Query
-- Zustand
-- Tailwind CSS
-- custom UI primitives and icons
+Key rule:
 
-The earlier Ant Design-based suggestion is no longer the active direction.
+- preserve the current page structure and visual direction
+- replace mock data flow with real backend APIs
+- keep orchestration out of the frontend
 
 ## 5. Frontend Structure
-
-Current implemented path:
 
 ```text
 chat2pay-web/
@@ -61,29 +61,15 @@ chat2pay-web/
 ├── public/
 ├── src/
 │   ├── app/
-│   │   ├── providers/
-│   │   └── router/
-│   ├── entities/
 │   ├── features/
-│   │   ├── auth/
-│   │   ├── chat-input/
-│   │   ├── message-renderer/
-│   │   ├── session-history/
-│   │   ├── sidebar/
-│   │   ├── ui-events/
-│   │   └── user-menu/
-│   ├── generated/
-│   │   └── openapi/
 │   ├── pages/
-│   │   ├── chat-workspace/
-│   │   └── profile-selector/
 │   ├── shared/
 │   │   ├── api/
 │   │   ├── config/
 │   │   ├── lib/
 │   │   ├── styles/
 │   │   └── ui/
-│   └── test/
+│   └── generated/
 └── dist/
 ```
 
@@ -91,63 +77,100 @@ chat2pay-web/
 
 | Path | Responsibility |
 |---|---|
-| `app/` | app-level providers and router |
-| `pages/` | route-level screens |
-| `features/` | feature-specific UI and behavior |
-| `shared/api/` | contract-aligned mock and client code |
-| `shared/ui/` | reusable branded UI primitives |
-| `shared/styles/` | global styling, tokens, motion |
-| `generated/openapi/` | generated contract artifacts |
+| `pages/` | Route-level screens such as profile selection and chat workspace |
+| `features/` | Chat input, sidebar, message rendering, structured UI events |
+| `shared/api/` | Frontend API client and contract-aligned DTOs |
+| `shared/ui/` | Reusable branded UI primitives |
+| `shared/styles/` | Global styling, tokens, motion |
+| `generated/` | Generated artifacts if OpenAPI codegen is introduced later |
 
-## 6. Backend Reservation
+## 6. Backend Direction
 
-`chat2pay-app/` is reserved for the future Spring Boot backend.
+`chat2pay-app/` should become the backend implementation root.
 
 Recommended direction:
 
 ```text
 chat2pay-app/
-├── pom.xml or build.gradle
-├── src/main/java/com/company/chat2pay/
-│   ├── api/
-│   ├── application/
-│   ├── domain/
-│   ├── integration/
-│   ├── persistence/
-│   ├── config/
-│   └── common/
-└── src/main/resources/
+├── pom.xml
+└── src/main/
+    ├── java/com/company/chat2pay/
+    │   ├── api/
+    │   ├── application/
+    │   │   ├── chat/
+    │   │   ├── profile/
+    │   │   └── journey/
+    │   ├── domain/
+    │   │   ├── conversation/
+    │   │   └── payment/
+    │   ├── integration/
+    │   │   ├── llm/
+    │   │   └── downstream/
+    │   │       ├── auth/
+    │   │       ├── payee/
+    │   │       └── payment/
+    │   ├── persistence/
+    │   ├── config/
+    │   └── common/
+    └── resources/
+        ├── application.yml
+        └── db/
 ```
 
-## 7. API Contract Placement
+### Backend responsibility summary
 
-The canonical contract copy for implementation work is:
+| Path | Responsibility |
+|---|---|
+| `api/` | REST controllers exposed to the frontend |
+| `application/chat/` | Turn orchestration and response assembly |
+| `application/journey/` | Journey registry and specific handlers such as domestic existing payee |
+| `integration/llm/` | Local HTTP LLM adapter and future remote provider adapter |
+| `integration/downstream/auth/` | Login-to-SAML token handling |
+| `integration/downstream/payee/` | `PAYEE_URL` client |
+| `integration/downstream/payment/` | `CONFIRM_PAYMENT_URL` client |
+| `persistence/` | Repositories and database mappings |
+
+## 7. Contract Placement
+
+The canonical implementation-facing copy is:
 
 ```text
 api-contract/chat2pay-api.yaml
 ```
 
-The design copy remains under:
+The design copy remains in:
 
 ```text
 docs/02-api_contract.yaml
 ```
 
-## 8. UI Documentation Status
+These two files should stay identical.
 
-Use:
+## 8. Design References
 
+Use these docs together:
+
+- `docs/01-system_design.md`
+- `docs/03-db_design.md`
 - `docs/06-ui_implementation.md`
-- `chat2pay-web/`
+- `docs/10-local_LLM.md`
+- `docs/11-backend-skill.md`
 
-as the practical UI reference.
+Recommended reading order for implementation:
+
+1. `docs/01-system_design.md`
+2. `docs/11-backend-skill.md`
+3. `docs/10-local_LLM.md`
+4. `docs/02-api_contract.yaml`
+5. `docs/03-db_design.md`
 
 ## 9. Current Recommendation
 
-For the current POC:
+For the next implementation step:
 
-- keep the repository flat and simple
-- keep `chat2pay-web/` as the implemented frontend
-- use `chat2pay-app/` for upcoming backend work
-- treat `api-contract/` as the implementation-facing contract source
-- keep `docs/` aligned with the actual codebase rather than earlier sketches
+- keep the repository flat
+- leave the current frontend UI structure in place
+- build the Spring Boot backend in `chat2pay-app/`
+- switch frontend API calls from mock flow to backend endpoints
+- treat `docs/11-backend-skill.md` as the behavioral reference for the first
+  payment journey
