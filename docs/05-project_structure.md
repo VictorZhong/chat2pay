@@ -126,7 +126,7 @@ chat2pay-app/
 | `application/chat/` | Turn orchestration and response assembly |
 | `application/journey/` | Journey handlers, backend planning agent loop, and tool registry/handlers that turn tool results into next-step decisions |
 | `integration/llm/` | Local HTTP LLM adapter and future remote provider adapter |
-| `integration/downstream/` | All downstream clients, auth helpers, and downstream request/response models |
+| `integration/downstream/` | All downstream clients, auth helpers, and downstream request/response models; add new downstream APIs here without changing frontend shape |
 | `persistence/` | Repositories and database mappings |
 | `src/main/resources/db/migration/postgresql/` | PostgreSQL Flyway migrations using `ctp_` table prefixes |
 | `src/test/resources/db/migration/h2/` | Test-only Flyway migrations mirroring the runtime schema |
@@ -176,3 +176,32 @@ For the next implementation step:
 - switch frontend API calls from mock flow to backend endpoints
 - treat `docs/11-backend-skill.md` as the behavioral reference for the first
   payment journey
+
+## 10. How To Add A New Journey
+
+For a new journey such as `INTERNATIONAL_EXISTING_PAYEE`, keep the extension
+pattern consistent:
+
+1. Add a new journey handler in `application/journey/`.
+2. Add one or more bounded tool handlers in `application/journey/` for the new
+   business capabilities such as `limit_check`, `fraud_check`, or `get_fx_quote`.
+3. Add the matching downstream client plus request/response models in
+   `integration/downstream/`.
+4. Reuse the existing `ChatApiController` and frontend endpoints. Do not add a
+   dedicated frontend orchestration path.
+5. Reuse existing content block types for the UI. Do not create a new page or a
+   journey-specific wizard unless the conversation model truly breaks down.
+6. Add a Flyway migration only if existing draft/session JSON storage is no
+   longer sufficient.
+
+Recommended naming pattern:
+
+- journey handler: `InternationalExistingPayeeJourney`
+- tool handlers: `LimitCheckToolHandler`, `FraudCheckToolHandler`,
+  `GetFxQuoteToolHandler`
+- downstream clients: `HttpLimitCheckClient`, `HttpFraudCheckClient`,
+  `HttpFxQuoteClient`
+- downstream DTOs: `LimitCheckRequest`, `LimitCheckResponse`, and so on
+
+This keeps the system open for new journeys while keeping the top-level backend
+shape stable.

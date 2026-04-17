@@ -79,6 +79,22 @@ The current UI already has the right primitives:
 
 These are sufficient for the first real backend integration.
 
+## 7.1 Rule For Future Journeys
+
+If a future journey adds extra backend steps such as limit check, fraud check,
+FX quote, or compliance review, the frontend should still stay on the same
+conversation surfaces.
+
+Preferred rendering pattern:
+
+- text or info blocks for status and guidance
+- selectable lists for ambiguity resolution
+- simple forms for missing journey inputs
+- summary cards for review and confirmation
+
+Do not add journey-specific frontend orchestration or dedicated stepper pages
+just because the backend added more downstream APIs.
+
 ## 8. Workflow Visibility
 
 Implemented in:

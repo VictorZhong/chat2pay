@@ -78,6 +78,15 @@ never calls downstream payment APIs directly.
    simple forms. New journey complexity should appear as backend-generated blocks,
    not as frontend-specific orchestration logic.
 
+8. **Tools are the backend extension seam.**
+   A new downstream API should normally appear as a new bounded backend tool,
+   not as a new frontend endpoint or a new free-form LLM capability.
+
+9. **Keep top-level workflow coarse-grained.**
+   Do not create a new public workflow enum for every downstream check. Keep the
+   contract-level workflow state small and cross-journey, and keep
+   journey-specific step detail inside the draft context and assistant blocks.
+
 ## 4. High-Level Architecture
 
 ```mermaid
@@ -195,13 +204,13 @@ not be materially redesigned.
 | `ProfileApiController` | List POC profiles, validate shared password, return current user context |
 | `ChatApiController` | Create sessions, accept free-text messages, accept structured UI events |
 | `ChatOrchestrator` | Central application coordinator for every turn |
-| `JourneyRegistry` | Select the correct payment journey handler for the current intent |
+| `JourneyRegistry` | Select the correct payment journey handler for the current intent and current session state |
 | `DomesticExistingPayeeJourney` | Current POC flow implementation |
 | `UnsupportedRequestResponder` | Return stable unsupported-operation responses |
 | `ConversationManager` | Load and persist session, messages, draft, and workflow logs |
 | `LlmGateway` | Provider-neutral backend planning agent adapter |
 | `PayeeMatcher` | Deterministically match free-text payee names against payee list data |
-| `JourneyToolRegistry` | Register backend tools that the planner may choose from |
+| `JourneyToolRegistry` | Register bounded backend tools that the planner may choose from |
 | `DownstreamTokenService` | Obtain SAML token from `LOGIN_URL` for every downstream call |
 | `PayeeClient` | Call `PAYEE_URL` using the current profile context after SAML acquisition |
 | `ConfirmPaymentClient` | Call `CONFIRM_PAYMENT_URL` using the current draft and downstream auth context |
@@ -253,6 +262,29 @@ Important limitation for the first journey:
 - keep final payee matching deterministic against `commonPayeeDetail.name`
 - do not require provider-specific function calling for the first POC slice
 
+### 7.3 Tool Planning Contract
+
+The planner should not see raw HTTP client details. It should see a normalized
+journey context and a bounded tool catalog.
+
+Recommended planner inputs:
+
+- current `journeyType`, `workflowState`, and active draft snapshot
+- recent user and assistant messages
+- user profile context including `username` / `payment10`
+- allowed tools for the active journey
+- normalized results from previously executed tools
+
+Recommended planner outputs:
+
+- ask the user for missing information
+- choose one allowed tool and provide structured arguments
+- tell the backend to render a confirmation
+- tell the backend to complete, cancel, or mark unsupported
+
+This keeps the LLM useful while still letting the backend own guardrails,
+execution order, and downstream side effects.
+
 ### 7.2 Future Provider Compatibility
 
 The backend must not expose provider-specific behavior to the frontend.
@@ -293,6 +325,19 @@ public interface DownstreamAuthenticatedCaller {
 
 That abstraction lets later integrations add more clients without duplicating
 the login-before-call pattern.
+
+Recommended rule:
+
+- client-per-downstream-API
+- tool-per-business-capability
+
+For example, `LIMIT_CHECK_URL` and `FRAUD_CHECK_URL` would usually become:
+
+- one downstream client per API in `integration/downstream/`
+- one tool handler per business step in `application/journey/`
+
+This lets the planner reason at the business-tool level instead of at raw HTTP
+call level.
 
 ## 9. Payment Journey Model
 
@@ -352,6 +397,64 @@ Future journey handlers can add extra steps such as:
 
 Those steps should live inside journey-specific handlers, not inside the chat
 controller or frontend.
+
+### 9.5 How To Add A New Journey
+
+When introducing a new journey such as `INTERNATIONAL_EXISTING_PAYEE`, follow
+this sequence:
+
+1. Add or enable the new `JourneyType` in backend domain/config and in profile
+   support lists.
+2. Create a dedicated journey handler that owns the rules, guardrails, and
+   allowed tools for that journey.
+3. Define bounded tools for each backend capability the planner may use.
+   Examples: `list_registered_payees`, `limit_check`, `fraud_check`,
+   `get_fx_quote`, `confirm_international_payment`.
+4. Implement those tool handlers in the journey layer. A tool handler may call
+   one or more downstream clients, but it should return one normalized tool
+   result to the planner.
+5. Add downstream clients and request/response models under
+   `integration/downstream/`, reusing the same login-before-call auth pattern.
+6. Persist only the references and summaries needed to continue the journey.
+   Use draft JSON for most journey-specific data first; add new typed DB columns
+   only when data becomes cross-journey or query-critical.
+7. Render new steps using the existing frontend block types: text, selectable
+   list, simple form, summary card, info card, error card.
+8. Add tests at four levels: planner behavior, tool handler behavior,
+   persistence continuity, and end-to-end journey flow.
+
+A new downstream API does not automatically justify:
+
+- a new frontend route
+- a new frontend orchestration branch
+- a new public REST endpoint
+- a new top-level workflow enum value
+
+Add those only when the new journey cannot be expressed through the existing
+conversation contract.
+
+### 9.6 Example: `INTERNATIONAL_EXISTING_PAYEE`
+
+An international journey can still use the same chat endpoints and the same UI
+surfaces. The main difference is the allowed tool set and the guardrails.
+
+Possible tool chain:
+
+1. collect beneficiary, amount, currency, destination country, and purpose
+2. call `list_registered_payees`
+3. call `limit_check`
+4. call `fraud_check`
+5. call `get_fx_quote` if currency conversion is needed
+6. show review / quote / fee summary
+7. after explicit user confirmation, call `confirm_international_payment`
+
+Important rules:
+
+- the planner may choose tool order only within the journey's allowed tool set
+- the backend must prevent confirmation until required checks have passed
+- failed checks may lead to clarification, hard stop, or alternate guidance
+- tool outputs should be normalized before being fed back into the planner
+- the frontend should still only render backend-provided blocks
 
 ## 10. Workflow States
 
@@ -454,4 +557,48 @@ sequenceDiagram
     LLM-->>ORC: unsupported for current POC
     ORC-->>API: info card saying this action is not supported
     API-->>FE: render unsupported message
+```
+
+### 11.4 Future International Journey Pattern
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant FE as Frontend
+    participant API as Chat API
+    participant ORC as Chat Orchestrator
+    participant J as International Journey
+    participant LLM as LLM Gateway
+    participant TOOL as Journey Tool Registry
+    participant DS as Downstream APIs
+    participant DB as PostgreSQL
+
+    U->>FE: "Send 2,000 USD to Alice in Singapore"
+    FE->>API: POST /api/chat/sessions/{id}/messages
+    API->>ORC: handleMessage()
+    ORC->>J: route to international journey
+    J->>LLM: plan next action with journey context + allowed tools
+    LLM-->>J: CALL_TOOL(limit_check)
+    J->>TOOL: execute limit_check
+    TOOL->>DS: login + limit check API(s)
+    DS-->>TOOL: normalized result
+    TOOL-->>J: tool result
+    J->>LLM: continue with updated context
+    LLM-->>J: CALL_TOOL(get_fx_quote) or ASK_USER
+    J->>DB: persist draft references + assistant blocks
+    J-->>API: next assistant response
+    API-->>FE: render form/list/summary
+
+    U->>FE: Confirm
+    FE->>API: POST /api/chat/sessions/{id}/events
+    API->>ORC: handleUiEvent()
+    ORC->>J: continue international journey
+    J->>LLM: validate readiness
+    LLM-->>J: CALL_TOOL(confirm_international_payment)
+    J->>TOOL: execute confirm tool with backend guardrails
+    TOOL->>DS: login + confirm API(s)
+    DS-->>TOOL: success/failure
+    J->>DB: persist terminal state
+    J-->>API: final assistant response
+    API-->>FE: render result
 ```

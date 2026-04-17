@@ -8,6 +8,10 @@ info:
     orchestration happens in the Spring Boot backend.
     The first supported payment journey is domestic transfer to a registered
     payee only.
+    Future journeys should be additive on the same chat endpoints and payload
+    shapes. New downstream checks and APIs should appear as backend-owned
+    orchestration and content blocks, not as frontend-specific orchestration
+    endpoints.
 servers:
   - url: /api
     description: Relative API base path
@@ -307,6 +311,10 @@ components:
           $ref: '#/components/schemas/ProfileStatus'
         supportedJourneyTypes:
           type: array
+          description: |
+            Journey types currently enabled for this profile. New journey support
+            should be added by extending this list, not by introducing a new
+            profile API shape.
           items:
             $ref: '#/components/schemas/JourneyType'
           example: [DOMESTIC_EXISTING_PAYEE]
@@ -354,6 +362,10 @@ components:
           enum: [PROFILE_SELECTION]
         supportedJourneyTypes:
           type: array
+          description: |
+            Journey types currently enabled for the logged-in profile. This is a
+            capability list, not a routing contract; the same chat endpoints are
+            reused across journeys.
           items:
             $ref: '#/components/schemas/JourneyType'
           example: [DOMESTIC_EXISTING_PAYEE]
@@ -668,7 +680,11 @@ components:
           type: object
           nullable: true
           additionalProperties: true
-          description: Downstream identifiers such as quote IDs, limit IDs, or confirm references.
+          description: |
+            Downstream identifiers and summarized tool outputs such as quote IDs,
+            limit-check references, fraud-check references, and confirm
+            references. For multi-step journeys, prefer namespaced objects such
+            as `limitCheck`, `fraudCheck`, `fxQuote`, or `confirmPayment`.
         transferReference:
           type: string
           nullable: true
@@ -676,6 +692,11 @@ components:
           type: object
           nullable: true
           additionalProperties: true
+          description: |
+            Flexible journey-local state used to continue the conversation, such
+            as current step keys, required user inputs, or normalized planner
+            context. Prefer this field before introducing new top-level contract
+            fields for one specific journey.
         lastUpdatedAt:
           type: string
           format: date-time
@@ -933,6 +954,11 @@ components:
 
     WorkflowState:
       type: string
+      description: |
+        Coarse-grained workflow state for session-level rendering. Keep this
+        enum intentionally small and cross-journey. Journey-specific substeps
+        should normally be represented through assistant blocks and draft JSON
+        context rather than a new enum value for every downstream API.
       enum:
         - IDLE
         - COLLECTING_PAYMENT_DETAILS
@@ -978,6 +1004,10 @@ components:
 
     JourneyType:
       type: string
+      description: |
+        Supported payment journey classification. New journeys should extend
+        this enum additively while reusing the same chat endpoints and response
+        shapes.
       enum:
         - DOMESTIC_EXISTING_PAYEE
         - DOMESTIC_NEW_PAYEE

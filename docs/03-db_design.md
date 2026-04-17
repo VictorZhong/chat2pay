@@ -24,6 +24,8 @@ This document defines the PostgreSQL persistence design for the chat2pay POC.
 - structured assistant blocks are stored as `jsonb`
 - journey-specific integration details use JSONB rather than hardcoding every
   future downstream field into the first schema version
+- do not create one new table per downstream API by default; prefer storing
+  journey-local tool references and summaries in existing draft JSON first
 - all application tables use the `ctp_` prefix
 - Flyway schema history is stored in `ctp_flyway_schema_history`
 
@@ -208,7 +210,8 @@ session.
 - `review_summary_json` stores the normalized summary shown to the user before
   confirmation
 - `downstream_references_json` keeps journey-specific references flexible for
-  future international and multi-step flows
+  future international and multi-step flows such as limit checks, fraud checks,
+  FX quotes, and review references
 - `candidate_payees_json` stores temporary payee options so ambiguous selection
   and "change payee" flows survive app restarts
 
@@ -520,3 +523,54 @@ More profiles can be added later without changing the frontend structure.
 - persist the normalized confirmation card payload in `review_summary_json`
 - store raw or summarized downstream identifiers in `downstream_references_json`
 - keep `detail_json` in `workflow_transition_log` concise but diagnostic
+
+## 8. Future Journey Extension Guidance
+
+When adding a new journey such as an international payment:
+
+- reuse `ctp_chat_session`, `ctp_chat_message`, and `ctp_payment_draft` first
+- extend `journey_type` constraints in a new Flyway migration if a new enum
+  value is introduced
+- persist downstream tool references in `downstream_references_json`
+- persist planner-visible journey state in `additional_context_json`
+- add new typed columns only when the value is needed for:
+  - cross-journey querying
+  - reconciliation or audit exports
+  - indexing / filtering
+  - non-optional downstream confirm payloads used by multiple journeys
+
+Recommended JSON shape for multi-step journeys:
+
+```json
+{
+  "downstreamReferences": {
+    "limitCheck": {
+      "referenceId": "limit-001",
+      "status": "PASSED"
+    },
+    "fraudCheck": {
+      "referenceId": "fraud-001",
+      "status": "CLEARED"
+    },
+    "fxQuote": {
+      "quoteId": "fx-001",
+      "sellCurrency": "HKD",
+      "buyCurrency": "USD",
+      "expiresAt": "2026-04-17T12:30:00Z"
+    }
+  },
+  "additionalContext": {
+    "journeyStepKey": "FX_QUOTED",
+    "requiredUserInputs": ["purposeOfPayment"],
+    "completedChecks": ["limitCheck", "fraudCheck"]
+  }
+}
+```
+
+Recommended rule:
+
+- keep JSON keys namespaced by capability such as `limitCheck`, `fraudCheck`,
+  `fxQuote`, `beneficiaryValidation`
+- store summaries, statuses, and references, not full raw downstream payloads
+- if a downstream result is large or sensitive, persist only the subset needed
+  to continue the journey and troubleshoot failures
