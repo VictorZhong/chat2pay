@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: chat2pay-postgres
+    environment:
+      POSTGRES_DB: chat2pay
+      POSTGRES_USER: chat2pay
+      POSTGRES_PASSWORD: chat2pay
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chat2pay -d chat2pay"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - chat2pay-postgres-data:/var/lib/postgresql/data
+
+volumes:
+  chat2pay-postgres-data:

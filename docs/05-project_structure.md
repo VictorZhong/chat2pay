@@ -38,7 +38,9 @@ chat2pay/
 │   └── chat2pay-api.yaml
 ├── chat2pay-web/
 ├── chat2pay-app/
-└── db/   (reserved for future migrations / seed data)
+│   ├── compose.yaml
+│   └── src/main/resources/db/migration/postgresql/
+└── chat2pay-app/src/test/resources/db/migration/h2/
 ```
 
 ## 4. Frontend Direction
@@ -92,6 +94,7 @@ Recommended direction:
 
 ```text
 chat2pay-app/
+├── compose.yaml
 ├── pom.xml
 └── src/main/
     ├── java/com/company/chat2pay/
@@ -111,7 +114,7 @@ chat2pay-app/
     │   └── common/
     └── resources/
         ├── application.yml
-        └── db/
+        └── db/migration/postgresql/
 ```
 
 ### Backend responsibility summary
@@ -124,6 +127,9 @@ chat2pay-app/
 | `integration/llm/` | Local HTTP LLM adapter and future remote provider adapter |
 | `integration/downstream/` | All downstream clients, auth helpers, and downstream request/response models |
 | `persistence/` | Repositories and database mappings |
+| `src/main/resources/db/migration/postgresql/` | PostgreSQL Flyway migrations using `ctp_` table prefixes |
+| `src/test/resources/db/migration/h2/` | Test-only Flyway migrations mirroring the runtime schema |
+| `compose.yaml` | Local PostgreSQL runtime for the backend POC |
 
 ## 7. Contract Placement
 

@@ -1,0 +1,41 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:chat2pay;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  flyway:
+    enabled: true
+    table: ctp_flyway_schema_history
+    locations: classpath:db/migration/h2
+
+chat2pay:
+  security:
+    shared-password: tb123
+  llm:
+    enabled: true
+    base-url: http://localhost:8000
+    chat-path: /api/chat
+    fallback-to-heuristics: true
+  demo:
+    default-source-account-id: acct_hk_primary_savings
+    default-source-account-display: Primary Savings • 123-456-001
+  downstream:
+    mock-enabled: true
+    login:
+      url-template: https://example.test/login/{username}
+      code: 123123
+    payee:
+      url: https://example.test/payees
+      payee-category: INDIVIDUAL
+      payee-type: "2"
+      mock-payees:
+        - payee-id-index: demo-payee-001
+          payee-type: "6"
+          name: BOB
+          description: Registered local payee
+    payment:
+      confirm-url: https://example.test/confirm-domestic-payments
+      default-currency: HKD
+      debit-account-acn: TEST-DEBIT-ACCOUNT
+      product-category-code: CUR

@@ -4,6 +4,15 @@ server:
 spring:
   application:
     name: chat2pay-app
+  datasource:
+    url: ${CHAT2PAY_DB_URL:jdbc:postgresql://localhost:5432/chat2pay}
+    username: ${CHAT2PAY_DB_USERNAME:chat2pay}
+    password: ${CHAT2PAY_DB_PASSWORD:chat2pay}
+    driver-class-name: org.postgresql.Driver
+  flyway:
+    enabled: true
+    table: ctp_flyway_schema_history
+    locations: classpath:db/migration/postgresql
 
 chat2pay:
   security:
@@ -16,17 +25,6 @@ chat2pay:
   demo:
     default-source-account-id: acct_hk_primary_savings
     default-source-account-display: Primary Savings • 123-456-001
-    profiles:
-      - id: 01J0CHAT2PAYPROFILE000000001
-        code: HK_STAFF_001
-        username: payment10
-        display-name: Payment 10
-        avatar-url:
-        mock-customer-id: CUST0001
-        locale: en-HK
-        status: ACTIVE
-        supported-journey-types:
-          - DOMESTIC_EXISTING_PAYEE
   downstream:
     mock-enabled: true
     login:
