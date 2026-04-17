@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
+import { ApiModeSwitch } from '@/features/api-mode/ApiModeSwitch';
+import { useApiModeStore } from '@/features/api-mode/useApiModeStore';
 import { chat2payClient, queryKeys } from '@/shared/api/chat2payClient';
 import type { ProfileLoginRequest, ProfileSummary } from '@/shared/api/contracts';
 import { BrandAvatar } from '@/shared/ui/BrandAvatar';
@@ -173,12 +175,13 @@ function PasswordDialog({
 export function ProfileSelectorPage() {
   const navigate = useNavigate();
   const setCurrentUser = useAuthStore((state) => state.setCurrentUser);
+  const apiMode = useApiModeStore((state) => state.apiMode);
   const [selectedProfile, setSelectedProfile] = useState<ProfileSummary | null>(null);
   const [password, setPassword] = useState('');
   const [validationError, setValidationError] = useState<string | null>(null);
 
   const profilesQuery = useQuery({
-    queryKey: queryKeys.profiles,
+    queryKey: queryKeys.profiles(apiMode),
     queryFn: () => chat2payClient.listProfiles(),
   });
 
@@ -249,12 +252,17 @@ export function ProfileSelectorPage() {
     <>
       <main className="brand-shell app-grid min-h-full px-8 py-10">
         <div className="mx-auto flex min-h-[calc(100vh-80px)] max-w-7xl flex-col justify-center">
-          <div className="mb-12 max-w-3xl">
-            <p className="mb-4 text-xs font-semibold uppercase tracking-[0.24em] text-brand-red">Internal Transfer POC</p>
-            <h1 className="text-5xl font-semibold tracking-tight text-brand-black">chat2pay</h1>
-            <p className="mt-6 max-w-2xl text-base leading-8 text-brand-gray">
-              Select a predefined profile, then enter the shared access password to continue into the transfer workspace.
-            </p>
+          <div className="mb-12 grid gap-8 xl:grid-cols-[minmax(0,1fr)_320px] xl:items-start">
+            <div className="max-w-3xl">
+              <p className="mb-4 text-xs font-semibold uppercase tracking-[0.24em] text-brand-red">Internal Transfer POC</p>
+              <h1 className="text-5xl font-semibold tracking-tight text-brand-black">chat2pay</h1>
+              <p className="mt-6 max-w-2xl text-base leading-8 text-brand-gray">
+                Select a predefined profile, then enter the shared access password to continue into the transfer workspace.
+              </p>
+            </div>
+            <div className="xl:justify-self-end">
+              <ApiModeSwitch disabled={loginMutation.isPending} onModeChanged={closePasswordDialog} />
+            </div>
           </div>
 
           {profilesQuery.isLoading ? (
@@ -264,6 +272,21 @@ export function ProfileSelectorPage() {
                   title="Loading profiles"
                   description="Available demo identities are being prepared for this workspace."
                 />
+              </div>
+            </div>
+          ) : profilesQuery.isError ? (
+            <div className="brand-panel p-8">
+              <div className="max-w-2xl">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-red">Profiles unavailable</p>
+                <h2 className="mt-3 text-2xl font-semibold text-brand-black">Unable to load the selected data source</h2>
+                <p className="mt-4 text-base leading-8 text-brand-gray">
+                  {profilesQuery.error instanceof Error
+                    ? profilesQuery.error.message
+                    : 'The active API mode did not return a profile list.'}
+                </p>
+                <div className="mt-6">
+                  <BrandButton onClick={() => profilesQuery.refetch()}>Retry</BrandButton>
+                </div>
               </div>
             </div>
           ) : (

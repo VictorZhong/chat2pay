@@ -23,6 +23,7 @@ export function Sidebar({
   sessions,
   selectedSessionId,
   collapsed,
+  busy = false,
   onToggleCollapsed,
   onNewChat,
   onSelectSession,
@@ -32,6 +33,7 @@ export function Sidebar({
   sessions: ChatSessionSummary[];
   selectedSessionId?: string;
   collapsed: boolean;
+  busy?: boolean;
   onToggleCollapsed: () => void;
   onNewChat: () => void;
   onSelectSession: (sessionId: string) => void;
@@ -62,7 +64,7 @@ export function Sidebar({
             {collapsed ? <MenuUnfoldIcon className="h-4 w-4" /> : <MenuFoldIcon className="h-4 w-4" />}
           </button>
         </div>
-        <BrandButton fullWidth onClick={onNewChat}>
+        <BrandButton fullWidth onClick={onNewChat} disabled={busy}>
           <PlusIcon className="h-4 w-4" />
           {collapsed ? '' : 'New Chat'}
         </BrandButton>
@@ -108,7 +110,7 @@ export function Sidebar({
       </div>
 
       <div className="mt-auto border-t border-brand-black bg-[linear-gradient(180deg,#141414_0%,#202020_100%)] p-4">
-        <UserMenu user={user} collapsed={collapsed} onLogout={onLogout} />
+        <UserMenu user={user} collapsed={collapsed} busy={busy} onLogout={onLogout} />
       </div>
     </aside>
   );

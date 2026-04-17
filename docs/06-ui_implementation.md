@@ -101,6 +101,7 @@ This is a copy/state update, not a layout redesign.
 Current mock behavior in:
 
 - `chat2pay-web/src/shared/api/mockServer.ts`
+- `chat2pay-web/src/features/api-mode/ApiModeSwitch.tsx`
 
 Important note:
 
@@ -108,12 +109,21 @@ Important note:
 - it currently models extra steps such as payment rail choice and proposal-style
   review
 - those should not drive the real backend implementation
+- the frontend should keep a fast switch between `mock` and real `backend` mode
+  for local demos
+- the default mode may come from environment, but the user should also be able
+  to switch at runtime without redesigning the page
 
-The next step should replace or narrow that mock behavior to the backend-owned
-flow defined in:
+The real backend behavior should follow the backend-owned flow defined in:
 
 - `docs/01-system_design.md`
 - `docs/11-backend-skill.md`
+
+The mock flow remains useful for:
+
+- UI-only iteration when the backend is not running
+- preserving a broader demo dataset than the current backend slice
+- quick comparison between mock behavior and the latest backend wiring
 
 ## 10. Source of Truth
 

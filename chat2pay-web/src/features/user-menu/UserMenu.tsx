@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { ApiModeSwitch } from '@/features/api-mode/ApiModeSwitch';
 import type { CurrentUserContext } from '@/shared/api/contracts';
 import { BrandAvatar } from '@/shared/ui/BrandAvatar';
 import { BrandButton } from '@/shared/ui/BrandButton';
@@ -7,10 +8,12 @@ import { DownIcon, LogoutIcon } from '@/shared/ui/icons';
 export function UserMenu({
   user,
   collapsed,
+  busy = false,
   onLogout,
 }: {
   user: CurrentUserContext;
   collapsed: boolean;
+  busy?: boolean;
   onLogout: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -40,14 +43,16 @@ export function UserMenu({
 
   const content = (
     <div className="w-64 bg-white p-1">
-      <div className="border border-brand-line p-4">
+      <div className="space-y-4 border border-brand-line p-4">
         <div className="mb-4 flex items-center gap-3">
           <BrandAvatar name={user.displayName} size="sm" />
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold text-brand-black">{user.displayName}</p>
+            <p className="truncate text-xs uppercase tracking-[0.14em] text-brand-gray">{user.username}</p>
           </div>
         </div>
-        <BrandButton fullWidth onClick={onLogout}>
+        <ApiModeSwitch compact disabled={busy} onModeChanged={() => setOpen(false)} />
+        <BrandButton fullWidth onClick={onLogout} disabled={busy}>
           <LogoutIcon className="h-4 w-4" />
           Logout
         </BrandButton>

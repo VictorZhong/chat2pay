@@ -1,55 +1,68 @@
 import type { ProfileLoginRequest, SendMessageRequest, UiEventRequest } from '@/shared/api/contracts';
-import { USE_MOCK_API } from '@/shared/config/env';
+import { getApiMode } from '@/features/api-mode/useApiModeStore';
+import { backendClient } from '@/shared/api/backendClient';
 import * as mockServer from '@/shared/api/mockServer';
+import type { ApiMode } from '@/shared/config/env';
 
-function assertMockMode() {
-  if (!USE_MOCK_API) {
-    throw new Error('Real API client is not wired yet.');
-  }
+interface Chat2PayClient {
+  listProfiles: typeof mockServer.listProfiles;
+  profileLogin: (payload: ProfileLoginRequest) => ReturnType<typeof mockServer.profileLogin>;
+  listChatSessions: typeof mockServer.listChatSessions;
+  createChatSession: typeof mockServer.createChatSession;
+  getChatSession: typeof mockServer.getChatSession;
+  listChatMessages: typeof mockServer.listChatMessages;
+  sendChatMessage: (
+    profileId: string,
+    sessionId: string,
+    payload: SendMessageRequest,
+  ) => ReturnType<typeof mockServer.sendChatMessage>;
+  submitUiEvent: (
+    profileId: string,
+    sessionId: string,
+    payload: UiEventRequest,
+  ) => ReturnType<typeof mockServer.submitUiEvent>;
+  resetMockData: () => void | Promise<void>;
+}
+
+function resolveClient(apiMode: ApiMode = getApiMode()): Chat2PayClient {
+  return apiMode === 'backend' ? backendClient : mockServer;
 }
 
 export const queryKeys = {
-  profiles: ['profiles'] as const,
-  sessions: (profileId: string) => ['sessions', profileId] as const,
-  session: (profileId: string, sessionId: string) => ['session', profileId, sessionId] as const,
-  messages: (profileId: string, sessionId: string) => ['messages', profileId, sessionId] as const,
+  profiles: (apiMode: ApiMode) => ['api', apiMode, 'profiles'] as const,
+  sessions: (apiMode: ApiMode, profileId: string) => ['api', apiMode, 'sessions', profileId] as const,
+  session: (apiMode: ApiMode, profileId: string, sessionId: string) =>
+    ['api', apiMode, 'session', profileId, sessionId] as const,
+  messages: (apiMode: ApiMode, profileId: string, sessionId: string) =>
+    ['api', apiMode, 'messages', profileId, sessionId] as const,
 };
 
 export const chat2payClient = {
   listProfiles() {
-    assertMockMode();
-    return mockServer.listProfiles();
+    return resolveClient().listProfiles();
   },
   profileLogin(payload: ProfileLoginRequest) {
-    assertMockMode();
-    return mockServer.profileLogin(payload);
+    return resolveClient().profileLogin(payload);
   },
   listChatSessions(profileId: string) {
-    assertMockMode();
-    return mockServer.listChatSessions(profileId);
+    return resolveClient().listChatSessions(profileId);
   },
   createChatSession(profileId: string, title?: string) {
-    assertMockMode();
-    return mockServer.createChatSession(profileId, title);
+    return resolveClient().createChatSession(profileId, title);
   },
   getChatSession(profileId: string, sessionId: string) {
-    assertMockMode();
-    return mockServer.getChatSession(profileId, sessionId);
+    return resolveClient().getChatSession(profileId, sessionId);
   },
   listChatMessages(profileId: string, sessionId: string) {
-    assertMockMode();
-    return mockServer.listChatMessages(profileId, sessionId);
+    return resolveClient().listChatMessages(profileId, sessionId);
   },
   sendChatMessage(profileId: string, sessionId: string, payload: SendMessageRequest) {
-    assertMockMode();
-    return mockServer.sendChatMessage(profileId, sessionId, payload);
+    return resolveClient().sendChatMessage(profileId, sessionId, payload);
   },
   submitUiEvent(profileId: string, sessionId: string, payload: UiEventRequest) {
-    assertMockMode();
-    return mockServer.submitUiEvent(profileId, sessionId, payload);
+    return resolveClient().submitUiEvent(profileId, sessionId, payload);
   },
   resetMockData() {
-    assertMockMode();
-    return mockServer.resetMockData();
+    return resolveClient().resetMockData();
   },
 };

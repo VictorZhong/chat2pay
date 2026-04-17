@@ -51,7 +51,8 @@ The frontend remains the current React + TypeScript implementation in
 Key rule:
 
 - preserve the current page structure and visual direction
-- replace mock data flow with real backend APIs
+- add real backend APIs without removing the existing mock flow
+- allow a lightweight switch between mock and backend mode for local demos
 - keep orchestration out of the frontend
 
 ## 5. Frontend Structure

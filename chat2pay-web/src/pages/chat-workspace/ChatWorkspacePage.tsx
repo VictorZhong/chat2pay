@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useApiModeStore } from '@/features/api-mode/useApiModeStore';
 import type { ChatMessage, ContentBlock, UiEventRequest } from '@/shared/api/contracts';
 import { chat2payClient, queryKeys } from '@/shared/api/chat2payClient';
 import { useAuthStore } from '@/features/auth/useAuthStore';
@@ -12,7 +13,7 @@ import { BrandButton } from '@/shared/ui/BrandButton';
 import { BrandLoadingPanel } from '@/shared/ui/BrandLoadingPanel';
 import { StatusBadge } from '@/shared/ui/StatusBadge';
 import { WorkflowOverview } from '@/shared/ui/WorkflowOverview';
-import { INTERACTION_DELAY_MS } from '@/shared/config/env';
+import { getInteractionDelayMs } from '@/shared/config/env';
 import { wait } from '@/shared/lib/time';
 
 function actionLabelFromSummaryBlock(block: ContentBlock | undefined, actionId: string) {
@@ -63,38 +64,45 @@ export function ChatWorkspacePage() {
   const navigate = useNavigate();
   const { sessionId } = useParams();
   const queryClient = useQueryClient();
-  const currentUser = useAuthStore((state) => state.currentUser)!;
+  const currentUser = useAuthStore((state) => state.currentUser);
   const clearCurrentUser = useAuthStore((state) => state.clearCurrentUser);
   const collapsed = useSidebarStore((state) => state.collapsed);
   const setCollapsed = useSidebarStore((state) => state.setCollapsed);
+  const apiMode = useApiModeStore((state) => state.apiMode);
+
+  if (!currentUser) {
+    return null;
+  }
+
+  const profileId = currentUser.profileId;
 
   const sessionsQuery = useQuery({
-    queryKey: queryKeys.sessions(currentUser.profileId),
-    queryFn: () => chat2payClient.listChatSessions(currentUser.profileId),
+    queryKey: queryKeys.sessions(apiMode, profileId),
+    queryFn: () => chat2payClient.listChatSessions(profileId),
   });
 
   const sessionQuery = useQuery({
-    queryKey: queryKeys.session(currentUser.profileId, sessionId ?? ''),
-    queryFn: () => chat2payClient.getChatSession(currentUser.profileId, sessionId ?? ''),
+    queryKey: queryKeys.session(apiMode, profileId, sessionId ?? ''),
+    queryFn: () => chat2payClient.getChatSession(profileId, sessionId ?? ''),
     enabled: Boolean(sessionId),
   });
 
   const messagesQuery = useQuery({
-    queryKey: queryKeys.messages(currentUser.profileId, sessionId ?? ''),
-    queryFn: () => chat2payClient.listChatMessages(currentUser.profileId, sessionId ?? ''),
+    queryKey: queryKeys.messages(apiMode, profileId, sessionId ?? ''),
+    queryFn: () => chat2payClient.listChatMessages(profileId, sessionId ?? ''),
     enabled: Boolean(sessionId),
   });
 
   async function refreshCurrentSession(nextSessionId: string) {
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: queryKeys.sessions(currentUser.profileId) }),
-      queryClient.invalidateQueries({ queryKey: queryKeys.session(currentUser.profileId, nextSessionId) }),
-      queryClient.invalidateQueries({ queryKey: queryKeys.messages(currentUser.profileId, nextSessionId) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.sessions(apiMode, profileId) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.session(apiMode, profileId, nextSessionId) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.messages(apiMode, profileId, nextSessionId) }),
     ]);
   }
 
   const createSessionMutation = useMutation({
-    mutationFn: () => chat2payClient.createChatSession(currentUser.profileId),
+    mutationFn: () => chat2payClient.createChatSession(profileId),
     onSuccess: async (response) => {
       navigate(`/chat/${response.session.sessionId}`);
       await refreshCurrentSession(response.session.sessionId);
@@ -103,8 +111,8 @@ export function ChatWorkspacePage() {
 
   const sendMessageMutation = useMutation({
     mutationFn: async (messageText: string) => {
-      await wait(INTERACTION_DELAY_MS);
-      return chat2payClient.sendChatMessage(currentUser.profileId, sessionId ?? '', { messageText });
+      await wait(getInteractionDelayMs(apiMode));
+      return chat2payClient.sendChatMessage(profileId, sessionId ?? '', { messageText });
     },
     onSuccess: async () => {
       if (sessionId) {
@@ -115,8 +123,8 @@ export function ChatWorkspacePage() {
 
   const submitUiEventMutation = useMutation({
     mutationFn: async (payload: UiEventRequest) => {
-      await wait(INTERACTION_DELAY_MS);
-      return chat2payClient.submitUiEvent(currentUser.profileId, sessionId ?? '', payload);
+      await wait(getInteractionDelayMs(apiMode));
+      return chat2payClient.submitUiEvent(profileId, sessionId ?? '', payload);
     },
     onSuccess: async () => {
       if (sessionId) {
@@ -130,6 +138,11 @@ export function ChatWorkspacePage() {
   const messages = messagesQuery.data?.items ?? [];
   const busy = createSessionMutation.isPending || sendMessageMutation.isPending || submitUiEventMutation.isPending;
   const readOnly = !activeSession || activeSession.status !== 'ACTIVE';
+  const workspaceError =
+    (sessionsQuery.error instanceof Error && sessionsQuery.error) ||
+    (sessionQuery.error instanceof Error && sessionQuery.error) ||
+    (messagesQuery.error instanceof Error && messagesQuery.error) ||
+    null;
   const pendingUserText = sendMessageMutation.isPending
     ? sendMessageMutation.variables
     : submitUiEventMutation.isPending
@@ -144,6 +157,7 @@ export function ChatWorkspacePage() {
         sessions={sessions}
         selectedSessionId={sessionId}
         collapsed={collapsed}
+        busy={busy}
         onToggleCollapsed={() => setCollapsed(!collapsed)}
         onNewChat={() => createSessionMutation.mutate()}
         onSelectSession={(selectedSessionId) => navigate(`/chat/${selectedSessionId}`)}
@@ -199,6 +213,26 @@ export function ChatWorkspacePage() {
                 title="Loading workspace"
                 description="Session details, draft state, and message history are being assembled for this conversation."
               />
+            </div>
+          ) : workspaceError ? (
+            <div className="flex h-full items-center justify-center p-8">
+              <EmptyStatePanel
+                eyebrow="Workspace"
+                title="Unable to load this conversation"
+                description={workspaceError.message}
+              >
+                <BrandButton
+                  onClick={() => {
+                    void Promise.all([
+                      sessionsQuery.refetch(),
+                      sessionId ? sessionQuery.refetch() : Promise.resolve(),
+                      sessionId ? messagesQuery.refetch() : Promise.resolve(),
+                    ]);
+                  }}
+                >
+                  Retry
+                </BrandButton>
+              </EmptyStatePanel>
             </div>
           ) : (
             <>
