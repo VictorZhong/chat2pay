@@ -1,31 +1,39 @@
 export type ProfileStatus = 'ACTIVE' | 'INACTIVE';
 
-export type ChatSessionStatus = 'ACTIVE' | 'COMPLETED' | 'CANCELLED' | 'ARCHIVED';
+export type CapabilityType =
+  | 'REGISTERED_PAYEE_LOOKUP'
+  | 'DOMESTIC_PAYMENT'
+  | 'INTERNATIONAL_PAYMENT';
 
-export type WorkflowState =
+export type ChatSessionStatus = 'ACTIVE' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'ARCHIVED';
+
+export type ConversationState =
   | 'IDLE'
-  | 'COLLECTING_TRANSFER_INFO'
-  | 'RESOLVING_AMBIGUITY'
-  | 'READY_FOR_PAYMENT_OPTIONS'
-  | 'READY_FOR_LIMIT_CHECK'
-  | 'READY_FOR_PROPOSE'
-  | 'AWAITING_USER_CONFIRMATION'
-  | 'READY_FOR_CONFIRM'
+  | 'COLLECTING_DETAILS'
+  | 'AWAITING_PAYEE_SELECTION'
+  | 'AWAITING_CONFIRMATION'
+  | 'EXECUTING'
   | 'COMPLETED'
   | 'FAILED'
   | 'CANCELLED';
 
-export type TransferStatus = 'DRAFT' | 'PROPOSED' | 'CONFIRMED' | 'FAILED' | 'CANCELLED';
+export type PaymentDraftStatus =
+  | 'DRAFT'
+  | 'AWAITING_CONFIRMATION'
+  | 'EXECUTING'
+  | 'CONFIRMED'
+  | 'FAILED'
+  | 'CANCELLED';
+
+export type PaymentType = 'DOMESTIC_PAYMENT' | 'INTERNATIONAL_PAYMENT';
+
+export type LlmProviderType = 'COPILOT_PERSONAL' | 'REMOTE_API';
 
 export type MessageRole = 'USER' | 'ASSISTANT' | 'SYSTEM';
 
-export type MessageType = 'TEXT' | 'CARD' | 'LIST' | 'FORM' | 'UI_EVENT';
+export type MessageKind = 'TEXT' | 'BLOCKS' | 'UI_EVENT' | 'SYSTEM';
 
 export type UiEventType = 'SELECT_ITEM' | 'SUBMIT_FORM' | 'CLICK_ACTION';
-
-export type PaymentRail = 'GDLV' | 'GDRIA' | 'ORTT' | null;
-
-export type LimitCheckStatus = 'NOT_STARTED' | 'PASSED' | 'FAILED' | null;
 
 export interface ProfileSummary {
   id: string;
@@ -33,9 +41,9 @@ export interface ProfileSummary {
   displayName: string;
   username: string;
   avatarUrl: string | null;
-  mockCustomerId: string;
   locale: string;
   status: ProfileStatus;
+  supportedCapabilities: CapabilityType[];
 }
 
 export interface CurrentUserContext {
@@ -45,6 +53,7 @@ export interface CurrentUserContext {
   avatarUrl: string | null;
   locale: string;
   loginMode: 'PROFILE_SELECTION';
+  supportedCapabilities: CapabilityType[];
 }
 
 export interface ProfileLoginRequest {
@@ -94,7 +103,6 @@ export interface SelectableListBlock {
   blockId: string;
   type: 'SELECTABLE_LIST';
   title: string;
-  selectionMode: 'SINGLE' | 'MULTI';
   items: SelectableItem[];
   metadata?: Record<string, unknown>;
 }
@@ -136,29 +144,41 @@ export interface ChatMessage {
   messageId: string;
   sessionId: string;
   role: MessageRole;
-  messageType: MessageType;
+  kind: MessageKind;
   text?: string | null;
-  contentBlocks?: ContentBlock[];
+  contentBlocks?: ContentBlock[] | null;
+  metadata?: Record<string, unknown> | null;
   createdAt: string;
 }
 
-export interface TransactionDraft {
+export interface PayeeSummary {
+  payeeId: string;
+  name: string;
+  payeeType?: string | null;
+  bankCode?: string | null;
+  bankName?: string | null;
+  accountNumber?: string | null;
+  displayLabel?: string | null;
+}
+
+export interface ErrorSummary {
+  code: string;
+  message: string;
+}
+
+export interface PaymentDraft {
   draftId: string;
   sessionId: string;
-  status: TransferStatus;
-  workflowState: WorkflowState;
-  sourceAccountId?: string | null;
-  sourceAccountDisplay?: string | null;
-  payeeId?: string | null;
-  payeeDisplay?: string | null;
+  paymentType: PaymentType;
+  status: PaymentDraftStatus;
+  payeeQueryText?: string | null;
+  selectedPayee?: PayeeSummary | null;
   amount?: number | null;
   currency?: string | null;
-  paymentRail: PaymentRail;
-  note?: string | null;
-  limitCheckStatus: LimitCheckStatus;
-  proposalId?: string | null;
-  proposalSummary?: Record<string, unknown> | null;
-  transferReference?: string | null;
+  paymentDate?: string | null;
+  downstreamReference?: string | null;
+  lastError?: ErrorSummary | null;
+  context?: Record<string, unknown> | null;
   lastUpdatedAt: string;
 }
 
@@ -166,8 +186,9 @@ export interface ChatSessionSummary {
   sessionId: string;
   title: string;
   status: ChatSessionStatus;
-  workflowState: WorkflowState;
-  lastAssistantText?: string | null;
+  state: ConversationState;
+  llmProvider?: LlmProviderType | null;
+  lastMessagePreview?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -176,64 +197,36 @@ export interface ChatSessionDetail {
   sessionId: string;
   title: string;
   status: ChatSessionStatus;
-  workflowState: WorkflowState;
+  state: ConversationState;
+  llmProvider?: LlmProviderType | null;
+  lastMessagePreview?: string | null;
   createdAt: string;
   updatedAt: string;
-  activeDraft?: TransactionDraft | null;
-}
-
-export interface ChatSessionSummaryPage {
-  items: ChatSessionSummary[];
-  page: number;
-  pageSize: number;
-  total: number;
-}
-
-export interface ChatMessagePage {
-  items: ChatMessage[];
-  page: number;
-  pageSize: number;
-  total: number;
-}
-
-export interface ChatSessionCreateResponse {
-  session: ChatSessionDetail;
-  assistantMessages: ChatMessage[];
+  activeDraft?: PaymentDraft | null;
 }
 
 export interface SendMessageRequest {
   messageText: string;
   clientMessageId?: string | null;
+  stream?: boolean;
 }
 
 export interface UiEventRequest {
   eventType: UiEventType;
   sourceMessageId: string;
   sourceBlockId: string;
-  selectedItemIds?: string[];
+  selectedItemId?: string | null;
+  actionValue?: string | null;
   formValues?: Record<string, string>;
   clientEventId?: string | null;
-}
-
-export interface SuggestedAction {
-  actionType:
-    | 'SEND_TEXT_HINT'
-    | 'SELECT_FROM_LIST'
-    | 'SUBMIT_FORM'
-    | 'CONFIRM_TRANSFER'
-    | 'CANCEL_TRANSFER'
-    | 'START_NEW_CHAT';
-  label: string;
-  value?: string | null;
+  stream?: boolean;
 }
 
 export interface ChatTurnResponse {
   session: ChatSessionDetail;
-  userEchoMessage?: ChatMessage | null;
-  assistantMessages: ChatMessage[];
-  draftSummary?: TransactionDraft | null;
-  workflowState: WorkflowState;
-  suggestedActions?: SuggestedAction[];
+  userMessage?: ChatMessage | null;
+  assistantMessage: ChatMessage;
+  activeDraft?: PaymentDraft | null;
   serverTimestamp: string;
 }
 

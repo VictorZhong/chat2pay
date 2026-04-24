@@ -41,13 +41,13 @@ export function ChatHistoryList({
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold text-brand-black">{session.title}</p>
                   <p className="mt-1 text-xs uppercase tracking-[0.12em] text-brand-gray">
-                    {formatWorkflowState(session.workflowState)}
+                    {formatWorkflowState(session.state)}
                   </p>
                 </div>
                 <StatusBadge value={session.status} />
               </div>
               <p className="max-h-10 overflow-hidden text-xs leading-5 text-brand-gray">
-                {session.lastAssistantText ?? 'No assistant response yet.'}
+                {session.lastMessagePreview ?? 'No message yet.'}
               </p>
               <p className="text-[11px] uppercase tracking-[0.12em] text-brand-gray">
                 {formatDateTime(session.updatedAt)}

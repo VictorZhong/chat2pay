@@ -36,12 +36,12 @@ function actionLabelFromSummaryBlock(block: ContentBlock | undefined, actionId: 
 
 function derivePendingUiEventText(messages: ChatMessage[], payload: UiEventRequest) {
   if (payload.eventType === 'SUBMIT_FORM') {
-    return 'Submitted transfer details';
+    return 'Submitted payment details';
   }
 
   const sourceMessage = messages.find((message) => message.messageId === payload.sourceMessageId);
   const sourceBlock = sourceMessage?.contentBlocks?.find((block) => block.blockId === payload.sourceBlockId);
-  const selectedId = payload.selectedItemIds?.[0];
+  const selectedId = payload.selectedItemId ?? payload.actionValue;
 
   if (!selectedId) {
     return 'Submitted action';
@@ -95,9 +95,9 @@ export function ChatWorkspacePage() {
 
   const createSessionMutation = useMutation({
     mutationFn: () => chat2payClient.createChatSession(currentUser.profileId),
-    onSuccess: async (response) => {
-      navigate(`/chat/${response.session.sessionId}`);
-      await refreshCurrentSession(response.session.sessionId);
+    onSuccess: async (session) => {
+      navigate(`/chat/${session.sessionId}`);
+      await refreshCurrentSession(session.sessionId);
     },
   });
 
@@ -125,9 +125,9 @@ export function ChatWorkspacePage() {
     },
   });
 
-  const sessions = sessionsQuery.data?.items ?? [];
+  const sessions = sessionsQuery.data ?? [];
   const activeSession = sessionQuery.data;
-  const messages = messagesQuery.data?.items ?? [];
+  const messages = messagesQuery.data ?? [];
   const busy = createSessionMutation.isPending || sendMessageMutation.isPending || submitUiEventMutation.isPending;
   const readOnly = !activeSession || activeSession.status !== 'ACTIVE';
   const pendingUserText = sendMessageMutation.isPending
@@ -166,7 +166,7 @@ export function ChatWorkspacePage() {
             <div className="flex flex-wrap items-center gap-3">
               <StatusBadge value={activeSession.status} />
               <WorkflowOverview
-                workflowState={activeSession.workflowState}
+                state={activeSession.state}
                 sessionStatus={activeSession.status}
               />
             </div>
@@ -178,8 +178,8 @@ export function ChatWorkspacePage() {
             <div className="flex h-full items-center justify-center px-10">
               <EmptyStatePanel
                 eyebrow="Workspace"
-                title="Start a new transfer conversation"
-                description="This workspace combines free-text input with structured cards, selectable lists, and guided forms. Create a new chat to begin or reopen a previous session from the left history rail."
+                title="Start a new payment conversation"
+                description="Ask about a registered payee, or tell the backend who to pay, how much, and whether it should go today or tomorrow."
               >
                 <div className="flex flex-col gap-3 sm:flex-row">
                   <BrandButton onClick={() => createSessionMutation.mutate()} disabled={createSessionMutation.isPending}>

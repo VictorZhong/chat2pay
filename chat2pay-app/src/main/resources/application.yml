@@ -1,0 +1,14 @@
+spring:
+  application:
+    name: chat2pay-app
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+chat2pay:
+  primary-provider: COPILOT_PERSONAL
+  fallback-provider: REMOTE_API
+  default-currency: HKD

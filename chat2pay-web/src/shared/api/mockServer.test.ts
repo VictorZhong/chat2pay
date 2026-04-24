@@ -1,26 +1,33 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { createChatSession, listChatMessages, profileLogin, resetMockData, sendChatMessage, submitUiEvent } from '@/shared/api/mockServer';
+import {
+  createChatSession,
+  listChatMessages,
+  profileLogin,
+  resetMockData,
+  sendChatMessage,
+  submitUiEvent,
+} from '@/shared/api/mockServer';
 
-describe('mockServer transfer flow', () => {
+describe('mockServer domestic payment flow', () => {
   beforeEach(() => {
     resetMockData();
   });
 
-  it('creates a new session and completes a transfer through UI events', async () => {
+  it('creates a new session and completes a domestic payment through payee selection and confirmation', async () => {
     const user = await profileLogin({
       profileId: 'profile_victor',
       password: 'tb123',
     });
     const created = await createChatSession(user.profileId);
-    const sessionId = created.session.sessionId;
+    const sessionId = created.sessionId;
 
     const firstTurn = await sendChatMessage(user.profileId, sessionId, {
-      messageText: 'Pay Tom 5000 HKD',
+      messageText: 'Pay Bob 5000 HKD today',
     });
 
-    expect(firstTurn.workflowState).toBe('RESOLVING_AMBIGUITY');
+    expect(firstTurn.session.state).toBe('AWAITING_PAYEE_SELECTION');
 
-    const payeeList = firstTurn.assistantMessages[0].contentBlocks?.find((block) => block.type === 'SELECTABLE_LIST');
+    const payeeList = firstTurn.assistantMessage.contentBlocks?.find((block) => block.type === 'SELECTABLE_LIST');
 
     if (!payeeList || payeeList.type !== 'SELECTABLE_LIST') {
       throw new Error('Expected payee selection block.');
@@ -28,46 +35,49 @@ describe('mockServer transfer flow', () => {
 
     const secondTurn = await submitUiEvent(user.profileId, sessionId, {
       eventType: 'SELECT_ITEM',
-      sourceMessageId: firstTurn.assistantMessages[0].messageId,
+      sourceMessageId: firstTurn.assistantMessage.messageId,
       sourceBlockId: payeeList.blockId,
-      selectedItemIds: ['payee_tom_lee'],
+      selectedItemId: 'payee_bob_current',
     });
 
-    expect(secondTurn.workflowState).toBe('READY_FOR_PAYMENT_OPTIONS');
+    expect(secondTurn.session.state).toBe('AWAITING_CONFIRMATION');
 
-    const railList = secondTurn.assistantMessages[0].contentBlocks?.find((block) => block.type === 'SELECTABLE_LIST');
+    const summaryCard = secondTurn.assistantMessage.contentBlocks?.find((block) => block.type === 'SUMMARY_CARD');
 
-    if (!railList || railList.type !== 'SELECTABLE_LIST') {
-      throw new Error('Expected payment rail selection block.');
+    if (!summaryCard || summaryCard.type !== 'SUMMARY_CARD') {
+      throw new Error('Expected domestic payment summary card.');
     }
 
     const thirdTurn = await submitUiEvent(user.profileId, sessionId, {
-      eventType: 'SELECT_ITEM',
-      sourceMessageId: secondTurn.assistantMessages[0].messageId,
-      sourceBlockId: railList.blockId,
-      selectedItemIds: ['ORTT'],
-    });
-
-    expect(thirdTurn.workflowState).toBe('AWAITING_USER_CONFIRMATION');
-
-    const summaryCard = thirdTurn.assistantMessages[0].contentBlocks?.find((block) => block.type === 'SUMMARY_CARD');
-
-    if (!summaryCard || summaryCard.type !== 'SUMMARY_CARD') {
-      throw new Error('Expected proposal summary card.');
-    }
-
-    const fourthTurn = await submitUiEvent(user.profileId, sessionId, {
       eventType: 'CLICK_ACTION',
-      sourceMessageId: thirdTurn.assistantMessages[0].messageId,
+      sourceMessageId: secondTurn.assistantMessage.messageId,
       sourceBlockId: summaryCard.blockId,
-      selectedItemIds: ['CONFIRM_TRANSFER'],
+      actionValue: 'CONFIRM_PAYMENT',
     });
 
-    expect(fourthTurn.workflowState).toBe('COMPLETED');
-    expect(fourthTurn.session.status).toBe('COMPLETED');
+    expect(thirdTurn.session.state).toBe('COMPLETED');
+    expect(thirdTurn.session.status).toBe('COMPLETED');
+    expect(thirdTurn.activeDraft?.status).toBe('CONFIRMED');
+    expect(thirdTurn.activeDraft?.downstreamReference).toMatch(/^DOM-/);
 
-    const messagePage = await listChatMessages(user.profileId, sessionId);
-    expect(messagePage.total).toBeGreaterThan(4);
+    const messages = await listChatMessages(user.profileId, sessionId);
+    expect(messages.length).toBeGreaterThan(5);
+  });
+
+  it('returns registered payee lookup results without creating a payment draft', async () => {
+    const user = await profileLogin({
+      profileId: 'profile_victor',
+      password: 'tb123',
+    });
+    const created = await createChatSession(user.profileId);
+
+    const turn = await sendChatMessage(user.profileId, created.sessionId, {
+      messageText: 'Do I have Sarah registered as a payee?',
+    });
+
+    expect(turn.session.state).toBe('IDLE');
+    expect(turn.activeDraft).toBeNull();
+    expect(turn.assistantMessage.contentBlocks?.some((block) => block.type === 'SUMMARY_CARD')).toBe(true);
   });
 
   it('rejects profile login when the shared password is incorrect', async () => {

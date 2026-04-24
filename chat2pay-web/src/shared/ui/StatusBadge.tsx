@@ -11,7 +11,7 @@ function toneForStatus(status: string): StatusTone {
     return 'danger';
   }
 
-  if (status === 'AWAITING_USER_CONFIRMATION' || status === 'PROPOSED') {
+  if (status === 'AWAITING_CONFIRMATION' || status === 'EXECUTING') {
     return 'attention';
   }
 

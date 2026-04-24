@@ -9,6 +9,18 @@ import { BrandLoadingPanel } from '@/shared/ui/BrandLoadingPanel';
 import { CloseIcon } from '@/shared/ui/icons';
 import { useAuthStore } from '@/features/auth/useAuthStore';
 
+function capabilityLabel(capability: ProfileSummary['supportedCapabilities'][number]) {
+  if (capability === 'REGISTERED_PAYEE_LOOKUP') {
+    return 'Payee lookup';
+  }
+
+  if (capability === 'DOMESTIC_PAYMENT') {
+    return 'Domestic payment';
+  }
+
+  return 'International payment';
+}
+
 function ProfileCard({
   profile,
   busy,
@@ -38,8 +50,10 @@ function ProfileCard({
           <span className="font-semibold text-brand-black">{profile.locale}</span>
         </div>
         <div className="flex items-center justify-between gap-3 text-sm">
-          <span className="text-brand-gray">Customer</span>
-          <span className="font-semibold text-brand-black">{profile.mockCustomerId}</span>
+          <span className="text-brand-gray">Capabilities</span>
+          <span className="text-right font-semibold text-brand-black">
+            {profile.supportedCapabilities.map(capabilityLabel).join(' • ')}
+          </span>
         </div>
       </div>
       <div className="mt-6">
@@ -253,7 +267,7 @@ export function ProfileSelectorPage() {
             <p className="mb-4 text-xs font-semibold uppercase tracking-[0.24em] text-brand-red">Internal Transfer POC</p>
             <h1 className="text-5xl font-semibold tracking-tight text-brand-black">chat2pay</h1>
             <p className="mt-6 max-w-2xl text-base leading-8 text-brand-gray">
-              Select a predefined profile, then enter the shared access password to continue into the transfer workspace.
+              Select a predefined profile, then enter the shared access password to continue into the payment workspace.
             </p>
           </div>
 

@@ -49,7 +49,7 @@ export function Sidebar({
           {!collapsed ? (
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-red">chat2pay</p>
-              <h1 className="mt-1 text-lg font-semibold text-brand-black">Transfer workspace</h1>
+              <h1 className="mt-1 text-lg font-semibold text-brand-black">Payment workspace</h1>
             </div>
           ) : (
             <div className="h-10 w-10 border border-brand-black bg-brand-red" />
