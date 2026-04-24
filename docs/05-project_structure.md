@@ -2,25 +2,28 @@
 
 ## 1. Purpose
 
-This document describes the repository structure that should support the current
-POC direction:
+This document defines the repository structure that matches the updated design:
 
-- existing frontend UI kept mostly intact
-- new Spring Boot backend added under `chat2pay-app/`
-- design and contract docs updated for backend-owned LLM and payment
-  orchestration
+- React frontend kept as the presentation layer
+- Spring Boot backend as the orchestration layer
+- one API contract file for human alignment only
+- no contract-copy directory
+- no codegen-driven project layout
 
-## 2. Repository Strategy
+## 2. Repository Direction
 
-The project remains a single repository with application folders directly under
-the repo root:
+The repository stays flat at the top level:
 
 - `chat2pay-web/` for the frontend
 - `chat2pay-app/` for the Spring Boot backend
-- `docs/` for design references
-- `api-contract/` for the implementation-facing contract copy
+- `docs/` for design documents and references
+- `db/` for future migrations or seed scripts if needed
 
-## 3. Current Top-Level Structure
+`docs/02-api_contract.yaml` is the only API contract document we keep.
+
+We do **not** keep a second contract mirror under `api-contract/`.
+
+## 3. Target Top-Level Structure
 
 ```text
 chat2pay/
@@ -32,27 +35,17 @@ chat2pay/
 │   ├── 03-db_design.md
 │   ├── 05-project_structure.md
 │   ├── 06-ui_implementation.md
-│   ├── 10-local_LLM.md
-│   └── 11-backend-skill.md
-├── api-contract/
-│   └── chat2pay-api.yaml
+│   └── 99-ref.md
 ├── chat2pay-web/
 ├── chat2pay-app/
-└── db/   (reserved for future migrations / seed data)
+└── db/
 ```
 
-## 4. Frontend Direction
+## 4. Frontend Structure
 
-The frontend remains the current React + TypeScript implementation in
-`chat2pay-web/`.
+The frontend remains the current React + TypeScript app in `chat2pay-web/`.
 
-Key rule:
-
-- preserve the current page structure and visual direction
-- replace mock data flow with real backend APIs
-- keep orchestration out of the frontend
-
-## 5. Frontend Structure
+Recommended structure:
 
 ```text
 chat2pay-web/
@@ -63,30 +56,34 @@ chat2pay-web/
 │   ├── app/
 │   ├── features/
 │   ├── pages/
-│   ├── shared/
-│   │   ├── api/
-│   │   ├── config/
-│   │   ├── lib/
-│   │   ├── styles/
-│   │   └── ui/
-│   └── generated/
+│   └── shared/
+│       ├── api/
+│       ├── config/
+│       ├── lib/
+│       ├── styles/
+│       └── ui/
 └── dist/
 ```
 
-### Frontend responsibility summary
+### Frontend Responsibility Summary
 
 | Path | Responsibility |
 |---|---|
-| `pages/` | Route-level screens such as profile selection and chat workspace |
-| `features/` | Chat input, sidebar, message rendering, structured UI events |
-| `shared/api/` | Frontend API client and contract-aligned DTOs |
-| `shared/ui/` | Reusable branded UI primitives |
-| `shared/styles/` | Global styling, tokens, motion |
-| `generated/` | Generated artifacts if OpenAPI codegen is introduced later |
+| `pages/` | Profile selector and chat workspace |
+| `features/` | Sidebar, chat input, message rendering, user menu |
+| `shared/api/` | Handwritten request/response types and backend client calls |
+| `shared/ui/` | Reusable UI primitives and light conversation status views |
+| `shared/styles/` | Global design tokens and styles |
 
-## 6. Backend Direction
+### Frontend Notes
 
-`chat2pay-app/` should become the backend implementation root.
+- keep the current visual shell
+- do not expand `generated/` or add codegen as a dependency path
+- keep API types handwritten and intentionally small
+
+## 5. Backend Structure
+
+`chat2pay-app/` is the backend implementation root.
 
 Recommended direction:
 
@@ -97,18 +94,22 @@ chat2pay-app/
     ├── java/com/company/chat2pay/
     │   ├── api/
     │   ├── application/
-    │   │   ├── chat/
+    │   │   ├── conversation/
     │   │   ├── profile/
-    │   │   └── journey/
+    │   │   └── rendering/
     │   ├── domain/
     │   │   ├── conversation/
-    │   │   └── payment/
+    │   │   ├── payment/
+    │   │   └── tool/
     │   ├── integration/
     │   │   ├── llm/
+    │   │   │   ├── copilot/
+    │   │   │   └── remote/
     │   │   └── downstream/
     │   │       ├── auth/
     │   │       ├── payee/
-    │   │       └── payment/
+    │   │       ├── domestic/
+    │   │       └── international/
     │   ├── persistence/
     │   ├── config/
     │   └── common/
@@ -117,60 +118,64 @@ chat2pay-app/
         └── db/
 ```
 
-### Backend responsibility summary
+### Backend Responsibility Summary
 
 | Path | Responsibility |
 |---|---|
-| `api/` | REST controllers exposed to the frontend |
-| `application/chat/` | Turn orchestration and response assembly |
-| `application/journey/` | Journey registry and specific handlers such as domestic existing payee |
-| `integration/llm/` | Local HTTP LLM adapter and future remote provider adapter |
-| `integration/downstream/auth/` | Login-to-SAML token handling |
-| `integration/downstream/payee/` | `PAYEE_URL` client |
-| `integration/downstream/payment/` | `CONFIRM_PAYMENT_URL` client |
-| `persistence/` | Repositories and database mappings |
+| `api/` | REST endpoints and streaming endpoints exposed to the frontend |
+| `application/conversation/` | Turn orchestration, provider routing, guard checks |
+| `application/profile/` | Profile listing and shared-password login |
+| `application/rendering/` | Convert domain outcomes into frontend blocks |
+| `domain/conversation/` | Session, message, state, and streaming event models |
+| `domain/payment/` | Draft, payee, amount, confirmation, and result models |
+| `domain/tool/` | Tool definitions and execution contracts |
+| `integration/llm/copilot/` | Personal-subscription GitHub Copilot adapter |
+| `integration/llm/remote/` | Future real API provider adapter |
+| `integration/downstream/auth/` | SAML acquisition and auth reuse rules |
+| `integration/downstream/payee/` | Registered payee client |
+| `integration/downstream/domestic/` | Domestic payment confirm client |
+| `integration/downstream/international/` | Reserved for V2 |
+| `persistence/` | JPA/MyBatis mappings, repositories, DB records |
 
-## 7. Contract Placement
+## 6. Design File Roles
 
-The canonical implementation-facing copy is:
+| File | Role |
+|---|---|
+| `docs/01-system_design.md` | Overall architecture and orchestration model |
+| `docs/02-api_contract.yaml` | Human-readable FE/BE API contract |
+| `docs/03-db_design.md` | PostgreSQL schema design |
+| `docs/05-project_structure.md` | Repo and package layout |
+| `docs/06-ui_implementation.md` | Frontend interaction constraints |
+| `docs/99-ref.md` | Behavioral reference from the working Python demo |
 
-```text
-api-contract/chat2pay-api.yaml
-```
+`99-ref.md` is a reference source, not the target code structure.
 
-The design copy remains in:
+## 7. Contract Handling
 
-```text
-docs/02-api_contract.yaml
-```
+The API contract is kept for manual alignment and review only.
 
-These two files should stay identical.
+Rules:
 
-## 8. Design References
+- keep a single contract file in `docs/02-api_contract.yaml`
+- do not maintain a duplicated contract copy elsewhere
+- do not generate frontend or backend models from the contract in V1
+- keep the contract small enough that handwritten DTOs stay reasonable
 
-Use these docs together:
-
-- `docs/01-system_design.md`
-- `docs/03-db_design.md`
-- `docs/06-ui_implementation.md`
-- `docs/10-local_LLM.md`
-- `docs/11-backend-skill.md`
-
-Recommended reading order for implementation:
-
-1. `docs/01-system_design.md`
-2. `docs/11-backend-skill.md`
-3. `docs/10-local_LLM.md`
-4. `docs/02-api_contract.yaml`
-5. `docs/03-db_design.md`
-
-## 9. Current Recommendation
+## 8. Current Implementation Guidance
 
 For the next implementation step:
 
-- keep the repository flat
-- leave the current frontend UI structure in place
-- build the Spring Boot backend in `chat2pay-app/`
-- switch frontend API calls from mock flow to backend endpoints
-- treat `docs/11-backend-skill.md` as the behavioral reference for the first
-  payment journey
+- keep the existing frontend shell
+- implement backend orchestration in `chat2pay-app/`
+- build around provider routing plus tool execution
+- start with domestic payee lookup and domestic payment only
+- wire the frontend to backend APIs without introducing codegen or extra
+  contract mirrors
+
+## 9. Recommended Reading Order
+
+1. `docs/01-system_design.md`
+2. `docs/06-ui_implementation.md`
+3. `docs/02-api_contract.yaml`
+4. `docs/03-db_design.md`
+5. `docs/99-ref.md`

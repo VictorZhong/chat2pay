@@ -1,13 +1,19 @@
 openapi: 3.0.3
 info:
   title: chat2pay API
-  version: 0.2.0
+  version: 0.3.0
   description: |
-    OpenAPI contract for the chat2pay POC.
-    The frontend keeps the current UI shell, but all LLM and downstream payment
-    orchestration happens in the Spring Boot backend.
-    The first supported payment journey is domestic transfer to a registered
-    payee only.
+    Reference API contract for the chat2pay POC.
+
+    This file is kept for human alignment between frontend and backend.
+    It is not intended to drive code generation.
+
+    V1 scope:
+    - profile selection and shared-password login
+    - session and message history
+    - registered payee lookup
+    - domestic payment to a registered payee
+    - optional streamed assistant responses from the Java backend
 servers:
   - url: /api
     description: Relative API base path
@@ -15,14 +21,13 @@ servers:
 tags:
   - name: Profiles
   - name: Auth
-  - name: Chat Sessions
-  - name: Chat Messages
+  - name: Chat
 
 paths:
   /profiles:
     get:
       tags: [Profiles]
-      summary: List available POC profiles
+      summary: List available demo profiles
       operationId: listProfiles
       responses:
         '200':
@@ -37,7 +42,7 @@ paths:
   /auth/profile-login:
     post:
       tags: [Auth]
-      summary: Select a profile, validate the shared password, and create a lightweight user context
+      summary: Select a profile and validate the shared password
       operationId: profileLogin
       requestBody:
         required: true
@@ -47,7 +52,7 @@ paths:
               $ref: '#/components/schemas/ProfileLoginRequest'
       responses:
         '200':
-          description: Profile login successful
+          description: Logged-in profile context
           content:
             application/json:
               schema:
@@ -60,7 +65,7 @@ paths:
   /auth/logout:
     post:
       tags: [Auth]
-      summary: Logout current profile session
+      summary: Logout the current profile session
       operationId: logout
       parameters:
         - $ref: '#/components/parameters/XProfileId'
@@ -71,13 +76,13 @@ paths:
   /me:
     get:
       tags: [Auth]
-      summary: Get current user context
+      summary: Get current selected profile context
       operationId: getCurrentUser
       parameters:
         - $ref: '#/components/parameters/XProfileId'
       responses:
         '200':
-          description: Current selected profile context
+          description: Current user context
           content:
             application/json:
               schema:
@@ -87,27 +92,22 @@ paths:
 
   /chat/sessions:
     get:
-      tags: [Chat Sessions]
+      tags: [Chat]
       summary: List chat sessions for the selected profile
       operationId: listChatSessions
       parameters:
         - $ref: '#/components/parameters/XProfileId'
-        - $ref: '#/components/parameters/Page'
-        - $ref: '#/components/parameters/PageSize'
-        - in: query
-          name: status
-          required: false
-          schema:
-            $ref: '#/components/schemas/ChatSessionStatus'
       responses:
         '200':
-          description: Session page
+          description: Session list
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ChatSessionSummaryPage'
+                type: array
+                items:
+                  $ref: '#/components/schemas/ChatSessionSummary'
     post:
-      tags: [Chat Sessions]
+      tags: [Chat]
       summary: Create a new chat session
       operationId: createChatSession
       parameters:
@@ -120,16 +120,16 @@ paths:
               $ref: '#/components/schemas/CreateChatSessionRequest'
       responses:
         '201':
-          description: Created chat session
+          description: Created session
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ChatSessionCreateResponse'
+                $ref: '#/components/schemas/ChatSessionDetail'
 
   /chat/sessions/{sessionId}:
     get:
-      tags: [Chat Sessions]
-      summary: Get one chat session with state snapshot
+      tags: [Chat]
+      summary: Get one session snapshot
       operationId: getChatSession
       parameters:
         - $ref: '#/components/parameters/XProfileId'
@@ -146,24 +146,24 @@ paths:
 
   /chat/sessions/{sessionId}/messages:
     get:
-      tags: [Chat Messages]
-      summary: Get ordered messages for a session
+      tags: [Chat]
+      summary: List messages for a session
       operationId: listChatMessages
       parameters:
         - $ref: '#/components/parameters/XProfileId'
         - $ref: '#/components/parameters/SessionId'
-        - $ref: '#/components/parameters/Page'
-        - $ref: '#/components/parameters/PageSize'
       responses:
         '200':
-          description: Message page
+          description: Ordered messages
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ChatMessagePage'
+                type: array
+                items:
+                  $ref: '#/components/schemas/ChatMessage'
     post:
-      tags: [Chat Messages]
-      summary: Send a free-text user message
+      tags: [Chat]
+      summary: Send a user text message
       operationId: sendChatMessage
       parameters:
         - $ref: '#/components/parameters/XProfileId'
@@ -176,11 +176,28 @@ paths:
               $ref: '#/components/schemas/SendMessageRequest'
       responses:
         '200':
-          description: Result of one user turn
+          description: |
+            Final turn response as JSON, or streamed events if the client asks for
+            `text/event-stream`.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ChatTurnResponse'
+            text/event-stream:
+              schema:
+                type: string
+                example: |
+                  event: user-message
+                  data: {"message":{"messageId":"01H...","role":"USER","kind":"TEXT","text":"Pay Bob 500 HKD today"}}
+
+                  event: assistant-message-start
+                  data: {"messageId":"01H..."}
+
+                  event: assistant-message-delta
+                  data: {"delta":"Please confirm Bob"}
+
+                  event: assistant-message-complete
+                  data: {"session":{"sessionId":"01H...","state":"AWAITING_CONFIRMATION"}}
         '400':
           $ref: '#/components/responses/BadRequest'
         '404':
@@ -188,8 +205,8 @@ paths:
 
   /chat/sessions/{sessionId}/events:
     post:
-      tags: [Chat Messages]
-      summary: Submit a structured UI event from a selectable list, button, or simple form
+      tags: [Chat]
+      summary: Submit a structured UI event such as payee selection or confirm click
       operationId: submitUiEvent
       parameters:
         - $ref: '#/components/parameters/XProfileId'
@@ -202,11 +219,25 @@ paths:
               $ref: '#/components/schemas/UiEventRequest'
       responses:
         '200':
-          description: Result of one structured UI interaction
+          description: |
+            Final turn response as JSON, or streamed events if the client asks for
+            `text/event-stream`.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ChatTurnResponse'
+            text/event-stream:
+              schema:
+                type: string
+                example: |
+                  event: assistant-message-start
+                  data: {"messageId":"01H..."}
+
+                  event: assistant-message-delta
+                  data: {"delta":"Payment submitted successfully."}
+
+                  event: assistant-message-complete
+                  data: {"session":{"sessionId":"01H...","state":"COMPLETED"}}
         '400':
           $ref: '#/components/responses/BadRequest'
         '404':
@@ -218,10 +249,11 @@ components:
       in: header
       name: X-Profile-Id
       required: true
-      description: Selected POC profile identifier
+      description: Selected demo profile identifier
       schema:
         type: string
         example: 01HX8QYP8W4G9Y0S2AY2J67NZB
+
     SessionId:
       in: path
       name: sessionId
@@ -229,23 +261,6 @@ components:
       schema:
         type: string
         example: 01HX8R5A1NQY39XK0D28S5B3EW
-    Page:
-      in: query
-      name: page
-      required: false
-      schema:
-        type: integer
-        minimum: 1
-        default: 1
-    PageSize:
-      in: query
-      name: pageSize
-      required: false
-      schema:
-        type: integer
-        minimum: 1
-        maximum: 100
-        default: 20
 
   responses:
     BadRequest:
@@ -275,10 +290,9 @@ components:
         - code
         - username
         - displayName
-        - mockCustomerId
         - locale
         - status
-        - supportedJourneyTypes
+        - supportedCapabilities
       properties:
         id:
           type: string
@@ -288,7 +302,7 @@ components:
           example: HK_STAFF_001
         username:
           type: string
-          description: Downstream username, equivalent to payment10.
+          description: Downstream identity value used by the backend.
           example: payment10
         displayName:
           type: string
@@ -296,20 +310,17 @@ components:
         avatarUrl:
           type: string
           nullable: true
-          example: /assets/avatar-iris.png
-        mockCustomerId:
-          type: string
-          example: CUST0001
+          example: /assets/avatar.png
         locale:
           type: string
           example: en-HK
         status:
           $ref: '#/components/schemas/ProfileStatus'
-        supportedJourneyTypes:
+        supportedCapabilities:
           type: array
           items:
-            $ref: '#/components/schemas/JourneyType'
-          example: [DOMESTIC_EXISTING_PAYEE]
+            $ref: '#/components/schemas/CapabilityType'
+          example: [REGISTERED_PAYEE_LOOKUP, DOMESTIC_PAYMENT]
 
     ProfileLoginRequest:
       type: object
@@ -332,13 +343,12 @@ components:
         - displayName
         - locale
         - loginMode
-        - supportedJourneyTypes
+        - supportedCapabilities
       properties:
         profileId:
           type: string
         username:
           type: string
-          description: Downstream username, equivalent to payment10.
           example: payment10
         displayName:
           type: string
@@ -352,11 +362,11 @@ components:
         loginMode:
           type: string
           enum: [PROFILE_SELECTION]
-        supportedJourneyTypes:
+        supportedCapabilities:
           type: array
           items:
-            $ref: '#/components/schemas/JourneyType'
-          example: [DOMESTIC_EXISTING_PAYEE]
+            $ref: '#/components/schemas/CapabilityType'
+          example: [REGISTERED_PAYEE_LOOKUP, DOMESTIC_PAYMENT]
 
     CreateChatSessionRequest:
       type: object
@@ -364,20 +374,7 @@ components:
         title:
           type: string
           maxLength: 120
-          example: Domestic payment
-
-    ChatSessionCreateResponse:
-      type: object
-      required:
-        - session
-        - assistantMessages
-      properties:
-        session:
-          $ref: '#/components/schemas/ChatSessionDetail'
-        assistantMessages:
-          type: array
-          items:
-            $ref: '#/components/schemas/ChatMessage'
+          example: Pay Bob
 
     ChatSessionSummary:
       type: object
@@ -385,7 +382,7 @@ components:
         - sessionId
         - title
         - status
-        - workflowState
+        - state
         - createdAt
         - updatedAt
       properties:
@@ -396,13 +393,13 @@ components:
           example: Pay Bob
         status:
           $ref: '#/components/schemas/ChatSessionStatus'
-        workflowState:
-          $ref: '#/components/schemas/WorkflowState'
-        journeyType:
+        state:
+          $ref: '#/components/schemas/ConversationState'
+        llmProvider:
           allOf:
-            - $ref: '#/components/schemas/JourneyType'
+            - $ref: '#/components/schemas/LlmProviderType'
           nullable: true
-        lastAssistantText:
+        lastMessagePreview:
           type: string
           nullable: true
           example: Please confirm the payee and amount.
@@ -413,32 +410,13 @@ components:
           type: string
           format: date-time
 
-    ChatSessionSummaryPage:
-      type: object
-      required:
-        - items
-        - page
-        - pageSize
-        - total
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/ChatSessionSummary'
-        page:
-          type: integer
-        pageSize:
-          type: integer
-        total:
-          type: integer
-
     ChatSessionDetail:
       type: object
       required:
         - sessionId
         - title
         - status
-        - workflowState
+        - state
         - createdAt
         - updatedAt
       properties:
@@ -448,11 +426,15 @@ components:
           type: string
         status:
           $ref: '#/components/schemas/ChatSessionStatus'
-        workflowState:
-          $ref: '#/components/schemas/WorkflowState'
-        journeyType:
+        state:
+          $ref: '#/components/schemas/ConversationState'
+        llmProvider:
           allOf:
-            - $ref: '#/components/schemas/JourneyType'
+            - $ref: '#/components/schemas/LlmProviderType'
+          nullable: true
+        activeDraft:
+          allOf:
+            - $ref: '#/components/schemas/PaymentDraft'
           nullable: true
         createdAt:
           type: string
@@ -460,10 +442,6 @@ components:
         updatedAt:
           type: string
           format: date-time
-        activeDraft:
-          allOf:
-            - $ref: '#/components/schemas/TransactionDraft'
-          nullable: true
 
     ChatMessage:
       type: object
@@ -471,7 +449,7 @@ components:
         - messageId
         - sessionId
         - role
-        - messageType
+        - kind
         - createdAt
       properties:
         messageId:
@@ -480,37 +458,23 @@ components:
           type: string
         role:
           $ref: '#/components/schemas/MessageRole'
-        messageType:
-          $ref: '#/components/schemas/MessageType'
+        kind:
+          $ref: '#/components/schemas/MessageKind'
         text:
           type: string
           nullable: true
         contentBlocks:
           type: array
+          nullable: true
           items:
             $ref: '#/components/schemas/ContentBlock'
+        metadata:
+          type: object
+          nullable: true
+          additionalProperties: true
         createdAt:
           type: string
           format: date-time
-
-    ChatMessagePage:
-      type: object
-      required:
-        - items
-        - page
-        - pageSize
-        - total
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/ChatMessage'
-        page:
-          type: integer
-        pageSize:
-          type: integer
-        total:
-          type: integer
 
     SendMessageRequest:
       type: object
@@ -521,11 +485,15 @@ components:
           type: string
           minLength: 1
           maxLength: 4000
-          example: Pay Bob 500 HKD
+          example: Pay Bob 500 HKD today
         clientMessageId:
           type: string
           nullable: true
           example: cli-msg-001
+        stream:
+          type: boolean
+          default: false
+          description: If true, the client expects an event-stream response.
 
     UiEventRequest:
       type: object
@@ -540,139 +508,86 @@ components:
           type: string
         sourceBlockId:
           type: string
-        selectedItemIds:
-          type: array
-          items:
-            type: string
-        formValues:
-          type: object
-          additionalProperties:
-            type: string
-        clientEventId:
+        selectedItemId:
           type: string
           nullable: true
+        actionValue:
+          type: string
+          nullable: true
+        formValues:
+          type: object
+          nullable: true
+          additionalProperties:
+            type: string
+        stream:
+          type: boolean
+          default: false
 
     ChatTurnResponse:
       type: object
       required:
         - session
-        - assistantMessages
-        - workflowState
+        - assistantMessage
         - serverTimestamp
       properties:
         session:
           $ref: '#/components/schemas/ChatSessionDetail'
-        userEchoMessage:
+        userMessage:
           allOf:
             - $ref: '#/components/schemas/ChatMessage'
           nullable: true
-        assistantMessages:
-          type: array
-          items:
-            $ref: '#/components/schemas/ChatMessage'
-        draftSummary:
+        assistantMessage:
+          $ref: '#/components/schemas/ChatMessage'
+        activeDraft:
           allOf:
-            - $ref: '#/components/schemas/TransactionDraft'
+            - $ref: '#/components/schemas/PaymentDraft'
           nullable: true
-        workflowState:
-          $ref: '#/components/schemas/WorkflowState'
-        suggestedActions:
-          type: array
-          items:
-            $ref: '#/components/schemas/SuggestedAction'
         serverTimestamp:
           type: string
           format: date-time
 
-    SuggestedAction:
-      type: object
-      required:
-        - actionType
-        - label
-      properties:
-        actionType:
-          type: string
-          enum:
-            - SEND_TEXT_HINT
-            - SELECT_FROM_LIST
-            - SUBMIT_FORM
-            - CONFIRM_TRANSFER
-            - CANCEL_TRANSFER
-            - START_NEW_CHAT
-        label:
-          type: string
-          example: Confirm transfer
-        value:
-          type: string
-          nullable: true
-
-    TransactionDraft:
+    PaymentDraft:
       type: object
       required:
         - draftId
-        - sessionId
-        - journeyType
         - status
-        - workflowState
+        - paymentType
         - lastUpdatedAt
       properties:
         draftId:
           type: string
-        sessionId:
-          type: string
-        journeyType:
-          $ref: '#/components/schemas/JourneyType'
         status:
-          $ref: '#/components/schemas/TransferStatus'
-        workflowState:
-          $ref: '#/components/schemas/WorkflowState'
-        sourceAccountId:
+          $ref: '#/components/schemas/PaymentDraftStatus'
+        paymentType:
+          $ref: '#/components/schemas/PaymentType'
+        payeeQueryText:
           type: string
           nullable: true
-        sourceAccountDisplay:
-          type: string
+        selectedPayee:
+          allOf:
+            - $ref: '#/components/schemas/PayeeSummary'
           nullable: true
-        payeeNameInput:
-          type: string
-          nullable: true
-          example: Bob
-        payeeIdIndex:
-          type: string
-          nullable: true
-        payeeType:
-          type: string
-          nullable: true
-          example: '6'
-        payeeDisplay:
-          type: string
-          nullable: true
-          example: BOB
         amount:
           type: number
-          format: decimal
+          format: double
           nullable: true
           example: 500
         currency:
           type: string
           nullable: true
           example: HKD
-        note:
+        paymentDate:
+          type: string
+          format: date
+          nullable: true
+        downstreamReference:
           type: string
           nullable: true
-        reviewSummary:
-          type: object
+        lastError:
+          allOf:
+            - $ref: '#/components/schemas/ErrorSummary'
           nullable: true
-          additionalProperties: true
-          description: Normalized summary rendered to the user before final confirmation.
-        downstreamReferences:
-          type: object
-          nullable: true
-          additionalProperties: true
-          description: Downstream identifiers such as quote IDs, limit IDs, or confirm references.
-        transferReference:
-          type: string
-          nullable: true
-        additionalContext:
+        context:
           type: object
           nullable: true
           additionalProperties: true
@@ -680,23 +595,48 @@ components:
           type: string
           format: date-time
 
+    PayeeSummary:
+      type: object
+      required:
+        - payeeId
+        - name
+      properties:
+        payeeId:
+          type: string
+          description: Opaque backend-managed payee identifier.
+        name:
+          type: string
+        payeeType:
+          type: string
+          nullable: true
+        bankCode:
+          type: string
+          nullable: true
+        bankName:
+          type: string
+          nullable: true
+        accountNumber:
+          type: string
+          nullable: true
+        displayLabel:
+          type: string
+          nullable: true
+
     ContentBlock:
       oneOf:
         - $ref: '#/components/schemas/TextBlock'
         - $ref: '#/components/schemas/SummaryCardBlock'
         - $ref: '#/components/schemas/SelectableListBlock'
-        - $ref: '#/components/schemas/SimpleFormBlock'
-        - $ref: '#/components/schemas/ErrorCardBlock'
         - $ref: '#/components/schemas/InfoCardBlock'
+        - $ref: '#/components/schemas/ErrorCardBlock'
       discriminator:
         propertyName: type
         mapping:
           TEXT: '#/components/schemas/TextBlock'
           SUMMARY_CARD: '#/components/schemas/SummaryCardBlock'
           SELECTABLE_LIST: '#/components/schemas/SelectableListBlock'
-          SIMPLE_FORM: '#/components/schemas/SimpleFormBlock'
-          ERROR_CARD: '#/components/schemas/ErrorCardBlock'
           INFO_CARD: '#/components/schemas/InfoCardBlock'
+          ERROR_CARD: '#/components/schemas/ErrorCardBlock'
 
     TextBlock:
       type: object
@@ -734,7 +674,6 @@ components:
           enum: [SUMMARY_CARD]
         title:
           type: string
-          example: Payment summary
         fields:
           type: array
           items:
@@ -749,7 +688,6 @@ components:
         - blockId
         - type
         - title
-        - selectionMode
         - items
       properties:
         blockId:
@@ -759,62 +697,10 @@ components:
           enum: [SELECTABLE_LIST]
         title:
           type: string
-        selectionMode:
-          type: string
-          enum: [SINGLE, MULTI]
         items:
           type: array
           items:
             $ref: '#/components/schemas/SelectableItem'
-        metadata:
-          type: object
-          additionalProperties: true
-
-    SimpleFormBlock:
-      type: object
-      required:
-        - blockId
-        - type
-        - title
-        - fields
-      properties:
-        blockId:
-          type: string
-        type:
-          type: string
-          enum: [SIMPLE_FORM]
-        title:
-          type: string
-        fields:
-          type: array
-          items:
-            $ref: '#/components/schemas/FormField'
-        submitLabel:
-          type: string
-          nullable: true
-          example: Continue
-        metadata:
-          type: object
-          additionalProperties: true
-
-    ErrorCardBlock:
-      type: object
-      required:
-        - blockId
-        - type
-        - title
-        - text
-      properties:
-        blockId:
-          type: string
-        type:
-          type: string
-          enum: [ERROR_CARD]
-        title:
-          type: string
-          example: Unable to continue
-        text:
-          type: string
         metadata:
           type: object
           additionalProperties: true
@@ -832,6 +718,27 @@ components:
         type:
           type: string
           enum: [INFO_CARD]
+        title:
+          type: string
+        text:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+
+    ErrorCardBlock:
+      type: object
+      required:
+        - blockId
+        - type
+        - title
+        - text
+      properties:
+        blockId:
+          type: string
+        type:
+          type: string
+          enum: [ERROR_CARD]
         title:
           type: string
         text:
@@ -860,31 +767,6 @@ components:
           type: object
           additionalProperties: true
 
-    FormField:
-      type: object
-      required:
-        - fieldId
-        - label
-        - fieldType
-      properties:
-        fieldId:
-          type: string
-        label:
-          type: string
-        fieldType:
-          type: string
-          enum: [TEXT, NUMBER, CURRENCY, SELECT]
-        required:
-          type: boolean
-          default: false
-        placeholder:
-          type: string
-          nullable: true
-        options:
-          type: array
-          items:
-            $ref: '#/components/schemas/SelectableItem'
-
     DisplayField:
       type: object
       required:
@@ -894,6 +776,17 @@ components:
         label:
           type: string
         value:
+          type: string
+
+    ErrorSummary:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+        message:
           type: string
 
     ErrorResponse:
@@ -923,35 +816,55 @@ components:
         - ACTIVE
         - INACTIVE
 
+    CapabilityType:
+      type: string
+      enum:
+        - REGISTERED_PAYEE_LOOKUP
+        - DOMESTIC_PAYMENT
+        - INTERNATIONAL_PAYMENT
+
     ChatSessionStatus:
       type: string
       enum:
         - ACTIVE
         - COMPLETED
+        - FAILED
         - CANCELLED
         - ARCHIVED
 
-    WorkflowState:
+    ConversationState:
       type: string
       enum:
         - IDLE
-        - COLLECTING_PAYMENT_DETAILS
-        - RESOLVING_PAYEE
-        - AWAITING_USER_CONFIRMATION
-        - CONFIRMING_PAYMENT
+        - COLLECTING_DETAILS
+        - AWAITING_PAYEE_SELECTION
+        - AWAITING_CONFIRMATION
+        - EXECUTING
         - COMPLETED
         - FAILED
         - CANCELLED
 
-    TransferStatus:
+    PaymentDraftStatus:
       type: string
       enum:
         - DRAFT
-        - READY_FOR_CONFIRMATION
-        - CONFIRMING
+        - AWAITING_CONFIRMATION
+        - EXECUTING
         - CONFIRMED
         - FAILED
         - CANCELLED
+
+    PaymentType:
+      type: string
+      enum:
+        - DOMESTIC_PAYMENT
+        - INTERNATIONAL_PAYMENT
+
+    LlmProviderType:
+      type: string
+      enum:
+        - COPILOT_PERSONAL
+        - REMOTE_API
 
     MessageRole:
       type: string
@@ -960,26 +873,17 @@ components:
         - ASSISTANT
         - SYSTEM
 
-    MessageType:
+    MessageKind:
       type: string
       enum:
         - TEXT
-        - CARD
-        - LIST
-        - FORM
+        - BLOCKS
         - UI_EVENT
+        - SYSTEM
 
     UiEventType:
       type: string
       enum:
         - SELECT_ITEM
-        - SUBMIT_FORM
         - CLICK_ACTION
-
-    JourneyType:
-      type: string
-      enum:
-        - DOMESTIC_EXISTING_PAYEE
-        - DOMESTIC_NEW_PAYEE
-        - INTERNATIONAL_EXISTING_PAYEE
-        - INTERNATIONAL_NEW_PAYEE
+        - SUBMIT_FORM

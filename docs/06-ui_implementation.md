@@ -1,126 +1,185 @@
-# chat2pay - UI Implementation (High-Fidelity)
+# chat2pay - UI Implementation
 
 ## 1. Purpose
 
-This document summarizes the current implemented frontend UI in
-`chat2pay-web/` and clarifies how it should be used for the next backend-backed
-POC slice.
+This document defines how the current frontend UI should be used for the next
+backend-backed version of the POC.
 
-## 2. Design Direction
+The direction is:
 
-The current implementation already matches the intended visual direction:
+- keep the current visual shell
+- simplify the interaction model
+- remove the heavy transfer-flow treatment
+- let the Java backend drive the conversation
 
-- enterprise-finance visual language
-- HSBC-inspired red / black / white palette
-- square corners and explicit borders
-- restrained motion
-- desktop-first chat workbench layout
+## 2. What Stays Stable
 
-This should not be materially redesigned for the next step.
+The current UI structure is already close enough and should remain:
 
-## 3. What Should Stay Stable
-
-- profile selector page layout
+- profile selector page
 - shared password dialog
-- left sidebar structure
-- chat workspace layout
-- message list styling
-- summary card / list / form visual language
+- left sidebar with session history
+- right chat workspace
+- branded chat message styling
+- structured assistant blocks inside the conversation
 
-The next implementation should mainly swap data flow, not page design.
+This iteration is mainly a data-flow and behavior change, not a redesign.
 
-## 4. Profile Selection
+## 3. What Changes
+
+### 3.1 Remove "Transfer Flow"
+
+Do not keep a large step-tracker mental model in the UI.
+
+Specifically:
+
+- remove the "Transfer Flow" framing
+- do not model the payment experience as a separate wizard
+- do not add payment-rail or proposal-specific panels in V1
+
+If session progress needs to be visible, use a **small status summary** in the
+header instead:
+
+- `Draft`
+- `Awaiting payee selection`
+- `Awaiting confirmation`
+- `Processing`
+- `Completed`
+- `Failed`
+
+### 3.2 Narrow the Scope
+
+The frontend only needs to support these V1 conversation outcomes:
+
+- registered payee lookup
+- domestic payment to a registered payee
+- clarification questions
+- payee disambiguation
+- explicit confirmation
+- success or failure result
+
+No international flow UI is needed in V1.
+
+## 4. Page-Level Direction
+
+## 4.1 Profile Selection
 
 Implemented in:
 
 - `chat2pay-web/src/pages/profile-selector/ProfileSelectorPage.tsx`
 
-Current and target behavior:
+Target behavior:
 
-- fetch profile list from backend
+- fetch profiles from the Java backend
 - keep the shared password gate
-- current POC may return only one profile
-- the most important backend field is `username`, which maps to downstream
-  `payment10`
-- other display fields can remain lightweight demo data returned by the backend
+- allow the backend to return only one or a few demo profiles
+- treat `username` as backend-owned integration context, not a frontend concern
 
-## 5. Chat Workspace
+## 4.2 Chat Workspace
 
 Implemented in:
 
 - `chat2pay-web/src/pages/chat-workspace/ChatWorkspacePage.tsx`
 
-Current layout should remain:
+Target behavior:
 
-- left sidebar with New Chat, utility placeholders, history, and profile footer
-- right workspace with session header, workflow summary, messages, and composer
+- keep the existing layout
+- replace mock orchestration with backend responses
+- show streaming assistant output when enabled
+- show backend-provided structured blocks for payee choices and confirmations
 
-## 6. Target Interaction Model for the Next POC Slice
+## 5. Streaming Interaction Model
 
-The UI should keep the current structured chat surfaces, but the backend-backed
-behavior should be narrowed to the first supported journey:
+The frontend should support **HTTP streaming from the Java backend**.
 
-- domestic payment to a registered payee
-- determine payee and amount
-- show a confirmation summary
-- after user confirmation, backend directly calls confirm payment
+Recommended approach:
 
-Unsupported requests should render a concise info/error style block, not trigger
-large UI changes.
+- use normal JSON REST for profile and session loading
+- use streamed HTTP response handling for message turns
+- parse backend SSE-style events from `fetch` response streams
 
-## 7. Structured Blocks That Matter Now
+Why this is enough:
 
-The current UI already has the right primitives:
+- the frontend does not need a browser-to-LLM connection
+- the backend is the only system that talks to the provider
+- V1 does not justify WebSocket complexity
 
-- text blocks for assistant guidance
-- selectable lists for payee disambiguation if needed
-- simple forms for collecting payee name and amount when free text is missing
-- summary cards for final confirmation
+Expected streamed events:
 
-These are sufficient for the first real backend integration.
+- `user-message`
+- `assistant-message-start`
+- `assistant-message-delta`
+- `assistant-message-complete`
+- `turn-error`
 
-## 8. Workflow Visibility
+The frontend should also support a non-streaming JSON fallback path.
 
-Implemented in:
+## 6. Structured Blocks to Keep
 
-- `chat2pay-web/src/shared/ui/WorkflowOverview.tsx`
+The current chat UI already has the right primitives.
 
-The visual pattern can stay, but the copy and state mapping should be updated to
-match the new backend workflow:
+V1 should keep using:
 
-- collect payment details
-- resolve payee if needed
-- await confirmation
-- confirm payment
-- completed / failed / cancelled
+- text blocks for normal assistant conversation
+- selectable list blocks for payee disambiguation
+- summary card blocks for confirmation and final outcome
+- info or error blocks for unsupported actions and failures
 
-This is a copy/state update, not a layout redesign.
+Use simple forms sparingly.
 
-## 9. Mock Flow Status
+Preferred order:
 
-Current mock behavior in:
+1. free-text user input
+2. selectable payee list when needed
+3. confirmation summary card
 
-- `chat2pay-web/src/shared/api/mockServer.ts`
+This keeps the conversation close to the successful Python demo behavior.
 
-Important note:
+## 7. Frontend Responsibilities
 
-- the existing mock flow is broader than the next backend POC
-- it currently models extra steps such as payment rail choice and proposal-style
-  review
-- those should not drive the real backend implementation
+| Area | Responsibility |
+|---|---|
+| Profile selector | List profiles and submit shared-password login |
+| Sidebar | Create, switch, and list chat sessions |
+| Chat workspace | Render messages, blocks, and streaming deltas |
+| Structured interactions | Submit list selections and action clicks back to backend |
+| Session header | Show light status, not a full transfer wizard |
 
-The next step should replace or narrow that mock behavior to the backend-owned
-flow defined in:
+## 8. Explicit Frontend Non-Responsibilities
 
-- `docs/01-system_design.md`
-- `docs/11-backend-skill.md`
+- no intent detection in the frontend
+- no direct downstream API access
+- no direct LLM access
+- no provider token handling
+- no local branching for domestic vs international
+- no hardcoded payment workflow graph
+
+## 9. Mock Flow Guidance
+
+Current mock behavior should be simplified to match the target backend scope.
+
+Remove or stop expanding mock concepts such as:
+
+- payment rail selection
+- proposal flow
+- limit check stages
+- international placeholders
+- extra workflow states that do not exist in the backend design
+
+The mock layer, if still used temporarily, should only mirror:
+
+- payee lookup
+- domestic payment draft collection
+- payee selection
+- explicit confirmation
+- success or failure
 
 ## 10. Source of Truth
 
 For frontend implementation decisions, use this order:
 
-1. `chat2pay-web/` for layout and styling
-2. `docs/06-ui_implementation.md` for UX constraints
-3. `docs/01-system_design.md` for backend ownership boundaries
-4. `docs/11-backend-skill.md` for the first payment journey behavior
-5. `docs/02-api_contract.yaml` for FE/BE payload shape
+1. current UI code in `chat2pay-web/`
+2. `docs/01-system_design.md`
+3. `docs/06-ui_implementation.md`
+4. `docs/02-api_contract.yaml`
+5. `docs/99-ref.md`
