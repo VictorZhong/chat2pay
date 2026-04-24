@@ -8,8 +8,7 @@
     "build": "tsc --noEmit -p tsconfig.app.json && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "codegen:types": "openapi-typescript ../api-contract/chat2pay-api.yaml -o src/generated/openapi/types.ts"
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.59.19",

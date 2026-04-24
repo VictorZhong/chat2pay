@@ -24,38 +24,31 @@ export function ChatInputBar({
   }
 
   return (
-    <div className="brand-panel p-4">
-      <label className="mb-3 block text-xs font-semibold uppercase tracking-[0.16em] text-brand-gray">
-        Message
-      </label>
-      <div className="flex items-end gap-3">
-        <div className="min-w-0 flex-1">
-          <textarea
-            className="brand-textarea brand-composer-textarea"
-            placeholder="Type a transfer instruction, for example: Pay Tom 5000 HKD."
-            value={value}
-            onChange={(event) => setValue(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault();
-                void handleSend();
-              }
-            }}
-            disabled={disabled || busy}
-          />
-        </div>
+    <div className="border-t border-brand-line bg-brand-fog px-3 py-2.5">
+      <div className="flex items-center gap-2">
+        <textarea
+          className="brand-textarea brand-composer-textarea min-w-0 flex-1"
+          placeholder="Type a transfer instruction, for example: Pay Tom 5000 HKD."
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && !event.shiftKey) {
+              event.preventDefault();
+              void handleSend();
+            }
+          }}
+          disabled={disabled || busy}
+          rows={1}
+        />
         <BrandButton
-          className="h-[44px] min-w-[164px] shrink-0"
+          className="h-[44px] shrink-0 px-5"
           onClick={() => void handleSend()}
           disabled={disabled || busy}
           loading={busy}
         >
-          {busy ? 'Awaiting Response' : 'Send'}
+          {busy ? 'Sending' : 'Send'}
         </BrandButton>
       </div>
-      <p className="mt-3 text-[11px] uppercase tracking-[0.12em] text-brand-gray">
-        Enter sends. Shift+Enter adds a new line.
-      </p>
     </div>
   );
 }

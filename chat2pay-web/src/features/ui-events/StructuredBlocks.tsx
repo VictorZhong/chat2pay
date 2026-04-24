@@ -78,7 +78,7 @@ function SelectableListCard({
     <div className="brand-panel bg-[linear-gradient(180deg,#ffffff_0%,#fcfcfc_100%)] p-5">
       <div className="mb-4 flex items-center justify-between gap-3">
         <h4 className="text-base font-semibold text-brand-black">{block.title}</h4>
-        <span className="text-xs uppercase tracking-[0.14em] text-brand-gray">{block.selectionMode}</span>
+        <span className="text-xs uppercase tracking-[0.14em] text-brand-gray">Select one</span>
       </div>
       <div className="space-y-3">
         {block.items.map((item) => (
@@ -93,7 +93,7 @@ function SelectableListCard({
                 eventType: 'SELECT_ITEM',
                 sourceMessageId: messageId,
                 sourceBlockId: block.blockId,
-                selectedItemIds: [item.itemId],
+                selectedItemId: item.itemId,
               })
             }
             disabled={disabled}
@@ -206,7 +206,7 @@ function SummaryCardView({
                   eventType: 'CLICK_ACTION',
                   sourceMessageId: messageId,
                   sourceBlockId: block.blockId,
-                  selectedItemIds: [action.id],
+                  actionValue: action.id,
                 })
               }
             >

@@ -1,452 +1,517 @@
 # chat2pay - System Design
 
-## 1. Overview
+## 1. Purpose
 
-**chat2pay** is an internal web-based POC that lets a user complete a payment
-journey through a conversational interface.
+This document defines the updated POC design for **chat2pay**.
 
-The frontend keeps the current high-fidelity layout and styling:
+The goal of this revision is to absorb the useful behavior proven by
+[`99-ref.md`](99-ref.md):
 
-- profile selection page
-- shared password dialog
-- sidebar + chat workspace
-- structured assistant blocks inside the conversation
+- the backend can talk to a personal-subscription GitHub Copilot path
+- the assistant can distinguish payee lookup from payment execution
+- the backend can execute downstream tools and continue the conversation
+- the frontend remains a chat UI instead of a transfer wizard
 
-The backend is the control plane. The frontend never calls an LLM directly and
-never calls downstream payment APIs directly.
+The implementation stack stays the same:
 
-## 2. Current POC Scope
+- frontend: React + TypeScript
+- backend: Spring Boot
+- database: PostgreSQL
 
-### In Scope
+The frontend never talks to an LLM directly and never calls downstream payment
+APIs directly.
 
-- profile list returned by backend API
-- shared password gate retained in the frontend flow
-- one backend-owned conversational payment journey
-- current supported journey:
-  - `DOMESTIC_EXISTING_PAYEE`
-- local LLM integration through the backend calling the local HTTP + JSON
-  service documented in `docs/10-local_LLM.md`
-- downstream API integration through Spring Boot
-- existing payee lookup through `PAYEE_URL`
-- final payment submission through `CONFIRM_PAYMENT_URL`
-- downstream SAML acquisition through `LOGIN_URL` before every downstream call
-- chat history and workflow persistence in PostgreSQL
-- unsupported user requests answered with a clear "not supported in this POC"
-  response
+## 2. Scope
 
-### Out of Scope for This POC
+### 2.1 Version 1
 
-- direct frontend-to-LLM calls
-- direct frontend-to-downstream API calls
-- new payee creation
-- international payment execution
-- limit check, bank check, FX rate, or proposal flows in the first POC slice
-- MFA, fraud controls, production authn/authz
+Version 1 must reproduce the useful capability already demonstrated by
+`99-ref.md`, but in the Java backend:
 
-## 3. Design Principles
+- support personal-subscription GitHub Copilot access from the backend
+- support registered payee lookup
+- support domestic payment to a registered payee
+- support multi-turn clarification with the user
+- support exactly two business downstream APIs:
+  - `PAYEE_URL`
+  - `CONFIRM_DOMESTIC_PAYMENT_URL`
+- obtain downstream SAML token before each downstream business call
+- persist sessions, messages, and active draft in PostgreSQL
+- no Redis
 
-1. **Frontend is presentation only.**
-   The current UI stays largely as-is, but the business flow must move into the
-   Spring Boot backend.
+### 2.2 Version 2
 
-2. **LLM assists; backend decides.**
-   LLM output may help with intent detection, slot extraction, and response
-   phrasing. Workflow transitions and downstream side effects remain deterministic
-   backend decisions.
+Version 2 extends the same architecture:
 
-3. **Current domestic payment matching is deterministic.**
-   For the first POC slice, payee resolution should mirror
-   `docs/11-backend-skill.md`: fetch registered payees, then match the
-   user-provided payee name against `commonPayeeDetail.name` inside the backend.
+- add international payment
+- add more downstream tools and APIs
+- use a real LLM API as the primary provider
+- keep GitHub Copilot personal-subscription access as a fallback option
 
-4. **All downstream calls share one auth pattern.**
-   Every call to a downstream business API must first obtain a SAML token from
-   `LOGIN_URL`, then place that token in the downstream request header.
+## 3. Explicit Non-Goals for V1
 
-5. **`username` is the downstream identity key.**
-   The profile field named `username` is the `payment10` value used in
-   downstream URLs and auth context.
+- no frontend-to-LLM connection
+- no frontend-to-downstream API connection
+- no Redis
+- no WebSocket requirement
+- no code generation from the API contract
+- no duplicate contract copy under a separate `api-contract/` directory
+- no complex frontend transfer wizard or "Transfer Flow" modal
+- no international payment execution in V1
+- no new payee creation in V1
 
-6. **Payment journeys must be pluggable.**
-   The first implementation only supports domestic transfer to an existing payee,
-   but the backend must be structured so future journeys can add extra checks and
-   steps without rewriting the chat controller or frontend.
+## 4. Design Principles
 
-7. **Conversation stays stable; orchestration evolves behind it.**
-   The frontend continues to render text, summary cards, selectable lists, and
-   simple forms. New journey complexity should appear as backend-generated blocks,
-   not as frontend-specific orchestration logic.
+1. **Backend owns orchestration.**
+   The Java backend decides which LLM provider to use, which tools are exposed,
+   when a tool may run, and how downstream responses become frontend blocks.
 
-## 4. High-Level Architecture
+2. **Frontend stays thin.**
+   The current frontend shell is kept, but it only renders sessions, messages,
+   and backend-provided structured blocks.
+
+3. **Provider access must be pluggable.**
+   V1 uses GitHub Copilot personal-subscription access. V2 can switch the
+   primary provider to a real API without changing frontend contracts.
+
+4. **Tool execution must be extensible.**
+   V1 only needs two downstream business tools, but the backend should be built
+   as a tool registry so V2 can add international payment and more checks
+   without rewriting the chat controller.
+
+5. **Critical side effects stay guarded.**
+   The LLM may infer intent and request tool calls, but the backend must enforce
+   confirmation and payload validation before payment execution.
+
+6. **PostgreSQL is the only shared state store in V1.**
+   Session state, message history, and active payment draft live in PostgreSQL.
+   Any in-memory cache is optional, local, and non-authoritative.
+
+7. **The UI should feel conversational, not workflow-heavy.**
+   The user interacts through chat messages, payee choices, and confirmation
+   cards. We do not build a separate transfer wizard.
+
+## 5. High-Level Architecture
 
 ```mermaid
 flowchart LR
-    subgraph FE[React Web Frontend]
-        A[Profile Selector]
-        B[Password Dialog]
-        C[Sidebar]
-        D[Chat Workspace]
-        E[Structured Block Renderer]
+    subgraph FE["React Frontend"]
+        FE1["Profile Selector"]
+        FE2["Sidebar"]
+        FE3["Chat Workspace"]
+        FE4["Structured Block Renderer"]
+        FE5["Streaming Response Reader"]
     end
 
-    subgraph BE[Spring Boot Backend]
-        F[Profile API]
-        G[Chat API]
-        H[Chat Orchestrator]
-        I[Journey Registry]
-        J[Domestic Existing Payee Journey]
-        K[Unsupported Request Responder]
-        L[LLM Gateway]
-        M[Downstream Token Service]
-        N[Payee Client]
-        O[Confirm Payment Client]
-        P[Conversation Manager]
-        Q[Response Renderer]
+    subgraph BE["Spring Boot Backend"]
+        BE1["Profile API"]
+        BE2["Chat API"]
+        BE3["Conversation Orchestrator"]
+        BE4["Provider Router"]
+        BE5["Policy Guard"]
+        BE6["Tool Registry"]
+        BE7["Response Renderer"]
+        BE8["Session Service"]
+        BE9["Copilot Personal Provider"]
+        BE10["Future Remote API Provider"]
+        BE11["Downstream Auth Service"]
+        BE12["Registered Payee Tool"]
+        BE13["Domestic Payment Tool"]
     end
 
-    subgraph DB[PostgreSQL]
-        R[(poc_profile)]
-        S[(chat_session)]
-        T[(chat_message)]
-        U[(transaction_draft)]
-        V[(workflow_transition_log)]
+    subgraph DB["PostgreSQL"]
+        DB1[("poc_profile")]
+        DB2[("chat_session")]
+        DB3[("chat_message")]
+        DB4[("payment_draft")]
     end
 
-    subgraph LLM[LLM Providers]
-        W[Local HTTP LLM :8000]
-        X[Future Remote LLM API / function calling]
+    subgraph LLM["LLM Providers"]
+        L1["GitHub Copilot Personal"]
+        L2["Future Real LLM API"]
     end
 
-    subgraph DS[Downstream APIs]
-        Y[LOGIN_URL]
-        Z[PAYEE_URL]
-        AA[CONFIRM_PAYMENT_URL]
+    subgraph DS["Downstream APIs"]
+        D1["LOGIN_URL"]
+        D2["PAYEE_URL"]
+        D3["CONFIRM_DOMESTIC_PAYMENT_URL"]
+        D4["Future International APIs"]
     end
 
-    A --> F
-    B --> F
-    C --> G
-    D --> G
-    E --> G
+    FE1 --> BE1
+    FE2 --> BE2
+    FE3 --> BE2
+    FE4 --> BE2
+    FE5 --> BE2
 
-    F --> P
-    G --> H
-    H --> I
-    I --> J
-    I --> K
-    H --> L
-    H --> P
-    H --> Q
+    BE2 --> BE3
+    BE3 --> BE4
+    BE3 --> BE5
+    BE3 --> BE6
+    BE3 --> BE7
+    BE3 --> BE8
 
-    J --> M
-    J --> N
-    J --> O
-    M --> Y
-    N --> Z
-    O --> AA
+    BE4 --> BE9
+    BE4 --> BE10
+    BE9 --> L1
+    BE10 --> L2
 
-    L --> W
-    L --> X
+    BE6 --> BE12
+    BE6 --> BE13
+    BE12 --> BE11
+    BE13 --> BE11
+    BE11 --> D1
+    BE12 --> D2
+    BE13 --> D3
+    BE6 -. future .-> D4
 
-    P --> R
-    P --> S
-    P --> T
-    P --> U
-    P --> V
+    BE8 --> DB1
+    BE8 --> DB2
+    BE8 --> DB3
+    BE8 --> DB4
 ```
 
-## 5. Frontend Architecture
+## 6. Capability Model
 
-The frontend layout and visual language are already close to target and should
-not be materially redesigned.
+### 6.1 V1 Capabilities
 
-### 5.1 Kept UX Structure
+V1 exposes only two payment-related business capabilities:
 
-- landing page with selectable profiles
-- shared password dialog
-- left sidebar with chat history and current user identity
-- right chat workspace with message stream and structured cards
+| Capability | User-facing purpose | Downstream tool |
+|---|---|---|
+| `REGISTERED_PAYEE_LOOKUP` | Find one or more registered payees | `get_registered_payees` |
+| `DOMESTIC_PAYMENT` | Pay a registered domestic payee | `confirm_domestic_payment` |
 
-### 5.2 Frontend Responsibilities
+`REGISTERED_PAYEE_LOOKUP` may be used on its own, or as part of the domestic
+payment journey.
 
-| Area | Responsibility |
-|---|---|
-| Profile selector | Fetch profiles from backend and collect the shared password |
-| Session shell | Create sessions, switch history, render current workflow summary |
-| Message renderer | Render backend-provided text, cards, lists, and forms |
-| Chat input | Collect free text only |
-| Structured UI events | Send list and button interactions back to backend |
+### 6.2 V2 Extension Direction
 
-### 5.3 Explicit Non-Responsibilities
+V2 adds capabilities without changing the outer chat contract:
 
-- no frontend LLM client
-- no frontend payee lookup client
-- no frontend payment confirm client
-- no frontend SAML token handling
-- no frontend branching logic for domestic vs international flows
+- `INTERNATIONAL_PAYMENT`
+- extra downstream checks
+- more tool definitions
+- real API LLM provider as primary
 
-## 6. Backend Architecture
+## 7. Conversation and Tool Orchestration
 
-### 6.1 Core Modules
+The backend should use a **tool-based orchestration loop**, not a frontend
+wizard and not a large monolithic service.
 
-| Module | Responsibility |
-|---|---|
-| `ProfileApiController` | List POC profiles, validate shared password, return current user context |
-| `ChatApiController` | Create sessions, accept free-text messages, accept structured UI events |
-| `ChatOrchestrator` | Central application coordinator for every turn |
-| `JourneyRegistry` | Select the correct payment journey handler for the current intent |
-| `DomesticExistingPayeeJourney` | Current POC flow implementation |
-| `UnsupportedRequestResponder` | Return stable unsupported-operation responses |
-| `ConversationManager` | Load and persist session, messages, draft, and workflow logs |
-| `LlmGateway` | Provider-neutral LLM adapter |
-| `PayeeMatcher` | Deterministically match free-text payee names against payee list data |
-| `DownstreamTokenService` | Obtain SAML token from `LOGIN_URL` for every downstream call |
-| `PayeeClient` | Call `PAYEE_URL` using the current profile context after SAML acquisition |
-| `ConfirmPaymentClient` | Call `CONFIRM_PAYMENT_URL` using the current draft and downstream auth context |
-| `ResponseRenderer` | Convert domain outcomes into frontend-ready content blocks |
+### 7.1 Turn Lifecycle
 
-### 6.2 Recommended Package Direction
+For each user message or UI event:
 
-```text
-chat2pay-app/
-└── src/main/java/.../chat2pay/
-    ├── api/
-    ├── application/
-    │   ├── chat/
-    │   ├── profile/
-    │   └── journey/
-    ├── domain/
-    │   ├── conversation/
-    │   └── payment/
-    ├── integration/
-    │   ├── llm/
-    │   └── downstream/
-    ├── persistence/
-    ├── config/
-    └── common/
-```
+1. load session history and the active draft from PostgreSQL
+2. choose the current LLM provider through the provider router
+3. send conversation context plus the allowed tool definitions
+4. if the LLM asks for a tool call, validate it in the backend
+5. execute the tool through the tool registry
+6. append tool results back into the loop if another LLM step is needed
+7. persist the resulting assistant message and updated draft
+8. stream or return structured blocks to the frontend
 
-## 7. LLM Strategy
+### 7.2 Backend Guardrails
 
-### 7.1 Current Provider
+The backend, not the model, enforces these rules:
 
-The first implementation should use a backend-only local provider that talks to
-the local service described in `docs/10-local_LLM.md`, typically through
-`POST /api/chat` on `http://localhost:8000`.
+- `confirm_domestic_payment` is unavailable until required fields are complete
+- explicit user confirmation is required before payment execution
+- opaque fields such as `payeeIdIndex` are never shown to the user
+- downstream response errors are normalized before returning to the frontend
+- the loop has a hard iteration limit
 
-Typical uses:
-
-- detect whether the user is asking for a supported payment journey
-- extract payee and amount candidates from free text
-- produce short clarification phrasing when deterministic templates are not
-  enough
-
-Important limitation for the first journey:
-
-- do not use the LLM to decide the final payee match
-- use backend deterministic matching against `commonPayeeDetail.name`
-- do not require function calling for the first POC slice
-
-### 7.2 Future Provider Compatibility
-
-The backend must not expose provider-specific behavior to the frontend.
-Introduce a provider-neutral interface such as:
+### 7.3 Recommended Interfaces
 
 ```java
 public interface LlmProvider {
-    ParsedIntent parseIntent(ChatTurnContext context);
-    AssistantCopy generateAssistantCopy(AssistantCopyRequest request);
+    ProviderTurnResult runTurn(LlmTurnRequest request);
+    ProviderStreamResult streamTurn(LlmTurnRequest request);
+}
+
+public interface ConversationTool {
+    String name();
+    ToolExecutionResult execute(ToolExecutionContext context);
 }
 ```
 
-The first implementation can be `LocalHttpLlmProvider`.
-A future implementation can be `RemoteApiLlmProvider` that uses real remote API
-calls and function calling, while preserving the same backend-facing contract.
+This keeps the controller stable while V2 adds more providers and tools.
 
-## 8. Downstream Auth and Client Strategy
+## 8. LLM Provider Strategy
 
-Every downstream business call follows the same sequence:
+### 8.1 V1 Primary Provider
+
+V1 uses a backend adapter around personal-subscription GitHub Copilot access.
+
+Responsibilities:
+
+- use configured personal credentials or session token
+- refresh or reacquire short-lived Copilot session tokens inside the backend
+- hide provider-specific request details from the rest of the application
+- support normal response mode and streaming mode
+
+Suggested implementation name:
+
+- `CopilotPersonalLlmProvider`
+
+### 8.2 V2 Primary Provider
+
+V2 adds:
+
+- `RemoteApiLlmProvider`
+
+That provider becomes the primary path for production-like usage, while
+`CopilotPersonalLlmProvider` remains available as a fallback.
+
+### 8.3 Provider Routing
+
+The provider router should support:
+
+- configured primary provider
+- configured fallback provider
+- explicit session-level provider logging for troubleshooting
+
+Example:
+
+- V1: `COPILOT_PERSONAL`
+- V2: `REMOTE_API`, fallback `COPILOT_PERSONAL`
+
+## 9. Downstream Integration Strategy
+
+### 9.1 Shared Authentication Pattern
+
+Every downstream business call uses the same sequence:
 
 1. read the current profile `username`
-2. treat that value as downstream `payment10`
-3. build the configured `LOGIN_URL` with that `payment10`
-4. obtain a SAML token
-5. call the business API with the SAML token in the required header
+2. treat it as downstream identity input
+3. call `LOGIN_URL`
+4. get the SAML token
+5. call the target business API with the required header
 
-For the first POC slice, assume this happens on every downstream call. Do not
-design around frontend token reuse.
+This auth sequence belongs in a shared backend service, not inside each tool.
 
-This applies to `PAYEE_URL`, `CONFIRM_PAYMENT_URL`, and future downstream APIs.
+### 9.2 V1 Tool Set
 
-Recommended backend abstraction:
+V1 tools:
 
-```java
-public interface DownstreamAuthenticatedCaller {
-    <T> T execute(ProfileContext profile, DownstreamRequest<T> request);
-}
-```
+| Tool | Purpose | Downstream dependency |
+|---|---|---|
+| `get_registered_payees` | Retrieve and optionally filter registered payees | `PAYEE_URL` |
+| `confirm_domestic_payment` | Execute confirmed domestic payment | `CONFIRM_DOMESTIC_PAYMENT_URL` |
 
-That abstraction lets later integrations add more clients without duplicating
-the login-before-call pattern.
+Recommended internal split:
 
-## 9. Payment Journey Model
+- `RegisteredPayeeTool`
+- `DomesticPaymentTool`
+- `DownstreamAuthService`
 
-### 9.1 Generic Journey Contract
+### 9.3 Future Tool Growth
 
-The orchestration layer should route each turn to a journey handler instead of
-embedding all payment logic in one service.
+When V2 adds international payment, new downstream APIs should arrive as new
+tool classes, not as conditionals inside `DomesticPaymentTool`.
 
-Suggested shape:
+## 10. FE/BE Streaming Choice
 
-```java
-public interface PaymentJourneyHandler {
-    boolean supports(JourneyType journeyType);
-    JourneyTurnResult handleText(TurnContext context);
-    JourneyTurnResult handleUiEvent(TurnContext context);
-}
-```
+### 10.1 Decision
 
-### 9.2 Current Journey: `DOMESTIC_EXISTING_PAYEE`
+Use **SSE-style event streaming over HTTP** between frontend and backend.
 
-The current POC supports only this journey.
+Do **not** use WebSocket in V1.
 
-Happy path:
+### 10.2 Why SSE Instead of WebSocket
 
-1. user expresses intent to pay a registered domestic payee
-2. backend extracts or asks for payee and amount
-3. backend calls `PAYEE_URL`
-4. backend matches the user-provided name against `commonPayeeDetail.name`
-5. backend stops if there is no unique match
-6. backend renders a confirmation summary
-7. user confirms
-8. backend calls `CONFIRM_PAYMENT_URL` using `payeeIdIndex`, `payeeType`,
-   amount, and configured payload defaults
-9. backend returns success or failure
+- the traffic is request-driven and mostly server-to-client during a turn
+- we need progressive assistant text, not a long-lived bidirectional channel
+- HTTP infrastructure, auth, logging, and failure handling stay simpler
+- Spring Boot and browser `fetch` both handle streaming well enough for this
+  use case
+- the frontend still sends user input through normal HTTP requests
 
-### 9.3 Unsupported Requests
+### 10.3 Usage Pattern
 
-If the user asks for anything outside this journey, the assistant should return
-an explicit unsupported response, for example:
+- profile, auth, session list, and history APIs stay normal JSON REST endpoints
+- message submission and structured UI events support:
+  - normal JSON response
+  - streamed `text/event-stream` response
 
-- international transfer
-- new payee setup
-- balance inquiry
-- transaction history actions
+Expected stream events:
 
-The session stays usable; the user can still start a supported domestic transfer.
+- `user-message`
+- `assistant-message-start`
+- `assistant-message-delta`
+- `assistant-message-complete`
+- `turn-error`
 
-### 9.4 Future Journeys
+The frontend reads the response stream from the Java backend. It never connects
+to the LLM directly.
 
-Future journey handlers can add extra steps such as:
+## 11. Session and Draft State
 
-- limit check
-- bank check
-- FX quote retrieval
-- compliance screening
-- new payee verification
+### 11.1 Session State
 
-Those steps should live inside journey-specific handlers, not inside the chat
-controller or frontend.
-
-## 10. Workflow States
-
-The current backend contract should use a smaller state set that matches the
-first POC slice.
+Persisted session state should stay simple:
 
 | State | Meaning |
 |---|---|
-| `IDLE` | Session created, no active payment yet |
-| `COLLECTING_PAYMENT_DETAILS` | Backend is collecting payee and amount |
-| `RESOLVING_PAYEE` | Backend is resolving an existing payee candidate |
-| `AWAITING_USER_CONFIRMATION` | Summary is ready and user confirmation is required |
-| `CONFIRMING_PAYMENT` | Backend is calling downstream confirm APIs |
+| `IDLE` | No active payment draft |
+| `COLLECTING_DETAILS` | Need payee, amount, or payment date |
+| `AWAITING_PAYEE_SELECTION` | Multiple payees matched |
+| `AWAITING_CONFIRMATION` | Draft is ready and waiting for explicit confirmation |
+| `EXECUTING` | Backend is calling payment confirmation |
 | `COMPLETED` | Payment succeeded |
-| `FAILED` | Payment failed due to business or technical error |
-| `CANCELLED` | User cancelled the active journey |
+| `FAILED` | Payment failed |
+| `CANCELLED` | User cancelled the active draft |
 
-## 11. Core Sequences
+Payee lookup without a transfer can leave the session in `IDLE`.
 
-### 11.1 Profile Login
+### 11.2 Draft State
+
+Persist a payment draft only when a payment is being prepared.
+
+Minimum V1 draft fields:
+
+- payee input text
+- selected payee id
+- selected payee name
+- selected payee type
+- selected bank details
+- amount
+- currency
+- payment date
+- confirmation status
+- downstream result summary
+
+## 12. Core Sequences
+
+### 12.1 Profile Login
 
 ```mermaid
 sequenceDiagram
     participant U as User
     participant FE as Frontend
-    participant API as Profile API
+    participant API as Spring Boot
     participant DB as PostgreSQL
 
-    U->>FE: Open landing page
+    U->>FE: Open app
     FE->>API: GET /api/profiles
-    API->>DB: Load available demo profiles
-    DB-->>API: Profile rows
+    API->>DB: Load profiles
+    DB-->>API: Profiles
     API-->>FE: Profile list
 
-    U->>FE: Select profile and submit password
+    U->>FE: Select profile + enter shared password
     FE->>API: POST /api/auth/profile-login
-    API->>DB: Validate profile exists
-    API->>API: Validate shared POC password
+    API->>DB: Validate profile
+    API->>API: Validate shared password
     API-->>FE: Current user context
 ```
 
-### 11.2 Domestic Existing Payee Payment
+### 12.2 Registered Payee Lookup
 
 ```mermaid
 sequenceDiagram
     participant U as User
     participant FE as Frontend
     participant API as Chat API
-    participant ORC as Chat Orchestrator
-    participant J as Domestic Journey
-    participant LLM as LLM Gateway
-    participant AUTH as Downstream Token Service
+    participant ORC as Conversation Orchestrator
+    participant LLM as LLM Provider
+    participant TOOL as Registered Payee Tool
+    participant AUTH as Downstream Auth Service
     participant PAYEE as PAYEE_URL
-    participant CONFIRM as CONFIRM_PAYMENT_URL
     participant DB as PostgreSQL
 
-    U->>FE: "Pay Alex 500 HKD"
+    U->>FE: "Do I have Bob registered?"
     FE->>API: POST /api/chat/sessions/{id}/messages
-    API->>ORC: handleMessage()
-    ORC->>LLM: optionally parse supported intent + rough slots
-    LLM-->>ORC: intent + candidate payee name + candidate amount
-    ORC->>J: continue domestic existing payee flow
+    API->>ORC: handle turn
+    ORC->>LLM: conversation + available tools
+    LLM-->>ORC: call get_registered_payees(nameQuery=Bob)
+    ORC->>TOOL: execute
+    TOOL->>AUTH: acquire SAML token
+    AUTH-->>TOOL: token
+    TOOL->>PAYEE: fetch payees
+    PAYEE-->>TOOL: payee data
+    TOOL-->>ORC: normalized payee result
+    ORC->>LLM: tool result
+    LLM-->>ORC: final assistant answer
+    ORC->>DB: persist messages
+    ORC-->>FE: stream or return assistant blocks
+```
 
-    J->>AUTH: fetch SAML token for current username
-    AUTH-->>J: SAML token
-    J->>PAYEE: list registered payees with current profile context + SAML header
-    PAYEE-->>J: payee list
-    J->>J: match payee name against commonPayeeDetail.name
-    J->>DB: persist draft + assistant blocks
-    J-->>API: confirmation summary or clarification blocks
-    API-->>FE: render summary/list/form
+### 12.3 Domestic Payment
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant FE as Frontend
+    participant API as Chat API
+    participant ORC as Conversation Orchestrator
+    participant LLM as LLM Provider
+    participant GUARD as Policy Guard
+    participant PAYEE_TOOL as Registered Payee Tool
+    participant PAY_TOOL as Domestic Payment Tool
+    participant AUTH as Downstream Auth Service
+    participant PAYEE as PAYEE_URL
+    participant CONFIRM as CONFIRM_DOMESTIC_PAYMENT_URL
+    participant DB as PostgreSQL
+
+    U->>FE: "Pay Bob 500 HKD today"
+    FE->>API: POST /api/chat/sessions/{id}/messages
+    API->>ORC: handle turn
+    ORC->>LLM: conversation + tools
+    LLM-->>ORC: get_registered_payees
+    ORC->>PAYEE_TOOL: execute
+    PAYEE_TOOL->>AUTH: acquire SAML token
+    AUTH-->>PAYEE_TOOL: token
+    PAYEE_TOOL->>PAYEE: list payees
+    PAYEE-->>PAYEE_TOOL: payees
+    PAYEE_TOOL-->>ORC: normalized payee result
+    ORC->>LLM: tool result
+    LLM-->>ORC: ask for confirmation
+    ORC->>DB: persist draft and assistant message
+    ORC-->>FE: confirmation summary
 
     U->>FE: Confirm
     FE->>API: POST /api/chat/sessions/{id}/events
-    API->>ORC: handleUiEvent()
-    ORC->>J: confirm payment
-    J->>AUTH: fetch SAML token for current username
-    AUTH-->>J: SAML token
-    J->>CONFIRM: submit payment request with payeeIdIndex + payeeType + amount
-    CONFIRM-->>J: success or failure
-    J->>DB: persist terminal outcome
-    J-->>API: success or error blocks
-    API-->>FE: render final state
+    API->>ORC: handle turn
+    ORC->>GUARD: validate explicit confirmation + draft completeness
+    GUARD-->>ORC: allowed
+    ORC->>PAY_TOOL: execute
+    PAY_TOOL->>AUTH: acquire SAML token
+    AUTH-->>PAY_TOOL: token
+    PAY_TOOL->>CONFIRM: confirm payment
+    CONFIRM-->>PAY_TOOL: success or failure
+    PAY_TOOL-->>ORC: normalized result
+    ORC->>DB: persist terminal state
+    ORC-->>FE: success or failure blocks
 ```
 
-### 11.3 Unsupported Operation
+## 13. Frontend Implications
 
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant FE as Frontend
-    participant API as Chat API
-    participant ORC as Chat Orchestrator
-    participant LLM as LLM Gateway
+The frontend keeps the current shell, but should simplify behavior:
 
-    U->>FE: "Make an international transfer"
-    FE->>API: POST /api/chat/sessions/{id}/messages
-    API->>ORC: handleMessage()
-    ORC->>LLM: classify request
-    LLM-->>ORC: unsupported for current POC
-    ORC-->>API: info card saying this action is not supported
-    API-->>FE: render unsupported message
-```
+- keep profile selector, sidebar, and chat workspace
+- remove the heavy "Transfer Flow" treatment
+- render only backend-provided blocks and status
+- prefer conversational text plus light cards and lists
+- avoid frontend-owned branching logic
+
+## 14. V2 Compatibility Notes
+
+This design intentionally leaves room for V2:
+
+- more tools can be added without changing the controller contract
+- the provider router can switch from Copilot to a real API
+- international payment can be added as new tools plus new draft fields
+- PostgreSQL remains sufficient for the current scale; Redis is not required
+  for V1
+
+## 15. Design Summary
+
+The updated design is:
+
+- backend-orchestrated
+- tool-based
+- PostgreSQL-backed
+- SSE-streamed
+- GitHub Copilot personal-subscription compatible in V1
+- ready to grow into real API LLM + international payment in V2

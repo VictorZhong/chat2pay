@@ -1,30 +1,27 @@
 import type {
+  CapabilityType,
   ChatMessage,
-  ChatMessagePage,
-  ChatSessionCreateResponse,
   ChatSessionDetail,
   ChatSessionSummary,
-  ChatSessionSummaryPage,
   ChatTurnResponse,
   ContentBlock,
   CurrentUserContext,
   DisplayField,
-  FormField,
-  PaymentRail,
+  PaymentDraft,
+  PayeeSummary,
   ProfileLoginRequest,
   ProfileSummary,
   SelectableItem,
   SendMessageRequest,
-  SuggestedAction,
-  TransactionDraft,
+  SummaryCardBlock,
   UiEventRequest,
-  WorkflowState,
 } from '@/shared/api/contracts';
 import { MOCK_API_LATENCY_MS } from '@/shared/config/env';
 import { createId } from '@/shared/lib/id';
 
-type KnownPayeeId = keyof typeof KNOWN_PAYEES;
-type ParsedPayee = KnownPayeeId | 'ambiguous_tom' | undefined;
+type RegisteredPayee = PayeeSummary & {
+  aliases: string[];
+};
 
 type MockSessionRecord = {
   profileId: string;
@@ -37,64 +34,63 @@ type MockDatabase = {
   sessionsByProfile: Record<string, MockSessionRecord[]>;
 };
 
-const STORAGE_KEY = 'chat2pay-mock-db-v1';
-let memoryDb: MockDatabase | null = null;
-const storageFallback = new Map<string, string>();
+const STORAGE_KEY = 'chat2pay-mock-db-v2';
 const POC_PROFILE_PASSWORD = 'tb123';
+const DEFAULT_CAPABILITIES: CapabilityType[] = ['REGISTERED_PAYEE_LOOKUP', 'DOMESTIC_PAYMENT'];
 
-const SOURCE_ACCOUNT = {
-  id: 'acct_hk_primary_savings',
-  display: 'Primary Savings • 123-456-001',
-};
+const storageFallback = new Map<string, string>();
+let memoryDb: MockDatabase | null = null;
 
-const KNOWN_PAYEES: Record<
-  string,
+const REGISTERED_PAYEES: RegisteredPayee[] = [
   {
-    label: string;
-    description: string;
-  }
-> = {
-  payee_tom_lee: {
-    label: 'Tom Lee',
-    description: 'Hang Seng Supplier Settlement • HK • Frequent payee',
-  },
-  payee_tom_chan: {
-    label: 'Tom Chan',
-    description: 'Tom Chan Trading • SG • Newly added payee',
-  },
-  payee_sarah_wong: {
-    label: 'Sarah Wong',
-    description: 'Sarah Wong • Internal staff reimbursement',
-  },
-};
-
-const PAYMENT_RAILS: Array<{
-  id: Exclude<PaymentRail, null>;
-  label: string;
-  description: string;
-  eta: string;
-  fee: string;
-}> = [
-  {
-    id: 'ORTT',
-    label: 'ORTT',
-    description: 'Fast same-day settlement for urgent transfers',
-    eta: 'Today before 18:00',
-    fee: 'HKD 120.00',
+    payeeId: 'payee_bob_current',
+    name: 'Bob Chan',
+    payeeType: 'DOMESTIC_REGISTERED',
+    bankCode: '004',
+    bankName: 'HSBC Hong Kong',
+    accountNumber: '123-456-789',
+    displayLabel: 'CURRENT • 123-456-789',
+    aliases: ['bob chan', 'bob'],
   },
   {
-    id: 'GDLV',
-    label: 'GDLV',
-    description: 'Lower-cost domestic route with standard processing',
-    eta: 'Today before 22:00',
-    fee: 'HKD 38.00',
+    payeeId: 'payee_bob_savings',
+    name: 'Bob Chan',
+    payeeType: 'DOMESTIC_REGISTERED',
+    bankCode: '004',
+    bankName: 'HSBC Hong Kong',
+    accountNumber: '987-654-321',
+    displayLabel: 'SAVINGS • 987-654-321',
+    aliases: ['bob chan', 'bob'],
   },
   {
-    id: 'GDRIA',
-    label: 'GDRIA',
-    description: 'Regional express transfer with higher fee',
-    eta: 'Within 2 hours',
-    fee: 'HKD 88.00',
+    payeeId: 'payee_sarah_salary',
+    name: 'Sarah Wong',
+    payeeType: 'DOMESTIC_REGISTERED',
+    bankCode: '012',
+    bankName: 'Bank of China (Hong Kong)',
+    accountNumber: '800-221-456',
+    displayLabel: 'PAYROLL • 800-221-456',
+    aliases: ['sarah wong', 'sarah'],
+  },
+  {
+    payeeId: 'payee_alex_ops',
+    name: 'Alex Tan',
+    payeeType: 'DOMESTIC_REGISTERED',
+    bankCode: '024',
+    bankName: 'Hang Seng Bank',
+    accountNumber: '556-000-912',
+    displayLabel: 'OPERATIONS • 556-000-912',
+    aliases: ['alex tan', 'alex'],
+  },
+  {
+    payeeId: 'payee_michelle_vendor',
+    name: 'Michelle Ng',
+    payeeType: 'DOMESTIC_REGISTERED',
+    bankCode: '005',
+    bankName: 'Citibank Hong Kong',
+    accountNumber: '445-221-007',
+    displayLabel: 'VENDOR • 445-221-007',
+    aliases: ['michelle ng', 'michelle'],
   },
 ];
 
@@ -112,6 +108,16 @@ function withLatency<T>(factory: () => T) {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function todayDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function futureDate(days: number) {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
 }
 
 function readStorage(key: string) {
@@ -137,6 +143,22 @@ function writeStorage(key: string, value: string) {
   }
 
   storageFallback.set(key, value);
+}
+
+function clone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function normalize(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function titleCaseWords(value: string) {
+  return value
+    .split(' ')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
 }
 
 function buildTextBlock(text: string, title?: string): ContentBlock {
@@ -170,7 +192,7 @@ function buildSummaryCard(
   title: string,
   fields: DisplayField[],
   metadata?: Record<string, unknown>,
-): ContentBlock {
+): SummaryCardBlock {
   return {
     blockId: createId('blk_summary'),
     type: 'SUMMARY_CARD',
@@ -189,54 +211,9 @@ function buildSelectableList(
     blockId: createId('blk_list'),
     type: 'SELECTABLE_LIST',
     title,
-    selectionMode: 'SINGLE',
     items,
     metadata,
   };
-}
-
-function buildSimpleForm(
-  title: string,
-  fields: FormField[],
-  submitLabel = 'Submit',
-  metadata?: Record<string, unknown>,
-): ContentBlock {
-  return {
-    blockId: createId('blk_form'),
-    type: 'SIMPLE_FORM',
-    title,
-    fields,
-    submitLabel,
-    metadata,
-  };
-}
-
-function buildAssistantMessage(sessionId: string, blocks: ContentBlock[], text?: string) {
-  return buildMessage({
-    sessionId,
-    role: 'ASSISTANT',
-    messageType: inferMessageType(blocks),
-    text,
-    contentBlocks: blocks,
-  });
-}
-
-function buildUserTextMessage(sessionId: string, text: string) {
-  return buildMessage({
-    sessionId,
-    role: 'USER',
-    messageType: 'TEXT',
-    text,
-  });
-}
-
-function buildUserEventMessage(sessionId: string, text: string) {
-  return buildMessage({
-    sessionId,
-    role: 'USER',
-    messageType: 'UI_EVENT',
-    text,
-  });
 }
 
 function buildMessage(input: Omit<ChatMessage, 'messageId' | 'createdAt'>): ChatMessage {
@@ -247,755 +224,777 @@ function buildMessage(input: Omit<ChatMessage, 'messageId' | 'createdAt'>): Chat
   };
 }
 
-function inferMessageType(blocks: ContentBlock[]): ChatMessage['messageType'] {
-  if (blocks.some((block) => block.type === 'SIMPLE_FORM')) {
-    return 'FORM';
-  }
-
-  if (blocks.some((block) => block.type === 'SELECTABLE_LIST')) {
-    return 'LIST';
-  }
-
-  if (blocks.some((block) => block.type !== 'TEXT')) {
-    return 'CARD';
-  }
-
-  return 'TEXT';
-}
-
-function buildEmptyDraft(sessionId: string): TransactionDraft {
-  return {
-    draftId: createId('draft'),
+function buildAssistantMessage(sessionId: string, blocks: ContentBlock[], text?: string): ChatMessage {
+  return buildMessage({
     sessionId,
-    status: 'DRAFT',
-    workflowState: 'COLLECTING_TRANSFER_INFO',
-    sourceAccountId: SOURCE_ACCOUNT.id,
-    sourceAccountDisplay: SOURCE_ACCOUNT.display,
-    paymentRail: null,
-    limitCheckStatus: 'NOT_STARTED',
-    lastUpdatedAt: nowIso(),
-  };
+    role: 'ASSISTANT',
+    kind: blocks.length ? 'BLOCKS' : 'TEXT',
+    text,
+    contentBlocks: blocks.length ? blocks : null,
+    metadata: null,
+  });
 }
 
-function ensureDraft(record: MockSessionRecord) {
-  if (!record.session.activeDraft) {
-    record.session.activeDraft = buildEmptyDraft(record.session.sessionId);
-  }
-
-  return record.session.activeDraft;
+function buildUserTextMessage(sessionId: string, text: string) {
+  return buildMessage({
+    sessionId,
+    role: 'USER',
+    kind: 'TEXT',
+    text,
+    contentBlocks: null,
+    metadata: null,
+  });
 }
 
-function touchSession(record: MockSessionRecord, workflowState: WorkflowState) {
-  const timestamp = nowIso();
-  record.session.workflowState = workflowState;
-  record.session.updatedAt = timestamp;
-
-  if (record.session.activeDraft) {
-    record.session.activeDraft.workflowState = workflowState;
-    record.session.activeDraft.lastUpdatedAt = timestamp;
-  }
+function buildUserEventMessage(sessionId: string, text: string) {
+  return buildMessage({
+    sessionId,
+    role: 'USER',
+    kind: 'UI_EVENT',
+    text,
+    contentBlocks: null,
+    metadata: null,
+  });
 }
 
-function parseAmount(text: string) {
-  const amountMatch = text.match(/(\d[\d,]*(?:\.\d{1,2})?)/);
-  return amountMatch ? Number(amountMatch[1].replaceAll(',', '')) : undefined;
-}
-
-function parseCurrency(text: string) {
-  const currencyMatch = text.match(/\b(HKD|USD|SGD|CNY)\b/i);
-  return currencyMatch?.[1]?.toUpperCase();
-}
-
-function parsePayee(text: string): ParsedPayee {
-  if (/\btom lee\b/i.test(text)) {
-    return 'payee_tom_lee';
-  }
-
-  if (/\btom chan\b/i.test(text)) {
-    return 'payee_tom_chan';
-  }
-
-  if (/\bsarah\b/i.test(text)) {
-    return 'payee_sarah_wong';
-  }
-
-  if (/\btom\b/i.test(text)) {
-    return 'ambiguous_tom';
-  }
-
-  return undefined;
-}
-
-function parseNote(text: string) {
-  const noteMatch = text.match(/\bfor\s+(.+)$/i);
-  return noteMatch?.[1]?.trim();
-}
-
-function parsePaymentRail(text: string): PaymentRail {
-  const rail = PAYMENT_RAILS.find((item) => text.toUpperCase().includes(item.id));
-  return rail?.id ?? null;
-}
-
-function isConfirmIntent(text: string) {
-  return /\b(confirm|approve|yes)\b/i.test(text);
-}
-
-function isCancelIntent(text: string) {
-  return /\b(cancel|stop|abort|no)\b/i.test(text);
-}
-
-function isTransferIntent(text: string) {
-  return /\b(pay|transfer|send|remit)\b/i.test(text);
-}
-
-function extractDisplayText(message: ChatMessage) {
-  if (message.text) {
-    return message.text;
+function previewFromMessage(message: ChatMessage) {
+  const direct = message.text?.trim();
+  if (direct) {
+    return direct.slice(0, 140);
   }
 
   const firstBlock = message.contentBlocks?.[0];
-
   if (!firstBlock) {
-    return null;
+    return '';
   }
 
-  if (firstBlock.type === 'TEXT') {
-    return firstBlock.text;
+  if ('text' in firstBlock && typeof firstBlock.text === 'string') {
+    return firstBlock.text.slice(0, 140);
   }
 
-  if (firstBlock.type === 'INFO_CARD' || firstBlock.type === 'ERROR_CARD') {
-    return firstBlock.text;
+  if ('title' in firstBlock && typeof firstBlock.title === 'string') {
+    return firstBlock.title.slice(0, 140);
   }
 
-  return firstBlock.title;
+  return '';
 }
 
-function deriveSessionSummary(record: MockSessionRecord): ChatSessionSummary {
-  const lastAssistantMessage = [...record.messages]
-    .reverse()
-    .find((message) => message.role === 'ASSISTANT');
+function appendMessage(record: MockSessionRecord, message: ChatMessage) {
+  record.messages.push(message);
+  record.session.updatedAt = message.createdAt;
+  record.session.lastMessagePreview = previewFromMessage(message);
+}
 
-  return {
+function touchSession(record: MockSessionRecord, state: ChatSessionDetail['state']) {
+  record.session.state = state;
+  record.session.updatedAt = nowIso();
+}
+
+function setSessionStatus(record: MockSessionRecord, status: ChatSessionDetail['status']) {
+  record.session.status = status;
+  record.session.updatedAt = nowIso();
+}
+
+function ensureDomesticDraft(record: MockSessionRecord) {
+  if (record.session.activeDraft) {
+    return record.session.activeDraft;
+  }
+
+  const draft: PaymentDraft = {
+    draftId: createId('draft'),
     sessionId: record.session.sessionId,
-    title: record.session.title,
-    status: record.session.status,
-    workflowState: record.session.workflowState,
-    lastAssistantText: lastAssistantMessage ? extractDisplayText(lastAssistantMessage) : null,
-    createdAt: record.session.createdAt,
-    updatedAt: record.session.updatedAt,
+    paymentType: 'DOMESTIC_PAYMENT',
+    status: 'DRAFT',
+    payeeQueryText: null,
+    selectedPayee: null,
+    amount: null,
+    currency: 'HKD',
+    paymentDate: null,
+    downstreamReference: null,
+    lastError: null,
+    context: null,
+    lastUpdatedAt: nowIso(),
   };
+  record.session.activeDraft = draft;
+  return draft;
 }
 
-function proposalFields(record: MockSessionRecord): DisplayField[] {
-  const draft = ensureDraft(record);
-  const railConfig = PAYMENT_RAILS.find((item) => item.id === draft.paymentRail) ?? PAYMENT_RAILS[0];
+function dropDraft(record: MockSessionRecord) {
+  record.session.activeDraft = null;
+}
 
+function updateDraftTimestamp(draft: PaymentDraft) {
+  draft.lastUpdatedAt = nowIso();
+}
+
+function draftSummaryFields(draft: PaymentDraft): DisplayField[] {
   return [
-    { label: 'Source account', value: draft.sourceAccountDisplay ?? SOURCE_ACCOUNT.display },
-    { label: 'Payee', value: draft.payeeDisplay ?? 'Pending' },
+    { label: 'Payee', value: draft.selectedPayee?.name ?? draft.payeeQueryText ?? 'Pending' },
+    { label: 'Account', value: draft.selectedPayee?.displayLabel ?? 'Pending' },
+    { label: 'Bank', value: draft.selectedPayee?.bankName ?? 'Pending' },
     {
       label: 'Amount',
       value:
-        draft.amount && draft.currency
-          ? `${draft.amount.toLocaleString('en-HK', { minimumFractionDigits: 2 })} ${draft.currency}`
+        draft.amount !== null && draft.amount !== undefined
+          ? new Intl.NumberFormat('en-HK', {
+              style: 'currency',
+              currency: draft.currency ?? 'HKD',
+              minimumFractionDigits: 2,
+            }).format(draft.amount)
           : 'Pending',
     },
-    { label: 'Payment rail', value: railConfig.label },
-    { label: 'Fee', value: railConfig.fee },
-    { label: 'Estimated arrival', value: railConfig.eta },
-    { label: 'Proposal ID', value: draft.proposalId ?? 'Pending' },
+    { label: 'Payment date', value: draft.paymentDate ?? 'Pending' },
   ];
 }
 
-function buildWelcomeBlocks(profileName: string): ContentBlock[] {
+function buildWelcomeBlocks(): ContentBlock[] {
   return [
     buildTextBlock(
-      `Hi ${profileName.split(' ')[0]}, I can help you transfer money, clarify payees, and prepare a proposal before confirmation.`,
-    ),
-    buildInfoCard(
-      'Suggested start',
-      'Try "Pay Tom 5000 HKD" or start with partial details and I will guide the rest.',
+      'Ask about a registered payee, or tell me who to pay, how much, and whether it should go today or tomorrow.',
+      'Domestic payments only',
     ),
   ];
 }
 
-function buildMissingDetailsBlocks(draft: TransactionDraft): ContentBlock[] {
+function buildMissingDetailsBlocks(draft: PaymentDraft): ContentBlock[] {
+  const missing: string[] = [];
+
+  if (!draft.payeeQueryText && !draft.selectedPayee) {
+    missing.push('payee');
+  }
+
+  if (draft.amount === null || draft.amount === undefined) {
+    missing.push('amount');
+  }
+
+  if (!draft.paymentDate) {
+    missing.push('payment date');
+  }
+
+  const prompt =
+    missing.length === 1
+      ? `I still need the ${missing[0]} before I can prepare the domestic payment.`
+      : `I still need these details before I can prepare the domestic payment: ${missing.join(', ')}.`;
+
   return [
-    buildTextBlock('I need a few details before I can continue the transfer flow.'),
-    buildSimpleForm(
-      'Transfer details',
-      [
-        {
-          fieldId: 'payee',
-          label: 'Payee',
-          fieldType: 'TEXT',
-          required: true,
-          placeholder: 'Tom Lee',
-        },
-        {
-          fieldId: 'amount',
-          label: 'Amount',
-          fieldType: 'NUMBER',
-          required: true,
-          placeholder: '5000',
-        },
-        {
-          fieldId: 'currency',
-          label: 'Currency',
-          fieldType: 'SELECT',
-          required: true,
-          options: [
-            { itemId: 'HKD', label: 'HKD' },
-            { itemId: 'USD', label: 'USD' },
-            { itemId: 'SGD', label: 'SGD' },
-          ],
-        },
-        {
-          fieldId: 'note',
-          label: 'Note',
-          fieldType: 'TEXT',
-          placeholder: 'Invoice 2048',
-        },
-      ],
-      'Continue',
-      {
-        stage: 'COLLECT_DETAILS',
-        draftId: draft.draftId,
-      },
-    ),
+    buildTextBlock(prompt, 'Need more details'),
+    buildSummaryCard('Current draft', draftSummaryFields(draft)),
   ];
 }
 
-function buildPayeeSelectionBlocks(): ContentBlock[] {
+function buildPayeeSelectionBlocks(query: string, matches: RegisteredPayee[]): ContentBlock[] {
   return [
-    buildTextBlock('I found more than one payee named Tom. Select the intended payee to continue.'),
+    buildTextBlock(`I found more than one registered payee for "${query}". Please choose the correct one.`, 'Choose payee'),
     buildSelectableList(
-      'Select payee',
-      [
-        {
-          itemId: 'payee_tom_lee',
-          label: KNOWN_PAYEES.payee_tom_lee.label,
-          description: KNOWN_PAYEES.payee_tom_lee.description,
-        },
-        {
-          itemId: 'payee_tom_chan',
-          label: KNOWN_PAYEES.payee_tom_chan.label,
-          description: KNOWN_PAYEES.payee_tom_chan.description,
-        },
-      ],
-      {
-        stage: 'PAYEE_SELECTION',
-      },
-    ),
-  ];
-}
-
-function buildPaymentRailBlocks(): ContentBlock[] {
-  return [
-    buildTextBlock('The draft is complete. Choose the payment option that best fits this transfer.'),
-    buildSelectableList(
-      'Payment options',
-      PAYMENT_RAILS.map((rail) => ({
-        itemId: rail.id,
-        label: rail.label,
-        description: rail.description,
+      'Registered payee matches',
+      matches.map((payee) => ({
+        itemId: payee.payeeId,
+        label: payee.name,
+        description: `${payee.bankName} • ${payee.displayLabel}`,
       })),
-      {
-        stage: 'PAYMENT_RAIL_SELECTION',
-      },
+      { purpose: 'payee-selection' },
     ),
   ];
 }
 
-function buildProposalBlocks(record: MockSessionRecord): ContentBlock[] {
+function confirmationActions() {
   return [
-    buildInfoCard(
-      'Proposal prepared',
-      'Limit check passed and a proposal is ready. Review the details before confirming.',
-    ),
-    buildSummaryCard('Transfer summary', proposalFields(record), {
-      stage: 'PROPOSAL_REVIEW',
-      actions: [
-        { id: 'CONFIRM_TRANSFER', label: 'Confirm', tone: 'primary' },
-        { id: 'CANCEL_TRANSFER', label: 'Cancel', tone: 'secondary' },
-      ],
+    { id: 'CONFIRM_PAYMENT', label: 'Confirm payment' },
+    { id: 'CANCEL_PAYMENT', label: 'Cancel', tone: 'secondary' },
+  ];
+}
+
+function buildConfirmationBlocks(draft: PaymentDraft): ContentBlock[] {
+  return [
+    buildTextBlock('Please confirm the payee, amount, and payment date before I submit the domestic payment.', 'Awaiting confirmation'),
+    buildSummaryCard('Domestic payment summary', draftSummaryFields(draft), {
+      actions: confirmationActions(),
     }),
   ];
 }
 
-function buildCompletionBlocks(record: MockSessionRecord): ContentBlock[] {
-  const draft = ensureDraft(record);
-
+function buildCompletionBlocks(draft: PaymentDraft): ContentBlock[] {
   return [
-    buildSummaryCard('Transfer completed', [
-      { label: 'Payee', value: draft.payeeDisplay ?? 'Pending' },
-      {
-        label: 'Amount',
-        value:
-          draft.amount && draft.currency
-            ? `${draft.amount.toLocaleString('en-HK', { minimumFractionDigits: 2 })} ${draft.currency}`
-            : 'Pending',
-      },
-      { label: 'Payment rail', value: draft.paymentRail ?? 'Pending' },
-      { label: 'Transfer reference', value: draft.transferReference ?? 'Pending' },
-      { label: 'Status', value: draft.status },
+    buildInfoCard(
+      'Payment submitted',
+      `The domestic payment to ${draft.selectedPayee?.name ?? 'the selected payee'} was submitted successfully.`,
+    ),
+    buildSummaryCard('Completed payment', [
+      ...draftSummaryFields(draft),
+      { label: 'Reference', value: draft.downstreamReference ?? 'Pending' },
     ]),
   ];
 }
 
-function buildCancelledBlocks(): ContentBlock[] {
+function buildCancellationBlocks(draft: PaymentDraft): ContentBlock[] {
   return [
     buildInfoCard(
-      'Transfer cancelled',
-      'The active transfer draft has been cancelled. You can start a new chat whenever you are ready.',
+      'Payment cancelled',
+      `The domestic payment draft for ${draft.selectedPayee?.name ?? draft.payeeQueryText ?? 'the selected payee'} was cancelled.`,
+    ),
+    buildSummaryCard('Cancelled draft', draftSummaryFields(draft)),
+  ];
+}
+
+function buildUnsupportedBlocks(): ContentBlock[] {
+  return [
+    buildInfoCard(
+      'Not supported in V1',
+      'This POC currently supports registered payee lookup and domestic payment to a registered payee only.',
     ),
   ];
 }
 
-function buildReminderBlocks(): ContentBlock[] {
+function buildLookupBlocks(query: string | null, matches: RegisteredPayee[]): ContentBlock[] {
+  if (matches.length === 0) {
+    return [
+      buildInfoCard(
+        'No registered payees found',
+        query
+          ? `I could not find a registered payee matching "${query}".`
+          : 'There are no registered payees available in this mock profile.',
+      ),
+    ];
+  }
+
   return [
-    buildInfoCard(
-      'Awaiting confirmation',
-      'Review the proposal and confirm or cancel. Free-text input is still available if you need to change the instruction.',
+    buildTextBlock(
+      query
+        ? `I found ${matches.length} registered payee${matches.length === 1 ? '' : 's'} matching "${query}".`
+        : `I found ${matches.length} registered payees for this profile.`,
+      'Registered payees',
+    ),
+    buildSummaryCard(
+      matches.length === 1 ? 'Registered payee' : 'Registered payee results',
+      matches.map((payee, index) => ({
+        label: matches.length === 1 ? payee.name : `Match ${index + 1}`,
+        value: `${payee.name} • ${payee.bankName} • ${payee.displayLabel}`,
+      })),
     ),
   ];
 }
 
-function updateDraftFromInput(draft: TransactionDraft, input: { text?: string; values?: Record<string, string> }) {
-  const sourceText = input.text ?? '';
-  const sourceValues = input.values ?? {};
-  const amount = parseAmount(sourceText) ?? (sourceValues.amount ? Number(sourceValues.amount) : undefined);
-  const currency = parseCurrency(sourceText) ?? sourceValues.currency?.toUpperCase();
-  const payee = parsePayee(sourceText) ?? parsePayee(sourceValues.payee ?? '');
-  const note = parseNote(sourceText) ?? sourceValues.note;
+function extractAmount(text: string) {
+  const match = text.replaceAll(',', '').match(/(?:hkd\s*)?(\d+(?:\.\d{1,2})?)/i);
+  if (!match) {
+    return null;
+  }
 
-  if (amount) {
+  const parsed = Number(match[1]);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function extractPaymentDate(text: string) {
+  const normalized = normalize(text);
+
+  if (normalized.includes('tomorrow') || normalized.includes('later')) {
+    return futureDate(1);
+  }
+
+  if (normalized.includes('today') || normalized.includes('now')) {
+    return todayDate();
+  }
+
+  return null;
+}
+
+function aliasMatchesText(text: string) {
+  const normalizedText = normalize(text);
+  return [...new Set(REGISTERED_PAYEES.flatMap((payee) => payee.aliases))]
+    .sort((left, right) => right.length - left.length)
+    .find((alias) => normalizedText.includes(alias));
+}
+
+function sanitizePayeeQuery(value: string) {
+  return normalize(value)
+    .replace(/\b(hkd|today|tomorrow|now|later|please|thanks|registered|payee|payees)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractPayeeQuery(text: string) {
+  const alias = aliasMatchesText(text);
+  if (alias) {
+    return alias;
+  }
+
+  const patterns = [
+    /(?:pay|send|transfer)(?:\s+to)?\s+(.+?)(?=\s+\d|\s+hkd|\s+today|\s+tomorrow|\s+later|$)/i,
+    /(?:find|lookup|look up|check|show)(?:\s+my)?(?:\s+registered)?(?:\s+payees?|\s+payee)?(?:\s+for)?\s+(.+)/i,
+    /do i have\s+(.+?)\s+(?:registered|as a payee)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) {
+      const sanitized = sanitizePayeeQuery(match[1]);
+      if (sanitized) {
+        return sanitized;
+      }
+    }
+  }
+
+  return null;
+}
+
+function matchPayees(query: string | null) {
+  if (!query) {
+    return [];
+  }
+
+  const normalizedQuery = normalize(query);
+  return REGISTERED_PAYEES.filter(
+    (payee) =>
+      normalize(payee.name).includes(normalizedQuery) ||
+      payee.aliases.some(
+        (alias) => alias.includes(normalizedQuery) || normalizedQuery.includes(alias),
+      ),
+  );
+}
+
+function isInternationalIntent(text: string) {
+  return /\b(international|overseas|swift|wire)\b/i.test(text);
+}
+
+function isPayeeLookupIntent(text: string) {
+  return /\b(payee|registered|lookup|look up|find|show)\b/i.test(text) || /do i have/i.test(text);
+}
+
+function isPaymentIntent(text: string) {
+  return /\b(pay|send|transfer)\b/i.test(text);
+}
+
+function isPositiveConfirmation(text: string) {
+  return /\b(confirm|confirmed|yes|okay|ok|go ahead|proceed|send it)\b/i.test(text);
+}
+
+function isCancellation(text: string) {
+  return /\b(cancel|stop|never mind|don'?t|do not)\b/i.test(text);
+}
+
+function getRecord(profileId: string, sessionId: string) {
+  const database = getDatabase();
+  const record = database.sessionsByProfile[profileId]?.find((entry) => entry.session.sessionId === sessionId);
+
+  if (!record) {
+    throw new Error('Session not found.');
+  }
+
+  return record;
+}
+
+function setSessionTitle(record: MockSessionRecord, nextTitle: string) {
+  record.session.title = nextTitle.slice(0, 120);
+  record.session.updatedAt = nowIso();
+}
+
+function maybeUpdateTitleFromDraft(record: MockSessionRecord, draft: PaymentDraft) {
+  if (draft.selectedPayee?.name) {
+    setSessionTitle(record, `Pay ${draft.selectedPayee.name}`);
+    return;
+  }
+
+  if (draft.payeeQueryText) {
+    setSessionTitle(record, `Pay ${titleCaseWords(draft.payeeQueryText)}`);
+  }
+}
+
+function maybeUpdateTitleFromLookup(record: MockSessionRecord, query: string | null) {
+  if (query) {
+    setSessionTitle(record, `Find ${titleCaseWords(query)}`);
+  } else {
+    setSessionTitle(record, 'Registered payees');
+  }
+}
+
+function respond(record: MockSessionRecord, assistantMessage: ChatMessage, userMessage?: ChatMessage | null): ChatTurnResponse {
+  appendMessage(record, assistantMessage);
+
+  return {
+    session: clone(record.session),
+    userMessage: userMessage ? clone(userMessage) : null,
+    assistantMessage: clone(assistantMessage),
+    activeDraft: clone(record.session.activeDraft ?? null),
+    serverTimestamp: nowIso(),
+  };
+}
+
+function askForMissingDetails(record: MockSessionRecord, draft: PaymentDraft, userMessage?: ChatMessage | null) {
+  draft.status = 'DRAFT';
+  updateDraftTimestamp(draft);
+  touchSession(record, 'COLLECTING_DETAILS');
+  setSessionStatus(record, 'ACTIVE');
+  maybeUpdateTitleFromDraft(record, draft);
+  return respond(record, buildAssistantMessage(record.session.sessionId, buildMissingDetailsBlocks(draft)), userMessage);
+}
+
+function prepareConfirmation(record: MockSessionRecord, draft: PaymentDraft, userMessage?: ChatMessage | null) {
+  draft.status = 'AWAITING_CONFIRMATION';
+  draft.lastError = null;
+  updateDraftTimestamp(draft);
+  touchSession(record, 'AWAITING_CONFIRMATION');
+  setSessionStatus(record, 'ACTIVE');
+  maybeUpdateTitleFromDraft(record, draft);
+  return respond(record, buildAssistantMessage(record.session.sessionId, buildConfirmationBlocks(draft)), userMessage);
+}
+
+function executePayment(record: MockSessionRecord, userMessage?: ChatMessage | null) {
+  const draft = record.session.activeDraft;
+
+  if (!draft || !draft.selectedPayee || draft.amount === null || !draft.paymentDate) {
+    return respond(
+      record,
+      buildAssistantMessage(record.session.sessionId, [
+        buildErrorCard(
+          'Unable to execute',
+          'The payment draft is incomplete. Please provide the missing details first.',
+        ),
+      ]),
+      userMessage,
+    );
+  }
+
+  touchSession(record, 'EXECUTING');
+  draft.status = 'EXECUTING';
+  updateDraftTimestamp(draft);
+
+  draft.status = 'CONFIRMED';
+  draft.downstreamReference = `DOM-${new Date().toISOString().slice(0, 10).replaceAll('-', '')}-${draft.draftId.slice(-4)}`;
+  updateDraftTimestamp(draft);
+
+  touchSession(record, 'COMPLETED');
+  setSessionStatus(record, 'COMPLETED');
+
+  return respond(record, buildAssistantMessage(record.session.sessionId, buildCompletionBlocks(draft)), userMessage);
+}
+
+function cancelPayment(record: MockSessionRecord, userMessage?: ChatMessage | null) {
+  const draft = record.session.activeDraft;
+
+  if (!draft) {
+    return respond(
+      record,
+      buildAssistantMessage(record.session.sessionId, [
+        buildInfoCard('No active draft', 'There is no active domestic payment draft to cancel.'),
+      ]),
+      userMessage,
+    );
+  }
+
+  draft.status = 'CANCELLED';
+  updateDraftTimestamp(draft);
+  touchSession(record, 'CANCELLED');
+  setSessionStatus(record, 'CANCELLED');
+
+  return respond(record, buildAssistantMessage(record.session.sessionId, buildCancellationBlocks(draft)), userMessage);
+}
+
+function continueDomesticPayment(record: MockSessionRecord, text: string, userMessage?: ChatMessage | null) {
+  const draft = ensureDomesticDraft(record);
+  const payeeQuery = extractPayeeQuery(text);
+  const amount = extractAmount(text);
+  const paymentDate = extractPaymentDate(text);
+
+  if (payeeQuery) {
+    draft.payeeQueryText = payeeQuery;
+    draft.selectedPayee = null;
+  }
+
+  if (amount !== null) {
     draft.amount = amount;
   }
 
-  if (currency) {
-    draft.currency = currency;
+  if (paymentDate) {
+    draft.paymentDate = paymentDate;
   }
 
-  if (note) {
-    draft.note = note;
+  updateDraftTimestamp(draft);
+
+  if (!draft.payeeQueryText) {
+    return askForMissingDetails(record, draft, userMessage);
   }
 
-  if (payee && payee !== 'ambiguous_tom') {
-    draft.payeeId = payee;
-    draft.payeeDisplay = KNOWN_PAYEES[payee].label;
-  }
+  const matches = matchPayees(draft.payeeQueryText);
 
-  return payee;
-}
-
-function setTitleFromDraft(record: MockSessionRecord) {
-  const draft = ensureDraft(record);
-  const subject = draft.payeeDisplay ?? 'New transfer';
-  record.session.title = draft.payeeDisplay ? `Transfer to ${subject}` : 'New transfer';
-}
-
-function moveToProposal(record: MockSessionRecord) {
-  const draft = ensureDraft(record);
-  draft.status = 'PROPOSED';
-  draft.limitCheckStatus = 'PASSED';
-  draft.proposalId = `PROP-${new Date().toISOString().slice(0, 10).replaceAll('-', '')}-${draft.draftId.slice(-4)}`;
-  draft.proposalSummary = Object.fromEntries(proposalFields(record).map((field) => [field.label, field.value]));
-  touchSession(record, 'AWAITING_USER_CONFIRMATION');
-
-  const assistant = buildAssistantMessage(record.session.sessionId, buildProposalBlocks(record));
-  record.messages.push(assistant);
-
-  return {
-    assistantMessages: [assistant],
-    suggestedActions: [
-      { actionType: 'CONFIRM_TRANSFER', label: 'Confirm' },
-      { actionType: 'CANCEL_TRANSFER', label: 'Cancel' },
-    ] satisfies SuggestedAction[],
-  };
-}
-
-function moveToCompletion(record: MockSessionRecord) {
-  const draft = ensureDraft(record);
-  draft.status = 'CONFIRMED';
-  draft.transferReference = `TXN-${draft.draftId.slice(-6).toUpperCase()}`;
-  record.session.status = 'COMPLETED';
-  touchSession(record, 'COMPLETED');
-
-  const assistant = buildAssistantMessage(record.session.sessionId, buildCompletionBlocks(record));
-  record.messages.push(assistant);
-
-  return {
-    assistantMessages: [assistant],
-    suggestedActions: [] as SuggestedAction[],
-  };
-}
-
-function moveToCancelled(record: MockSessionRecord) {
-  const draft = ensureDraft(record);
-  draft.status = 'CANCELLED';
-  record.session.status = 'CANCELLED';
-  touchSession(record, 'CANCELLED');
-
-  const assistant = buildAssistantMessage(record.session.sessionId, buildCancelledBlocks());
-  record.messages.push(assistant);
-
-  return {
-    assistantMessages: [assistant],
-    suggestedActions: [{ actionType: 'START_NEW_CHAT', label: 'Start new chat' }] satisfies SuggestedAction[],
-  };
-}
-
-function respondWithBlocks(
-  record: MockSessionRecord,
-  workflowState: WorkflowState,
-  blocks: ContentBlock[],
-  suggestedActions: SuggestedAction[] = [],
-) {
-  touchSession(record, workflowState);
-  const assistant = buildAssistantMessage(record.session.sessionId, blocks);
-  record.messages.push(assistant);
-
-  return {
-    assistantMessages: [assistant],
-    suggestedActions,
-  };
-}
-
-function advanceFromDraftState(record: MockSessionRecord) {
-  const draft = ensureDraft(record);
-  setTitleFromDraft(record);
-
-  if (!draft.amount || !draft.currency) {
-    return respondWithBlocks(record, 'COLLECTING_TRANSFER_INFO', buildMissingDetailsBlocks(draft));
-  }
-
-  if (!draft.payeeId || !draft.payeeDisplay) {
-    return respondWithBlocks(record, 'RESOLVING_AMBIGUITY', buildPayeeSelectionBlocks());
-  }
-
-  if (!draft.paymentRail) {
-    return respondWithBlocks(record, 'READY_FOR_PAYMENT_OPTIONS', buildPaymentRailBlocks());
-  }
-
-  return moveToProposal(record);
-}
-
-function processTextTurn(record: MockSessionRecord, text: string) {
-  const trimmedText = text.trim();
-
-  if (record.session.workflowState === 'AWAITING_USER_CONFIRMATION') {
-    if (isConfirmIntent(trimmedText)) {
-      return moveToCompletion(record);
-    }
-
-    if (isCancelIntent(trimmedText)) {
-      return moveToCancelled(record);
-    }
-
-    return respondWithBlocks(
+  if (matches.length === 0) {
+    touchSession(record, 'COLLECTING_DETAILS');
+    setSessionStatus(record, 'ACTIVE');
+    maybeUpdateTitleFromDraft(record, draft);
+    return respond(
       record,
-      'AWAITING_USER_CONFIRMATION',
-      buildReminderBlocks(),
-      [
-        { actionType: 'CONFIRM_TRANSFER', label: 'Confirm' },
-        { actionType: 'CANCEL_TRANSFER', label: 'Cancel' },
-      ],
+      buildAssistantMessage(record.session.sessionId, [
+        buildInfoCard(
+          'Registered payee not found',
+          `I could not find a registered payee matching "${draft.payeeQueryText}". Please try another payee name.`,
+        ),
+        buildSummaryCard('Current draft', draftSummaryFields(draft)),
+      ]),
+      userMessage,
     );
   }
 
-  if (record.session.status !== 'ACTIVE') {
-    return respondWithBlocks(
+  if (matches.length > 1) {
+    touchSession(record, 'AWAITING_PAYEE_SELECTION');
+    setSessionStatus(record, 'ACTIVE');
+    maybeUpdateTitleFromDraft(record, draft);
+    return respond(
       record,
-      record.session.workflowState,
-      [buildErrorCard('Session closed', 'This session is read-only. Start a new chat to continue.')],
-    );
-  }
-
-  if (!isTransferIntent(trimmedText) && record.session.workflowState === 'IDLE') {
-    return respondWithBlocks(record, 'IDLE', [
-      buildInfoCard(
-        'Transfer guidance',
-        'Use a transfer instruction such as "Pay Tom 5000 HKD" or fill the guided form in a new message.',
+      buildAssistantMessage(
+        record.session.sessionId,
+        buildPayeeSelectionBlocks(draft.payeeQueryText, matches),
       ),
-    ]);
+      userMessage,
+    );
   }
 
-  const draft = ensureDraft(record);
-  const payee = updateDraftFromInput(draft, { text: trimmedText });
+  draft.selectedPayee = clone(matches[0]);
+  updateDraftTimestamp(draft);
 
-  if (payee === 'ambiguous_tom') {
-    draft.payeeId = undefined;
-    draft.payeeDisplay = undefined;
-    setTitleFromDraft(record);
-    return respondWithBlocks(record, 'RESOLVING_AMBIGUITY', buildPayeeSelectionBlocks());
+  if (draft.amount === null || draft.amount === undefined || !draft.paymentDate) {
+    return askForMissingDetails(record, draft, userMessage);
   }
 
-  const rail = parsePaymentRail(trimmedText);
-
-  if (rail) {
-    draft.paymentRail = rail;
-  }
-
-  return advanceFromDraftState(record);
+  return prepareConfirmation(record, draft, userMessage);
 }
 
-function processUiEventTurn(record: MockSessionRecord, request: UiEventRequest) {
-  const draft = ensureDraft(record);
-  const stage = findSourceStage(record, request.sourceMessageId, request.sourceBlockId);
+function handlePayeeLookup(record: MockSessionRecord, text: string, userMessage?: ChatMessage | null) {
+  const query = extractPayeeQuery(text);
+  const matches = query ? matchPayees(query) : REGISTERED_PAYEES;
 
-  if (request.eventType === 'SUBMIT_FORM') {
-    updateDraftFromInput(draft, { values: request.formValues });
-    setTitleFromDraft(record);
+  touchSession(record, 'IDLE');
+  setSessionStatus(record, 'ACTIVE');
+  maybeUpdateTitleFromLookup(record, query);
 
-    if (parsePayee(request.formValues?.payee ?? '') === 'ambiguous_tom') {
-      draft.payeeId = undefined;
-      draft.payeeDisplay = undefined;
-      return respondWithBlocks(record, 'RESOLVING_AMBIGUITY', buildPayeeSelectionBlocks());
+  return respond(
+    record,
+    buildAssistantMessage(record.session.sessionId, buildLookupBlocks(query, matches)),
+    userMessage,
+  );
+}
+
+function handleTextTurn(record: MockSessionRecord, text: string, userMessage?: ChatMessage | null) {
+  const trimmedText = text.trim();
+  const currentState = record.session.state;
+
+  if (currentState === 'AWAITING_CONFIRMATION') {
+    if (isPositiveConfirmation(trimmedText)) {
+      return executePayment(record, userMessage);
     }
 
-    return advanceFromDraftState(record);
+    if (isCancellation(trimmedText)) {
+      return cancelPayment(record, userMessage);
+    }
   }
 
+  if (currentState === 'AWAITING_PAYEE_SELECTION' && record.session.activeDraft) {
+    return respond(
+      record,
+      buildAssistantMessage(record.session.sessionId, [
+        buildInfoCard(
+          'Select a payee',
+          'Please choose one of the registered payees from the selection list before I continue.',
+        ),
+      ]),
+      userMessage,
+    );
+  }
+
+  if (isInternationalIntent(trimmedText)) {
+    touchSession(record, 'IDLE');
+    setSessionStatus(record, 'ACTIVE');
+    return respond(record, buildAssistantMessage(record.session.sessionId, buildUnsupportedBlocks()), userMessage);
+  }
+
+  if (isPaymentIntent(trimmedText)) {
+    return continueDomesticPayment(record, trimmedText, userMessage);
+  }
+
+  if (isPayeeLookupIntent(trimmedText)) {
+    return handlePayeeLookup(record, trimmedText, userMessage);
+  }
+
+  return respond(
+    record,
+    buildAssistantMessage(record.session.sessionId, [
+      buildInfoCard(
+        'Try a supported request',
+        'Ask me to find a registered payee, or tell me who to pay, how much, and whether it should go today or tomorrow.',
+      ),
+    ]),
+    userMessage,
+  );
+}
+
+function handleUiTurn(record: MockSessionRecord, request: UiEventRequest, userMessage?: ChatMessage | null) {
   if (request.eventType === 'SELECT_ITEM') {
-    const selected = request.selectedItemIds?.[0];
+    const selectedId = request.selectedItemId;
 
-    if (!selected) {
-      return respondWithBlocks(record, record.session.workflowState, [
-        buildErrorCard('Selection required', 'Select one option before continuing.'),
-      ]);
+    if (!selectedId) {
+      return respond(
+        record,
+        buildAssistantMessage(record.session.sessionId, [
+          buildErrorCard('Invalid selection', 'No item was selected.'),
+        ]),
+        userMessage,
+      );
     }
 
-    if (stage === 'PAYEE_SELECTION' && selected in KNOWN_PAYEES) {
-      const payeeId = selected as KnownPayeeId;
-      draft.payeeId = payeeId;
-      draft.payeeDisplay = KNOWN_PAYEES[payeeId].label;
-      setTitleFromDraft(record);
-      return advanceFromDraftState(record);
+    const selectedPayee = REGISTERED_PAYEES.find((payee) => payee.payeeId === selectedId);
+
+    if (!selectedPayee || !record.session.activeDraft) {
+      return respond(
+        record,
+        buildAssistantMessage(record.session.sessionId, [
+          buildErrorCard('Selection expired', 'The selected payee is no longer available.'),
+        ]),
+        userMessage,
+      );
     }
 
-    if (stage === 'PAYMENT_RAIL_SELECTION') {
-      draft.paymentRail = selected as PaymentRail;
-      return advanceFromDraftState(record);
+    record.session.activeDraft.selectedPayee = clone(selectedPayee);
+    updateDraftTimestamp(record.session.activeDraft);
+    if (
+      record.session.activeDraft.amount === null ||
+      record.session.activeDraft.amount === undefined ||
+      !record.session.activeDraft.paymentDate
+    ) {
+      return askForMissingDetails(record, record.session.activeDraft, userMessage);
     }
+
+    return prepareConfirmation(record, record.session.activeDraft, userMessage);
   }
 
   if (request.eventType === 'CLICK_ACTION') {
-    const actionId = request.selectedItemIds?.[0];
+    const action = request.actionValue;
 
-    if (stage === 'PROPOSAL_REVIEW' && actionId === 'CONFIRM_TRANSFER') {
-      return moveToCompletion(record);
+    if (action === 'CONFIRM_PAYMENT') {
+      return executePayment(record, userMessage);
     }
 
-    if (stage === 'PROPOSAL_REVIEW' && actionId === 'CANCEL_TRANSFER') {
-      return moveToCancelled(record);
+    if (action === 'CANCEL_PAYMENT') {
+      return cancelPayment(record, userMessage);
     }
   }
 
-  return respondWithBlocks(record, record.session.workflowState, [
-    buildErrorCard('Unsupported event', 'The selected UI action could not be processed.'),
-  ]);
+  if (request.eventType === 'SUBMIT_FORM' && record.session.activeDraft) {
+    const payeeQuery = request.formValues?.payee?.trim();
+    const amountText = request.formValues?.amount?.trim();
+    const paymentDate = request.formValues?.paymentDate?.trim();
+
+    if (payeeQuery) {
+      record.session.activeDraft.payeeQueryText = payeeQuery;
+      record.session.activeDraft.selectedPayee = null;
+    }
+
+    if (amountText) {
+      const parsedAmount = Number(amountText);
+      if (Number.isFinite(parsedAmount) && parsedAmount > 0) {
+        record.session.activeDraft.amount = parsedAmount;
+      }
+    }
+
+    if (paymentDate) {
+      record.session.activeDraft.paymentDate = paymentDate;
+    }
+
+    updateDraftTimestamp(record.session.activeDraft);
+    return continueDomesticPayment(record, '', userMessage);
+  }
+
+  return respond(
+    record,
+    buildAssistantMessage(record.session.sessionId, [
+      buildInfoCard('Nothing changed', 'That action is not available in the current conversation state.'),
+    ]),
+    userMessage,
+  );
 }
 
-function findSourceStage(record: MockSessionRecord, messageId: string, blockId: string) {
-  const sourceMessage = record.messages.find((message) => message.messageId === messageId);
-  const block = sourceMessage?.contentBlocks?.find((item) => item.blockId === blockId);
-  const stage = block?.metadata?.stage;
-
-  return typeof stage === 'string' ? stage : undefined;
-}
-
-function seedProfiles(): ProfileSummary[] {
+function defaultProfiles(): ProfileSummary[] {
   return [
     {
       id: 'profile_victor',
       code: 'HK_STAFF_001',
+      username: 'payment10',
       displayName: 'Victor Zhong',
-      username: 'victor.zhong',
       avatarUrl: null,
-      mockCustomerId: 'CUST0001',
       locale: 'en-HK',
       status: 'ACTIVE',
+      supportedCapabilities: DEFAULT_CAPABILITIES,
     },
     {
-      id: 'profile_tom',
-      code: 'HK_RETAIL_001',
-      displayName: 'Tom Lee',
-      username: 'tom.lee',
+      id: 'profile_iris',
+      code: 'HK_OPS_014',
+      username: 'payment14',
+      displayName: 'Iris Leung',
       avatarUrl: null,
-      mockCustomerId: 'CUST0002',
       locale: 'en-HK',
       status: 'ACTIVE',
+      supportedCapabilities: DEFAULT_CAPABILITIES,
     },
     {
-      id: 'profile_sarah',
-      code: 'SG_RETAIL_001',
-      displayName: 'Sarah Wong',
-      username: 'sarah.wong',
+      id: 'profile_marcus',
+      code: 'HK_FIN_021',
+      username: 'payment21',
+      displayName: 'Marcus Ng',
       avatarUrl: null,
-      mockCustomerId: 'CUST0003',
-      locale: 'en-SG',
-      status: 'ACTIVE',
-    },
-    {
-      id: 'profile_demo_a',
-      code: 'POC_A',
-      displayName: 'Demo User A',
-      username: 'demo.user.a',
-      avatarUrl: null,
-      mockCustomerId: 'CUST0004',
       locale: 'en-HK',
       status: 'ACTIVE',
-    },
-    {
-      id: 'profile_demo_b',
-      code: 'POC_B',
-      displayName: 'Demo User B',
-      username: 'demo.user.b',
-      avatarUrl: null,
-      mockCustomerId: 'CUST0005',
-      locale: 'en-HK',
-      status: 'ACTIVE',
+      supportedCapabilities: DEFAULT_CAPABILITIES,
     },
   ];
 }
 
-function makeSeedSession(profileId: string, seed: 'proposal' | 'completed'): MockSessionRecord {
-  const sessionId = createId(`session_${seed}`);
-  const createdAt = new Date(Date.now() - (seed === 'proposal' ? 86_400_000 : 172_800_000)).toISOString();
-  const draft = buildEmptyDraft(sessionId);
-
-  draft.amount = 5000;
-  draft.currency = 'HKD';
-  draft.payeeId = 'payee_tom_lee';
-  draft.payeeDisplay = KNOWN_PAYEES.payee_tom_lee.label;
-  draft.note = seed === 'proposal' ? 'April supplier settlement' : 'Payroll adjustment';
-  draft.paymentRail = 'ORTT';
-
-  const session: ChatSessionDetail = {
-    sessionId,
-    title: 'Transfer to Tom Lee',
-    status: seed === 'proposal' ? 'ACTIVE' : 'COMPLETED',
-    workflowState: seed === 'proposal' ? 'AWAITING_USER_CONFIRMATION' : 'COMPLETED',
-    createdAt,
-    updatedAt: new Date(Date.now() - (seed === 'proposal' ? 3_600_000 : 144_000_000)).toISOString(),
-    activeDraft: {
-      ...draft,
-      status: seed === 'proposal' ? 'PROPOSED' : 'CONFIRMED',
-      workflowState: seed === 'proposal' ? 'AWAITING_USER_CONFIRMATION' : 'COMPLETED',
-      limitCheckStatus: 'PASSED',
-      proposalId: `PROP-20260416-${seed === 'proposal' ? '0101' : '0088'}`,
-      transferReference: seed === 'proposal' ? null : 'TXN-448822',
-      proposalSummary: {
-        amount: '5,000.00 HKD',
-        payee: 'Tom Lee',
-        paymentRail: 'ORTT',
-      },
-      lastUpdatedAt: new Date(Date.now() - (seed === 'proposal' ? 3_600_000 : 144_000_000)).toISOString(),
-    },
-  };
-
-  const messages: ChatMessage[] = [
-    buildAssistantMessage(sessionId, buildWelcomeBlocks('Victor Zhong')),
-    buildUserTextMessage(sessionId, 'Pay Tom 5000 HKD'),
-  ];
-
-  messages.push(
-    buildAssistantMessage(
-      sessionId,
-      seed === 'proposal' ? buildProposalBlocks({ profileId, session, messages }) : buildCompletionBlocks({ profileId, session, messages }),
-    ),
-  );
-
-  return {
-    profileId,
-    session,
-    messages,
-  };
-}
-
-function createInitialDatabase(): MockDatabase {
-  const profiles = seedProfiles();
-
+function makeDatabase(): MockDatabase {
+  const profiles = defaultProfiles();
   return {
     profiles,
-    sessionsByProfile: {
-      profile_victor: [makeSeedSession('profile_victor', 'proposal'), makeSeedSession('profile_victor', 'completed')],
-      profile_tom: [],
-      profile_sarah: [],
-      profile_demo_a: [],
-      profile_demo_b: [],
-    },
+    sessionsByProfile: Object.fromEntries(profiles.map((profile) => [profile.id, []])),
   };
 }
 
-function loadDatabase(): MockDatabase {
+function getDatabase() {
   if (memoryDb) {
     return memoryDb;
   }
 
-  const raw = readStorage(STORAGE_KEY);
+  const persisted = readStorage(STORAGE_KEY);
 
-  if (!raw) {
-    memoryDb = createInitialDatabase();
-    saveDatabase(memoryDb);
+  if (persisted) {
+    memoryDb = JSON.parse(persisted) as MockDatabase;
     return memoryDb;
   }
 
-  memoryDb = JSON.parse(raw) as MockDatabase;
+  memoryDb = makeDatabase();
+  writeStorage(STORAGE_KEY, JSON.stringify(memoryDb));
   return memoryDb;
 }
 
-function saveDatabase(database: MockDatabase) {
-  memoryDb = database;
-  writeStorage(STORAGE_KEY, JSON.stringify(database));
-}
-
-function getProfile(profileId: string) {
-  const database = loadDatabase();
-  const profile = database.profiles.find((item) => item.id === profileId);
-
-  if (!profile) {
-    throw new Error(`Unknown profile: ${profileId}`);
+function persistDatabase() {
+  if (memoryDb) {
+    writeStorage(STORAGE_KEY, JSON.stringify(memoryDb));
   }
-
-  return profile;
-}
-
-function getSessionRecord(profileId: string, sessionId: string) {
-  const database = loadDatabase();
-  const sessions = database.sessionsByProfile[profileId] ?? [];
-  const record = sessions.find((item) => item.session.sessionId === sessionId);
-
-  if (!record) {
-    throw new Error(`Unknown session: ${sessionId}`);
-  }
-
-  return { database, record };
-}
-
-function persistUpdatedRecord(database: MockDatabase, profileId: string, record: MockSessionRecord) {
-  const currentSessions = database.sessionsByProfile[profileId] ?? [];
-  database.sessionsByProfile[profileId] = currentSessions
-    .map((item) => (item.session.sessionId === record.session.sessionId ? record : item))
-    .sort((left, right) => right.session.updatedAt.localeCompare(left.session.updatedAt));
-  saveDatabase(database);
 }
 
 export function resetMockData() {
-  memoryDb = createInitialDatabase();
-  saveDatabase(memoryDb);
+  memoryDb = makeDatabase();
+  persistDatabase();
 }
 
 export function listProfiles() {
-  return withLatency(() => loadDatabase().profiles.filter((profile) => profile.status === 'ACTIVE'));
+  return withLatency(() => clone(getDatabase().profiles));
 }
 
-export function profileLogin(input: ProfileLoginRequest) {
+export function profileLogin(request: ProfileLoginRequest) {
   return withLatency<CurrentUserContext>(() => {
-    const profile = getProfile(input.profileId);
+    const database = getDatabase();
+    const profile = database.profiles.find((entry) => entry.id === request.profileId);
 
-    if (input.password.trim() !== POC_PROFILE_PASSWORD) {
+    if (!profile) {
+      throw new Error('Profile not found.');
+    }
+
+    if (request.password !== POC_PROFILE_PASSWORD) {
       throw new Error('Incorrect password.');
     }
 
@@ -1006,124 +1005,109 @@ export function profileLogin(input: ProfileLoginRequest) {
       avatarUrl: profile.avatarUrl,
       locale: profile.locale,
       loginMode: 'PROFILE_SELECTION',
+      supportedCapabilities: clone(profile.supportedCapabilities),
     };
   });
 }
 
 export function listChatSessions(profileId: string) {
-  return withLatency<ChatSessionSummaryPage>(() => {
-    const database = loadDatabase();
-    const items = (database.sessionsByProfile[profileId] ?? [])
-      .map(deriveSessionSummary)
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  return withLatency<ChatSessionSummary[]>(() => {
+    const database = getDatabase();
+    const records = database.sessionsByProfile[profileId] ?? [];
 
-    return {
-      items,
-      page: 1,
-      pageSize: 20,
-      total: items.length,
-    };
+    return clone(
+      [...records]
+        .sort((left, right) => right.session.updatedAt.localeCompare(left.session.updatedAt))
+        .map((record) => ({
+          sessionId: record.session.sessionId,
+          title: record.session.title,
+          status: record.session.status,
+          state: record.session.state,
+          llmProvider: record.session.llmProvider ?? null,
+          lastMessagePreview: record.session.lastMessagePreview ?? null,
+          createdAt: record.session.createdAt,
+          updatedAt: record.session.updatedAt,
+        })),
+    );
   });
 }
 
-export function createChatSession(profileId: string, title?: string) {
-  return withLatency<ChatSessionCreateResponse>(() => {
-    const database = loadDatabase();
-    const profile = getProfile(profileId);
-    const timestamp = nowIso();
-    const sessionId = createId('session');
-
+export function createChatSession(profileId: string, title = 'New conversation') {
+  return withLatency<ChatSessionDetail>(() => {
+    const database = getDatabase();
+    const createdAt = nowIso();
     const session: ChatSessionDetail = {
-      sessionId,
-      title: title ?? 'New transfer',
+      sessionId: createId('session'),
+      title,
       status: 'ACTIVE',
-      workflowState: 'IDLE',
-      createdAt: timestamp,
-      updatedAt: timestamp,
+      state: 'IDLE',
+      llmProvider: 'COPILOT_PERSONAL',
+      lastMessagePreview: null,
+      createdAt,
+      updatedAt: createdAt,
       activeDraft: null,
     };
 
-    const assistantMessage = buildAssistantMessage(sessionId, buildWelcomeBlocks(profile.displayName));
     const record: MockSessionRecord = {
       profileId,
       session,
-      messages: [assistantMessage],
+      messages: [],
     };
+
+    const welcomeMessage = buildAssistantMessage(session.sessionId, buildWelcomeBlocks());
+    appendMessage(record, welcomeMessage);
 
     database.sessionsByProfile[profileId] = [record, ...(database.sessionsByProfile[profileId] ?? [])];
-    saveDatabase(database);
-
-    return {
-      session,
-      assistantMessages: [assistantMessage],
-    };
+    persistDatabase();
+    return clone(record.session);
   });
 }
 
 export function getChatSession(profileId: string, sessionId: string) {
-  return withLatency<ChatSessionDetail>(() => getSessionRecord(profileId, sessionId).record.session);
+  return withLatency<ChatSessionDetail>(() => clone(getRecord(profileId, sessionId).session));
 }
 
 export function listChatMessages(profileId: string, sessionId: string) {
-  return withLatency<ChatMessagePage>(() => {
-    const { record } = getSessionRecord(profileId, sessionId);
-
-    return {
-      items: record.messages,
-      page: 1,
-      pageSize: 100,
-      total: record.messages.length,
-    };
-  });
+  return withLatency<ChatMessage[]>(() => clone(getRecord(profileId, sessionId).messages));
 }
 
 export function sendChatMessage(profileId: string, sessionId: string, request: SendMessageRequest) {
   return withLatency<ChatTurnResponse>(() => {
-    const { database, record } = getSessionRecord(profileId, sessionId);
-    const userEchoMessage = buildUserTextMessage(sessionId, request.messageText.trim());
-    record.messages.push(userEchoMessage);
+    const record = getRecord(profileId, sessionId);
+    const trimmedText = request.messageText.trim();
 
-    const result = processTextTurn(record, request.messageText);
-    persistUpdatedRecord(database, profileId, record);
+    if (!trimmedText) {
+      throw new Error('Message text is required.');
+    }
 
-    return {
-      session: record.session,
-      userEchoMessage,
-      assistantMessages: result.assistantMessages,
-      draftSummary: record.session.activeDraft ?? null,
-      workflowState: record.session.workflowState,
-      suggestedActions: result.suggestedActions,
-      serverTimestamp: nowIso(),
-    };
+    const userMessage = buildUserTextMessage(sessionId, trimmedText);
+    appendMessage(record, userMessage);
+
+    const response = handleTextTurn(record, trimmedText, userMessage);
+    persistDatabase();
+    return response;
   });
 }
 
 export function submitUiEvent(profileId: string, sessionId: string, request: UiEventRequest) {
   return withLatency<ChatTurnResponse>(() => {
-    const { database, record } = getSessionRecord(profileId, sessionId);
-    const userEchoText =
-      request.eventType === 'SUBMIT_FORM'
-        ? 'Submitted transfer details'
-        : request.selectedItemIds?.[0] === 'CONFIRM_TRANSFER'
-          ? 'Confirm'
-          : request.selectedItemIds?.[0] === 'CANCEL_TRANSFER'
-            ? 'Cancel'
-            : `Selected ${request.selectedItemIds?.[0] ?? 'option'}`;
+    const record = getRecord(profileId, sessionId);
+    const userText =
+      request.eventType === 'SELECT_ITEM'
+        ? `Selected ${request.selectedItemId ?? 'item'}`
+        : request.eventType === 'CLICK_ACTION'
+          ? request.actionValue === 'CONFIRM_PAYMENT'
+            ? 'Confirm payment'
+            : request.actionValue === 'CANCEL_PAYMENT'
+              ? 'Cancel payment'
+              : 'Clicked action'
+          : 'Submitted details';
 
-    const userEchoMessage = buildUserEventMessage(sessionId, userEchoText);
-    record.messages.push(userEchoMessage);
+    const userMessage = buildUserEventMessage(sessionId, userText);
+    appendMessage(record, userMessage);
 
-    const result = processUiEventTurn(record, request);
-    persistUpdatedRecord(database, profileId, record);
-
-    return {
-      session: record.session,
-      userEchoMessage,
-      assistantMessages: result.assistantMessages,
-      draftSummary: record.session.activeDraft ?? null,
-      workflowState: record.session.workflowState,
-      suggestedActions: result.suggestedActions,
-      serverTimestamp: nowIso(),
-    };
+    const response = handleUiTurn(record, request, userMessage);
+    persistDatabase();
+    return response;
   });
 }

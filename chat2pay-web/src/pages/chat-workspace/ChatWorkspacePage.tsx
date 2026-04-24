@@ -11,7 +11,6 @@ import { EmptyStatePanel } from '@/shared/ui/EmptyStatePanel';
 import { BrandButton } from '@/shared/ui/BrandButton';
 import { BrandLoadingPanel } from '@/shared/ui/BrandLoadingPanel';
 import { StatusBadge } from '@/shared/ui/StatusBadge';
-import { WorkflowOverview } from '@/shared/ui/WorkflowOverview';
 import { INTERACTION_DELAY_MS } from '@/shared/config/env';
 import { wait } from '@/shared/lib/time';
 
@@ -36,12 +35,12 @@ function actionLabelFromSummaryBlock(block: ContentBlock | undefined, actionId: 
 
 function derivePendingUiEventText(messages: ChatMessage[], payload: UiEventRequest) {
   if (payload.eventType === 'SUBMIT_FORM') {
-    return 'Submitted transfer details';
+    return 'Submitted payment details';
   }
 
   const sourceMessage = messages.find((message) => message.messageId === payload.sourceMessageId);
   const sourceBlock = sourceMessage?.contentBlocks?.find((block) => block.blockId === payload.sourceBlockId);
-  const selectedId = payload.selectedItemIds?.[0];
+  const selectedId = payload.selectedItemId ?? payload.actionValue;
 
   if (!selectedId) {
     return 'Submitted action';
@@ -95,9 +94,23 @@ export function ChatWorkspacePage() {
 
   const createSessionMutation = useMutation({
     mutationFn: () => chat2payClient.createChatSession(currentUser.profileId),
-    onSuccess: async (response) => {
-      navigate(`/chat/${response.session.sessionId}`);
-      await refreshCurrentSession(response.session.sessionId);
+    onSuccess: async (session) => {
+      navigate(`/chat/${session.sessionId}`);
+      await refreshCurrentSession(session.sessionId);
+    },
+  });
+
+  const startChatWithMessageMutation = useMutation({
+    mutationFn: async (messageText: string) => {
+      const session = await chat2payClient.createChatSession(currentUser.profileId);
+      await chat2payClient.sendChatMessage(currentUser.profileId, session.sessionId, {
+        messageText,
+      });
+      return session;
+    },
+    onSuccess: async (session) => {
+      navigate(`/chat/${session.sessionId}`);
+      await refreshCurrentSession(session.sessionId);
     },
   });
 
@@ -125,10 +138,14 @@ export function ChatWorkspacePage() {
     },
   });
 
-  const sessions = sessionsQuery.data?.items ?? [];
+  const sessions = sessionsQuery.data ?? [];
   const activeSession = sessionQuery.data;
-  const messages = messagesQuery.data?.items ?? [];
-  const busy = createSessionMutation.isPending || sendMessageMutation.isPending || submitUiEventMutation.isPending;
+  const messages = messagesQuery.data ?? [];
+  const busy =
+    createSessionMutation.isPending ||
+    sendMessageMutation.isPending ||
+    submitUiEventMutation.isPending ||
+    startChatWithMessageMutation.isPending;
   const readOnly = !activeSession || activeSession.status !== 'ACTIVE';
   const pendingUserText = sendMessageMutation.isPending
     ? sendMessageMutation.variables
@@ -138,7 +155,7 @@ export function ChatWorkspacePage() {
   const showAssistantLoading = sendMessageMutation.isPending || submitUiEventMutation.isPending;
 
   return (
-    <main className="brand-shell flex min-h-screen flex-col gap-5 bg-transparent p-4 lg:h-screen lg:flex-row lg:p-5">
+    <main className="brand-shell flex min-h-screen flex-col gap-3 bg-transparent p-3 lg:h-screen lg:flex-row">
       <Sidebar
         user={currentUser}
         sessions={sessions}
@@ -147,28 +164,25 @@ export function ChatWorkspacePage() {
         onToggleCollapsed={() => setCollapsed(!collapsed)}
         onNewChat={() => createSessionMutation.mutate()}
         onSelectSession={(selectedSessionId) => navigate(`/chat/${selectedSessionId}`)}
+        onQuickAction={(messageText) => startChatWithMessageMutation.mutate(messageText)}
         onLogout={() => {
           clearCurrentUser();
           navigate('/');
         }}
       />
 
-      <section className="flex min-w-0 flex-1 flex-col gap-5">
-        <header className="brand-panel flex flex-col gap-4 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+      <section className="flex min-w-0 flex-1 flex-col gap-3">
+        <header className="brand-panel flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-red">Session</p>
-            <h2 className="mt-2 text-2xl font-semibold text-brand-black">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-brand-red">Session</p>
+            <h2 className="mt-1 text-lg font-semibold text-brand-black">
               {activeSession?.title ?? 'Conversation workspace'}
             </h2>
           </div>
 
           {activeSession ? (
-            <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2">
               <StatusBadge value={activeSession.status} />
-              <WorkflowOverview
-                workflowState={activeSession.workflowState}
-                sessionStatus={activeSession.status}
-              />
             </div>
           ) : null}
         </header>
@@ -178,8 +192,8 @@ export function ChatWorkspacePage() {
             <div className="flex h-full items-center justify-center px-10">
               <EmptyStatePanel
                 eyebrow="Workspace"
-                title="Start a new transfer conversation"
-                description="This workspace combines free-text input with structured cards, selectable lists, and guided forms. Create a new chat to begin or reopen a previous session from the left history rail."
+                title="Start a new payment conversation"
+                description="Ask about a registered payee, or tell the backend who to pay, how much, and whether it should go today or tomorrow."
               >
                 <div className="flex flex-col gap-3 sm:flex-row">
                   <BrandButton onClick={() => createSessionMutation.mutate()} disabled={createSessionMutation.isPending}>
@@ -210,15 +224,13 @@ export function ChatWorkspacePage() {
                 pendingUserText={pendingUserText}
                 showAssistantLoading={showAssistantLoading}
               />
-              <div className="border-t border-brand-line bg-brand-fog p-5">
-                <ChatInputBar
-                  disabled={readOnly || !sessionId}
-                  busy={busy}
-                  onSend={async (messageText) => {
-                    await sendMessageMutation.mutateAsync(messageText);
-                  }}
-                />
-              </div>
+              <ChatInputBar
+                disabled={readOnly || !sessionId}
+                busy={busy}
+                onSend={async (messageText) => {
+                  await sendMessageMutation.mutateAsync(messageText);
+                }}
+              />
             </>
           )}
         </div>
