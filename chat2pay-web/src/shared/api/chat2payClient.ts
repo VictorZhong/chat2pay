@@ -1,12 +1,7 @@
 import type { ProfileLoginRequest, SendMessageRequest, UiEventRequest } from '@/shared/api/contracts';
 import { USE_MOCK_API } from '@/shared/config/env';
 import * as mockServer from '@/shared/api/mockServer';
-
-function assertMockMode() {
-  if (!USE_MOCK_API) {
-    throw new Error('Real API client is not wired yet.');
-  }
-}
+import { chat2payHttpClient, streamChatTurn } from '@/shared/api/httpClient';
 
 export const queryKeys = {
   profiles: ['profiles'] as const,
@@ -17,39 +12,67 @@ export const queryKeys = {
 
 export const chat2payClient = {
   listProfiles() {
-    assertMockMode();
-    return mockServer.listProfiles();
+    return USE_MOCK_API ? mockServer.listProfiles() : chat2payHttpClient.listProfiles();
   },
   profileLogin(payload: ProfileLoginRequest) {
-    assertMockMode();
-    return mockServer.profileLogin(payload);
+    return USE_MOCK_API ? mockServer.profileLogin(payload) : chat2payHttpClient.profileLogin(payload);
   },
   listChatSessions(profileId: string) {
-    assertMockMode();
-    return mockServer.listChatSessions(profileId);
+    return USE_MOCK_API
+      ? mockServer.listChatSessions(profileId)
+      : chat2payHttpClient.listChatSessions(profileId);
   },
   createChatSession(profileId: string, title?: string) {
-    assertMockMode();
-    return mockServer.createChatSession(profileId, title);
+    return USE_MOCK_API
+      ? mockServer.createChatSession(profileId, title)
+      : chat2payHttpClient.createChatSession(profileId, title);
   },
   getChatSession(profileId: string, sessionId: string) {
-    assertMockMode();
-    return mockServer.getChatSession(profileId, sessionId);
+    return USE_MOCK_API
+      ? mockServer.getChatSession(profileId, sessionId)
+      : chat2payHttpClient.getChatSession(profileId, sessionId);
   },
   listChatMessages(profileId: string, sessionId: string) {
-    assertMockMode();
-    return mockServer.listChatMessages(profileId, sessionId);
+    return USE_MOCK_API
+      ? mockServer.listChatMessages(profileId, sessionId)
+      : chat2payHttpClient.listChatMessages(profileId, sessionId);
   },
   sendChatMessage(profileId: string, sessionId: string, payload: SendMessageRequest) {
-    assertMockMode();
-    return mockServer.sendChatMessage(profileId, sessionId, payload);
+    return USE_MOCK_API
+      ? mockServer.sendChatMessage(profileId, sessionId, payload)
+      : chat2payHttpClient.sendChatMessage(profileId, sessionId, payload);
   },
   submitUiEvent(profileId: string, sessionId: string, payload: UiEventRequest) {
-    assertMockMode();
-    return mockServer.submitUiEvent(profileId, sessionId, payload);
+    return USE_MOCK_API
+      ? mockServer.submitUiEvent(profileId, sessionId, payload)
+      : chat2payHttpClient.submitUiEvent(profileId, sessionId, payload);
+  },
+  streamChatMessage(
+    profileId: string,
+    sessionId: string,
+    payload: SendMessageRequest,
+    signal?: AbortSignal,
+  ) {
+    if (USE_MOCK_API) {
+      throw new Error('SSE streaming is only available against the real backend.');
+    }
+    return streamChatTurn(`/chat/sessions/${sessionId}/messages`, profileId, payload, signal);
+  },
+  streamUiEvent(
+    profileId: string,
+    sessionId: string,
+    payload: UiEventRequest,
+    signal?: AbortSignal,
+  ) {
+    if (USE_MOCK_API) {
+      throw new Error('SSE streaming is only available against the real backend.');
+    }
+    return streamChatTurn(`/chat/sessions/${sessionId}/events`, profileId, payload, signal);
   },
   resetMockData() {
-    assertMockMode();
+    if (!USE_MOCK_API) {
+      throw new Error('resetMockData is only available in mock mode.');
+    }
     return mockServer.resetMockData();
   },
 };
