@@ -5,6 +5,8 @@ import com.chat2pay.app.integration.downstream.auth.DownstreamAuthService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
@@ -18,6 +20,8 @@ import java.util.Map;
 
 @Service
 public class HttpRegisteredPayeeClient implements RegisteredPayeeClient {
+
+    private static final Logger log = LoggerFactory.getLogger(HttpRegisteredPayeeClient.class);
 
     private static final String DEFAULT_PAYEE_URL =
             "https://mmf-payee-management--hk-hbap-banking-1.zzzz-dsvc-papi-hk01-hbap-cert.svc.default.shp.ape1.pre-prod.aws.cloud.zzzz/payees";
@@ -45,19 +49,27 @@ public class HttpRegisteredPayeeClient implements RegisteredPayeeClient {
         if (properties.downstreamMockEnabled()) return List.of();
         synchronized (cachedPayeesByProfile) {
             CachedPayees cached = cachedPayeesByProfile.get(profileId);
-            if (cached != null && isCacheValid(cached)) return cached.payees();
+            if (cached != null && isCacheValid(cached)) {
+                log.debug("Downstream payee cache hit: profileId={} count={}", profileId, cached.payees().size());
+                return cached.payees();
+            }
         }
 
         String samlToken = auth.login(profileId);
+        log.debug("Downstream payee request: profileId={} url={}", profileId, payeeUrl());
         JsonNode body = http.get()
                 .uri(payeeUrl())
                 .headers(h -> h.addAll(auth.authenticatedHeaders(profileId, samlToken)))
                 .retrieve()
                 .body(JsonNode.class);
+        log.debug("Downstream payee raw response summary: profileId={} topLevelFields={}",
+                profileId, topLevelFields(body));
         List<DownstreamPayee> parsed = parsePayees(body);
         synchronized (cachedPayeesByProfile) {
             cachedPayeesByProfile.put(profileId, new CachedPayees(parsed, Instant.now()));
         }
+        log.debug("Downstream payee response parsed: profileId={} count={} payees={}",
+                profileId, parsed.size(), parsed);
         return parsed;
     }
 
@@ -74,6 +86,13 @@ public class HttpRegisteredPayeeClient implements RegisteredPayeeClient {
             return DEFAULT_PAYEE_URL;
         }
         return downstream.payeeUrl();
+    }
+
+    private static List<String> topLevelFields(JsonNode body) {
+        if (body == null || !body.isObject()) return List.of();
+        List<String> names = new ArrayList<>();
+        body.fieldNames().forEachRemaining(names::add);
+        return names;
     }
 
     private List<DownstreamPayee> parsePayees(JsonNode body) {

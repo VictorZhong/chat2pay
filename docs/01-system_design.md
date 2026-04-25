@@ -297,7 +297,7 @@ Example:
 Every real downstream business call uses the same sequence:
 
 1. load the active profile runtime config from `ctp_profile`
-2. use the profile `username` and plaintext POC `password` to call the configured `PAYMENT_LOGIN_URL`
+2. use the profile `username` and plaintext downstream `password` to call the configured `PAYMENT_LOGIN_URL`
 3. get the SAML3 token
 4. call the target business API with the required header
 
@@ -418,10 +418,10 @@ sequenceDiagram
     DB-->>API: Profiles
     API-->>FE: Profile list
 
-    U->>FE: Select profile + enter profile password
-    FE->>API: POST /api/auth/profile-login
+    U->>FE: Select profile
+    FE->>API: POST /api/auth/profile-login (profileId + tb123)
     API->>DB: Validate profile
-    API->>API: Validate profile password
+    API->>API: Validate POC access password
     API-->>FE: Current user context
 ```
 
@@ -509,6 +509,9 @@ The frontend keeps the current shell, but should simplify behavior:
 - render only backend-provided blocks and status
 - prefer conversational text plus light cards and lists
 - avoid frontend-owned branching logic
+- while a backend-provided selectable list or form is awaiting action, lock the
+  free-text composer and route the user through the control; provide an explicit
+  "none of these" style path when the offered options do not fit
 
 ## 14. V2 Compatibility Notes
 

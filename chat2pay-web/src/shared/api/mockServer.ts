@@ -35,7 +35,7 @@ type MockDatabase = {
 };
 
 const STORAGE_KEY = 'chat2pay-mock-db-v2';
-const POC_PROFILE_PASSWORD = 'tb123';
+const POC_ACCESS_PASSWORD = 'tb123';
 const DEFAULT_CAPABILITIES: CapabilityType[] = ['REGISTERED_PAYEE_LOOKUP', 'DOMESTIC_PAYMENT'];
 
 const storageFallback = new Map<string, string>();
@@ -1000,8 +1000,8 @@ export function profileLogin(request: ProfileLoginRequest) {
       throw new Error('Profile not found.');
     }
 
-    if (request.password !== POC_PROFILE_PASSWORD) {
-      throw new Error('Incorrect password.');
+    if (request.password !== POC_ACCESS_PASSWORD) {
+      throw new Error('Invalid POC access password.');
     }
 
     return {

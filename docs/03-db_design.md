@@ -166,11 +166,11 @@ Stores the predefined demo profiles shown on the landing page.
 | `perm_net_id` | `varchar(128)` | Profile PermNet/source-system identity |
 | `profile_code` | `varchar(64)` | Internal display code |
 | `username` | `varchar(128)` | Test-data-service login username |
-| `password` | `text` | Plaintext POC password for profile login and SAML3 token generation |
+| `password` | `text` | Plaintext test-data-service password for SAML3 token generation; not the UI profile-selection password |
 | `display_name` | `varchar(128)` | UI display name |
 | `avatar_url` | `varchar(256)` | Optional avatar |
 | `locale` | `varchar(16)` | Example `en-HK` |
-| `supported_capabilities_json` | `jsonb` | Example `["DOMESTIC_PAYMENT"]` |
+| `supported_capabilities_json` | `jsonb` | Example `["REGISTERED_PAYEE_LOOKUP","DOMESTIC_PAYMENT"]` |
 | `status` | `varchar(16)` | `ACTIVE` / `INACTIVE` |
 | `debit_account_number` | `text` | Profile-specific debit account used for real payment confirmation |
 | `debit_product_category_code` | `varchar(16)` | Example `CUR` |
@@ -377,8 +377,8 @@ changes should be made through a new Flyway migration.
 For V1:
 
 - insert one or a few `ACTIVE` profiles manually
-- keep `supported_capabilities_json` as `["DOMESTIC_PAYMENT"]`
-- set `username` and plaintext POC `password` on the profile; these are used to
+- keep `supported_capabilities_json` as `["REGISTERED_PAYEE_LOOKUP","DOMESTIC_PAYMENT"]`
+- set `username` and plaintext downstream `password` on the profile; these are used to
   call the test data service for SAML3 token generation in real downstream mode
 - set `debit_account_number`, `debit_product_category_code`, and
   `payment_currency` per profile; these values are not global yaml settings

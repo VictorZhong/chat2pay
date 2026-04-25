@@ -39,12 +39,6 @@ public class ProfileStore {
         return profiles.findById(profileId).map(this::map);
     }
 
-    public boolean passwordMatches(String profileId, String password) {
-        return profiles.findById(profileId)
-                .map(p -> p.getPassword() != null && p.getPassword().equals(password))
-                .orElse(false);
-    }
-
     public RuntimeProfile runtimeProfile(String profileId) {
         Instant now = Instant.now();
         synchronized (runtimeCache) {

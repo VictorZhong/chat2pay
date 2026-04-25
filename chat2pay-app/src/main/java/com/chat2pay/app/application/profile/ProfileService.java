@@ -12,10 +12,12 @@ import java.util.List;
 import java.util.NoSuchElementException;
 
 /**
- * Owns demo-profile listing and shared-password login flow.
+ * Owns demo-profile listing and fixed POC access login flow.
  */
 @Service
 public class ProfileService {
+
+    private static final String POC_ACCESS_PASSWORD = "tb123";
 
     private final ProfileStore profileStore;
 
@@ -30,8 +32,8 @@ public class ProfileService {
     public CurrentUserContext login(ProfileLoginRequest request) {
         ProfileSummary profile = profileStore.findById(request.profileId())
                 .orElseThrow(() -> new NoSuchElementException("Profile not found: " + request.profileId()));
-        if (!profileStore.passwordMatches(request.profileId(), request.password())) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid profile password");
+        if (!POC_ACCESS_PASSWORD.equals(request.password())) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid POC access password");
         }
         return new CurrentUserContext(
                 profile.id(),

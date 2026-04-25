@@ -80,12 +80,12 @@ describe('mockServer domestic payment flow', () => {
     expect(turn.assistantMessage.contentBlocks?.some((block) => block.type === 'SUMMARY_CARD')).toBe(true);
   });
 
-  it('rejects profile login when the profile password is incorrect', async () => {
+  it('rejects profile login when the POC access password is incorrect', async () => {
     await expect(
       profileLogin({
         profileId: 'profile_victor',
         password: 'wrong-password',
       }),
-    ).rejects.toThrow('Incorrect password.');
+    ).rejects.toThrow('Invalid POC access password.');
   });
 });

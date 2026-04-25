@@ -29,6 +29,15 @@ management:
       exposure:
         include: health,info
 
+logging:
+  level:
+    root: DEBUG
+    com.chat2pay: DEBUG
+    org.springframework.web.client: DEBUG
+    org.springframework.web.servlet.mvc.method.annotation.SseEmitter: DEBUG
+    org.hibernate.SQL: DEBUG
+    org.hibernate.orm.jdbc.bind: TRACE
+
 chat2pay:
   primary-provider: COPILOT_PERSONAL
   fallback-provider: REMOTE_API
@@ -44,10 +53,12 @@ chat2pay:
     account-type: ${GITHUB_COPILOT_ACCOUNT_TYPE:individual}
     editor-version: ${COPILOT_EDITOR_VERSION:1.114.0}
     base-url: ${LLM_BASE_URL:}
+    token-url: ${COPILOT_TOKEN_URL:https://api.github.com/copilot_internal/v2/token}
     # GitHub Copilot personal traffic must go through this corporate proxy in
     # production. Leave host blank to disable. Password is the base64 of the
     # original plaintext password (btoa).
     proxy:
+      url: ${LLM_PROXY_URL:}
       host: ${LLM_PROXY_HOST:}
       port: ${LLM_PROXY_PORT:0}
       username: ${LLM_PROXY_USERNAME:}

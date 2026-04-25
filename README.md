@@ -59,7 +59,7 @@ insert into ctp_profile (
   '11114418_O88',
   'poc',
   'poc.user',
-  '<profile-login-password>',
+  '<testdataservice-profile-password>',
   'POC User',
   'en-HK',
   '["REGISTERED_PAYEE_LOOKUP","DOMESTIC_PAYMENT"]'::jsonb,
@@ -81,7 +81,7 @@ insert into ctp_profile (
   updated_at = now();
 ```
 
-The profile-selection login validates the selected profile's `password` column directly for the POC. The same profile `username` and `password` are used to call the test data service for the SAML3 token when real downstream mode is enabled. Runtime profile credentials/config are cached by the backend for one day.
+The profile selector is intentionally lightweight for the POC: the frontend submits the fixed access password `tb123`, and the backend only uses that value to gate profile selection. The `ctp_profile.password` column is not the UI login password; it is the plaintext test-data-service password paired with `ctp_profile.username` for SAML3 token generation when real downstream mode is enabled. Runtime profile credentials/config are cached by the backend for one day.
 
 ## Personal Copilot Token
 
@@ -120,7 +120,13 @@ export LLM_API_KEY=<github-token>
 export COPILOT_SESSION_TOKEN=<short-lived-token-if-you-already-have-one>
 ```
 
-Corporate proxy for Copilot/GitHub traffic:
+Corporate proxy for Copilot/GitHub traffic. Prefer the single URL form, which matches the refresh-token script in `docs/99-ref.md`:
+
+```bash
+export LLM_PROXY_URL='http://<url-encoded-user>:<url-encoded-password>@<proxy-host>:<proxy-port>'
+```
+
+The split settings are also supported:
 
 ```bash
 export LLM_PROXY_HOST=<proxy-host>
@@ -128,6 +134,8 @@ export LLM_PROXY_PORT=<proxy-port>
 export LLM_PROXY_USERNAME=<proxy-user>
 export LLM_PROXY_PASSWORD_B64=$(node -e "console.log(Buffer.from(process.argv[1]).toString('base64'))" '<plain-password>')
 ```
+
+If token refresh fails with `407 Proxy Authentication Required`, check that `LLM_PROXY_URL` contains URL-encoded credentials or that `LLM_PROXY_PASSWORD_B64` is the base64 of the plaintext password. The app enables JDK Basic proxy authentication and sends proxy auth preemptively for the Copilot token and completion calls.
 
 ## LLM Provider Selection
 
@@ -177,6 +185,8 @@ export PAYMENT_CONFIRM_URL='https://.../confirm-domestic-payments'
 ```
 
 The login username/password, debit account number, product category, and payment currency are read from `ctp_profile` for the active profile. Optional downstream headers and defaults are configured through `PAYMENT_CHANNEL_ID`, `PAYMENT_COUNTRY_CODE`, `PAYMENT_GROUP_MEMBER`, `PAYMENT_LOCALE`, `PAYMENT_SOURCE_SYSTEM_ID`, `PAYMENT_DEVICE_ID`, and `PAYMENT_USER_AGENT`; `perm_net_id` is used as the source system id when present.
+
+Backend logging defaults to DEBUG for the POC, including SQL binding and downstream/Copilot call summaries. CORS is open for `/api/**` so the same build can run behind changing k8s ingress domains.
 
 ## Run the Backend
 

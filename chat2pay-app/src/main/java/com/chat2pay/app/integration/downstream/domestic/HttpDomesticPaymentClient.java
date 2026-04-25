@@ -8,6 +8,8 @@ import com.chat2pay.app.persistence.repository.ProfileStore;
 import com.chat2pay.app.persistence.repository.ProfileStore.RuntimeProfile;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
@@ -27,6 +29,8 @@ import java.util.UUID;
 
 @Service
 public class HttpDomesticPaymentClient implements DomesticPaymentClient {
+
+    private static final Logger log = LoggerFactory.getLogger(HttpDomesticPaymentClient.class);
 
     private static final String DEFAULT_CONFIRM_URL =
             "https://dcc-hk-hbap-mvmny-domestic-payments-papi-3.zzzz-dsvc-papi-hk01-hbap-cert.svc.default.shp.ape1.pre-prod.aws.cloud.zzzz/confirm-domestic-payments";
@@ -57,6 +61,8 @@ public class HttpDomesticPaymentClient implements DomesticPaymentClient {
     public PaymentConfirmationResult confirm(DomesticPaymentRequest request) {
         validate(request);
         if (properties.downstreamMockEnabled()) {
+            log.debug("Mock domestic payment confirm: profileId={} payeeId={} amount={} date={}",
+                    request.profileId(), request.payeeIdIndex(), request.amount(), request.paymentDate());
             String reference = "DOM-" + LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE)
                     + "-" + UUID.randomUUID().toString().replace("-", "").substring(0, 6).toUpperCase();
             return new PaymentConfirmationResult(
@@ -73,6 +79,15 @@ public class HttpDomesticPaymentClient implements DomesticPaymentClient {
                 .orElseThrow(() -> new IllegalArgumentException("payee_id_index is not recognized."));
         String samlToken = auth.login(request.profileId());
         Map<String, Object> payload = buildPayload(request, payee, profile);
+        log.debug("Downstream domestic confirm request: profileId={} url={} payeeId={} payeeName={} amount={} date={} currency={}",
+                request.profileId(),
+                confirmUrl(),
+                request.payeeIdIndex(),
+                firstNonBlank(request.payeeName(), payee.name()),
+                request.amount(),
+                request.paymentDate(),
+                profile.paymentCurrencyOrDefault(properties.defaultCurrencyOrHkd()));
+        log.debug("Downstream domestic confirm payload: profileId={} payload={}", request.profileId(), payload);
         ResponseEntity<String> response = http.post()
                 .uri(confirmUrl())
                 .headers(h -> h.addAll(auth.authenticatedHeaders(request.profileId(), samlToken)))
@@ -81,6 +96,8 @@ public class HttpDomesticPaymentClient implements DomesticPaymentClient {
                 .toEntity(String.class);
 
         Map<String, Object> responseBody = parseResponse(response.getBody());
+        log.debug("Downstream domestic confirm response: profileId={} status={} responseKeys={} body={}",
+                request.profileId(), response.getStatusCode().value(), responseBody.keySet(), responseBody);
         String reference = findReference(responseBody)
                 .orElse("DOM-" + LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE)
                         + "-" + UUID.randomUUID().toString().replace("-", "").substring(0, 6).toUpperCase());

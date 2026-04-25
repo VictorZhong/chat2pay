@@ -9,7 +9,7 @@ info:
     It is not intended to drive code generation.
 
     V1 scope:
-    - profile selection and shared-password login
+    - profile selection and fixed POC access login
     - session and message history
     - registered payee lookup
     - domestic payment to a registered payee
@@ -42,7 +42,7 @@ paths:
   /auth/profile-login:
     post:
       tags: [Auth]
-      summary: Select a profile and validate the profile password
+      summary: Select a profile and validate the fixed POC access password
       operationId: profileLogin
       requestBody:
         required: true
@@ -343,7 +343,7 @@ components:
           example: 01HX8QYP8W4G9Y0S2AY2J67NZB
         password:
           type: string
-          example: poc-profile-password
+          example: tb123
 
     CurrentUserContext:
       type: object

@@ -1,3 +1,114 @@
+#refresh-token.py
+import argparse
+from pathlib import Path
+
+import requests
+from dotenv import dotenv_values, set_key
+
+
+EDITOR_PLUGIN_VERSION = "copilot.vim/1.16.0"
+USER_AGENT = "GithubCopilot/1.155.0"
+API_VERSION = "2025-04-01"
+
+
+def resolve_verify_path(env_values: dict[str, str | None], app_root: Path):
+    explicit_bundle = env_values.get("REQUESTS_CA_BUNDLE") or env_values.get("SSL_CERT_FILE")
+    if explicit_bundle:
+        retun explicit_bundle
+
+    bundled_ca_path = app_root / "certs" / "cert.pem"
+    if bundled_ca_path.is_file():
+        retun str(bundled_ca_path)
+
+    retun True
+
+
+def build_headers(env_values: dict[str, str | None]) -> dict[str, str]:
+    api_key = env_values.get("LLM_API_KEY")
+    if not api_key:
+        raise RuntimeError("LLM_API_KEY is missing from .env")
+
+    editor_version = env_values.get("COPILOT_EDITOR_VERSION") or "1.114.0"
+    retun {
+        "authorization": f"token {api_key}",
+        "content-type": "application/json",
+        "accept": "application/json",
+        "editor-version": f"vscode/{editor_version}",
+        "editor-plugin-version": EDITOR_PLUGIN_VERSION,
+        "user-agent": USER_AGENT,
+        "x-github-api-version": API_VERSION,
+        "x-vscode-user-agent-library-version": "electron-fetch",
+    }
+
+
+def fetch_copilot_session_token(env_file: Path) -> str:
+    env_values = dotenv_values(env_file)
+    session = requests.Session()
+    session.trust_env = True
+
+    proxy_url = env_values.get("LLM_PROXY_URL")
+    if proxy_url:
+        session.proxies.update({"http": proxy_url, "https": proxy_url})
+
+    session.verify = resolve_verify_path(env_values, env_file.parent)
+
+    response = session.get(
+        "https://api.github.com/copilot_intenal/v2/token",
+        headers=build_headers(env_values),
+        timeout=30,
+    )
+    if not response.ok:
+        raise RuntimeError(
+            f"Copilot token request failed with {response.status_code}: {response.text[:300]}"
+        )
+
+    payload = response.json()
+    token = payload.get("token")
+    if not token:
+        raise RuntimeError("Copilot token response did not include a token")
+
+    retun token
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--env-file",
+        default=str(Path(__file__).resolve().parent / ".env"),
+        help="Path to the backend .env file",
+    )
+    parser.add_argument(
+        "--write-env",
+        action="store_true",
+        help="Write COPILOT_SESSION_TOKEN back into the env file",
+    )
+    parser.add_argument(
+        "--stdout",
+        action="store_true",
+        help="Print the token to stdout as COPILOT_SESSION_TOKEN=<token>",
+    )
+    args = parser.parse_args()
+
+    env_file = Path(args.env_file).resolve()
+    token = fetch_copilot_session_token(env_file)
+
+    if args.write_env:
+        set_key(str(env_file), "COPILOT_SESSION_TOKEN", token, quote_mode="never")
+        print(f"Updated {env_file} with COPILOT_SESSION_TOKEN")
+
+    if args.stdout:
+        print(f"COPILOT_SESSION_TOKEN={token}")
+
+    if not args.write_env and not args.stdout:
+        print("Token fetched successfully. Use --write-env or --stdout.")
+
+    retun 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+
 #chat_service.py
 from .llm_client import LlmClient
 from typing import Dict, Any, List, Optional

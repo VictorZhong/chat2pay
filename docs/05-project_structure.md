@@ -125,7 +125,7 @@ chat2pay-app/
 | `api/` | REST endpoints and streaming endpoints exposed to the frontend |
 | `application/conversation/` | Turn orchestration, provider routing, guard checks |
 | `application/conversation/tool/` | Shared payment tool definitions and LLM tool-loop prompts |
-| `application/profile/` | Profile listing and shared-password login |
+| `application/profile/` | Profile listing and fixed POC access login |
 | `domain/conversation/` | Session, message, state, and streaming event models |
 | `domain/payment/` | Draft, payee, amount, confirmation, and result models |
 | `integration/llm/copilot/` | Personal-subscription GitHub Copilot adapter |

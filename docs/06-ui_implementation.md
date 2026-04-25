@@ -17,7 +17,7 @@ The direction is:
 The current UI structure is already close enough and should remain:
 
 - profile selector page
-- profile password dialog
+- profile selector page with fixed POC access login
 - left sidebar with session history
 - right chat workspace
 - branded chat message styling
@@ -71,7 +71,8 @@ Implemented in:
 Target behavior:
 
 - fetch profiles from the Java backend
-- keep the profile password gate
+- submit the fixed POC access password `tb123`; do not ask the user for the
+  downstream profile password
 - allow the backend to return only one or a few demo profiles
 - treat `username` as backend-owned integration context, not a frontend concern
 
@@ -133,13 +134,19 @@ Preferred order:
 2. selectable payee list when needed
 3. confirmation summary card
 
+When a selectable list, confirmation card, or form is the required next step,
+the chat composer should be disabled and the user should continue through the
+provided control. The control should include a clear fallback path when none of
+the options match the user's intent, so the next backend turn can return to
+free-text clarification.
+
 This keeps the conversation close to the successful Python demo behavior.
 
 ## 7. Frontend Responsibilities
 
 | Area | Responsibility |
 |---|---|
-| Profile selector | List profiles and submit shared-password login |
+| Profile selector | List profiles and submit fixed POC access login |
 | Sidebar | Create, switch, and list chat sessions |
 | Chat workspace | Render messages, blocks, and streaming deltas |
 | Structured interactions | Submit list selections and action clicks back to backend |
