@@ -1,7 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
-import type { ChatMessage, ContentBlock, UiEventRequest } from '@/shared/api/contracts';
+import type { ChatMessage, ContentBlock, SendMessageRequest, UiEventRequest } from '@/shared/api/contracts';
 import { chat2payClient, queryKeys } from '@/shared/api/chat2payClient';
+import { USE_MOCK_API } from '@/shared/config/env';
+import type { TurnStreamEvent } from '@/shared/api/httpClient';
 import { useAuthStore } from '@/features/auth/useAuthStore';
 import { useSidebarStore } from '@/features/sidebar/useSidebarStore';
 import { Sidebar } from '@/features/sidebar/Sidebar';
@@ -114,10 +116,66 @@ export function ChatWorkspacePage() {
     },
   });
 
+  async function consumeTurnStream(
+    nextSessionId: string,
+    iter: AsyncGenerator<TurnStreamEvent, void, void>,
+  ) {
+    const messagesKey = queryKeys.messages(currentUser.profileId, nextSessionId);
+    let pendingMessageId: string | null = null;
+
+    for await (const evt of iter) {
+      if (evt.type === 'user-message') {
+        queryClient.setQueryData<ChatMessage[]>(messagesKey, (prev = []) =>
+          prev.some((m) => m.messageId === evt.message.messageId) ? prev : [...prev, evt.message],
+        );
+      } else if (evt.type === 'assistant-message-start') {
+        pendingMessageId = evt.messageId;
+        queryClient.setQueryData<ChatMessage[]>(messagesKey, (prev = []) => [
+          ...prev,
+          {
+            messageId: evt.messageId,
+            sessionId: evt.sessionId,
+            role: 'ASSISTANT',
+            kind: 'TEXT',
+            text: '',
+            contentBlocks: null,
+            metadata: null,
+            createdAt: new Date().toISOString(),
+          },
+        ]);
+      } else if (evt.type === 'assistant-message-delta' && pendingMessageId) {
+        queryClient.setQueryData<ChatMessage[]>(messagesKey, (prev = []) =>
+          prev.map((m) => {
+            if (m.messageId !== pendingMessageId) return m;
+            const text = evt.textDelta ? (m.text ?? '') + evt.textDelta : m.text;
+            const blocks = evt.block
+              ? [...(m.contentBlocks ?? []), evt.block]
+              : m.contentBlocks;
+            return { ...m, text, contentBlocks: blocks };
+          }),
+        );
+      } else if (evt.type === 'assistant-message-complete') {
+        queryClient.setQueryData<ChatMessage[]>(messagesKey, (prev = []) =>
+          prev.map((m) => (m.messageId === evt.message.messageId ? evt.message : m)),
+        );
+        queryClient.setQueryData(queryKeys.session(currentUser.profileId, nextSessionId), evt.session);
+      } else if (evt.type === 'turn-error') {
+        throw new Error(`${evt.code}: ${evt.message}`);
+      }
+    }
+  }
+
   const sendMessageMutation = useMutation({
     mutationFn: async (messageText: string) => {
-      await wait(INTERACTION_DELAY_MS);
-      return chat2payClient.sendChatMessage(currentUser.profileId, sessionId ?? '', { messageText });
+      const targetSessionId = sessionId ?? '';
+      const payload: SendMessageRequest = { messageText };
+      if (USE_MOCK_API) {
+        await wait(INTERACTION_DELAY_MS);
+        return chat2payClient.sendChatMessage(currentUser.profileId, targetSessionId, payload);
+      }
+      const iter = chat2payClient.streamChatMessage(currentUser.profileId, targetSessionId, payload);
+      await consumeTurnStream(targetSessionId, iter);
+      return null;
     },
     onSuccess: async () => {
       if (sessionId) {
@@ -128,8 +186,14 @@ export function ChatWorkspacePage() {
 
   const submitUiEventMutation = useMutation({
     mutationFn: async (payload: UiEventRequest) => {
-      await wait(INTERACTION_DELAY_MS);
-      return chat2payClient.submitUiEvent(currentUser.profileId, sessionId ?? '', payload);
+      const targetSessionId = sessionId ?? '';
+      if (USE_MOCK_API) {
+        await wait(INTERACTION_DELAY_MS);
+        return chat2payClient.submitUiEvent(currentUser.profileId, targetSessionId, payload);
+      }
+      const iter = chat2payClient.streamUiEvent(currentUser.profileId, targetSessionId, payload);
+      await consumeTurnStream(targetSessionId, iter);
+      return null;
     },
     onSuccess: async () => {
       if (sessionId) {
