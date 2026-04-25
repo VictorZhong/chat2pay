@@ -3,6 +3,7 @@ package com.chat2pay.app.integration.llm.copilot;
 import com.chat2pay.app.domain.conversation.LlmProviderType;
 import com.chat2pay.app.integration.llm.LlmCompletionRequest;
 import com.chat2pay.app.integration.llm.LlmCompletionResponse;
+import com.chat2pay.app.integration.llm.LlmCompletionResponse.ToolCall;
 import com.chat2pay.app.integration.llm.LlmProvider;
 import com.chat2pay.app.persistence.repository.LlmCredentialStore;
 import com.chat2pay.app.persistence.repository.LlmCredentialStore.Credential;
@@ -165,6 +166,21 @@ public class CopilotPersonalLlmProvider implements LlmProvider {
         body.put("messages", request.messages().stream()
                 .map(m -> Map.of("role", m.role().name().toLowerCase(Locale.ROOT), "content", m.content()))
                 .toList());
+        if (request.tools() != null && !request.tools().isEmpty()) {
+            body.put("tools", request.tools().stream()
+                    .map(tool -> Map.of(
+                            "type", "function",
+                            "function", Map.of(
+                                    "name", tool.name(),
+                                    "description", tool.description(),
+                                    "parameters", tool.parameters()
+                            )
+                    ))
+                    .toList());
+        }
+        if (request.toolChoice() != null && !request.toolChoice().isBlank()) {
+            body.put("tool_choice", request.toolChoice());
+        }
 
         ChatCompletionResponse resp = http.post()
                 .uri(baseUrl() + "/chat/completions")
@@ -177,8 +193,16 @@ public class CopilotPersonalLlmProvider implements LlmProvider {
         Object rawContent = resp != null && resp.choices() != null && !resp.choices().isEmpty()
                 && resp.choices().get(0).message() != null
                 ? resp.choices().get(0).message().content() : null;
+        List<ToolCall> toolCalls = resp != null && resp.choices() != null && !resp.choices().isEmpty()
+                && resp.choices().get(0).message() != null
+                && resp.choices().get(0).message().toolCalls() != null
+                ? resp.choices().get(0).message().toolCalls().stream()
+                    .filter(tc -> tc.function() != null && tc.function().name() != null)
+                    .map(tc -> new ToolCall(tc.id(), tc.function().name(), tc.function().arguments()))
+                    .toList()
+                : List.of();
         String content = extractText(rawContent);
-        return new LlmCompletionResponse(LlmProviderType.COPILOT_PERSONAL, model, content);
+        return new LlmCompletionResponse(LlmProviderType.COPILOT_PERSONAL, model, content, toolCalls);
     }
 
     // ---- token exchange ------------------------------------------------------
@@ -305,5 +329,11 @@ public class CopilotPersonalLlmProvider implements LlmProvider {
     record Choice(ChoiceMessage message) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    record ChoiceMessage(String role, Object content) {}
+    record ChoiceMessage(String role, Object content, @JsonAlias("tool_calls") List<RawToolCall> toolCalls) {}
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record RawToolCall(String id, RawFunction function) {}
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record RawFunction(String name, String arguments) {}
 }

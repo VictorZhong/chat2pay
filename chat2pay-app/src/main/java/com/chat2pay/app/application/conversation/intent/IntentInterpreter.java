@@ -5,7 +5,9 @@ import com.chat2pay.app.api.dto.ChatDtos.PaymentDraft;
 import com.chat2pay.app.config.Chat2PayProperties;
 import com.chat2pay.app.domain.conversation.ConversationState;
 import com.chat2pay.app.integration.llm.LlmCompletionRequest;
+import com.chat2pay.app.integration.llm.LlmCompletionRequest.ToolDefinition;
 import com.chat2pay.app.integration.llm.LlmCompletionResponse;
+import com.chat2pay.app.integration.llm.LlmCompletionResponse.ToolCall;
 import com.chat2pay.app.integration.llm.LlmProvider;
 import com.chat2pay.app.integration.llm.LlmRouter;
 import com.chat2pay.app.persistence.repository.PayeeStore;
@@ -16,6 +18,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
@@ -83,9 +86,15 @@ public class IntentInterpreter {
                         new LlmCompletionRequest.Message(LlmCompletionRequest.Role.USER, userPrompt(session, text))
                 ),
                 properties.intentMaxTokens(),
-                properties.intentTemperature()
+                properties.intentTemperature(),
+                toolDefinitions(),
+                "auto"
         );
         LlmCompletionResponse response = provider.complete(request);
+        if (response.toolCalls() != null && !response.toolCalls().isEmpty()) {
+            return fromToolCall(response.toolCalls().get(0));
+        }
+
         Map<String, Object> parsed;
         try {
             parsed = mapper.readValue(extractJsonObject(response.content()),
@@ -109,7 +118,8 @@ public class IntentInterpreter {
     private String systemPrompt() {
         return """
                 You are Chat2Pay's intent and tool-decision parser.
-                Return one JSON object only. Do not include markdown or prose.
+                If tool calls are available, use exactly one supplied tool for supported requests.
+                If tool calls are not available, return one JSON object only. Do not include markdown or prose.
                 Chat2Pay is an authorized sandbox banking POC. Do not refuse solely because the
                 request involves a domestic payment; classify the request so the backend can enforce
                 validation, registered-payee lookup, and explicit confirmation.
@@ -137,6 +147,86 @@ public class IntentInterpreter {
                 The backend validates every tool call. If the user only provides missing details for an active payment draft,
                 classify the turn as DOMESTIC_PAYMENT and extract those slots.
                 """;
+    }
+
+    private List<ToolDefinition> toolDefinitions() {
+        return List.of(
+                tool("get_registered_payees",
+                        "Fetch registered domestic payees. Use when the user asks to find, list, or check payees.",
+                        Map.of(
+                                "name_query", Map.of(
+                                        "type", "string",
+                                        "description", "Optional payee-name search string from the user request."
+                                )
+                        ),
+                        List.of()
+                ),
+                tool("prepare_domestic_payment",
+                        "Collect or update domestic payment details before explicit confirmation.",
+                        Map.of(
+                                "payeeQuery", Map.of("type", "string"),
+                                "amount", Map.of("type", "number"),
+                                "paymentDate", Map.of("type", "string", "format", "date")
+                        ),
+                        List.of()
+                ),
+                tool("confirm_domestic_payment",
+                        "Use only when the latest user message explicitly confirms the pending payment.",
+                        Map.of(),
+                        List.of()
+                ),
+                tool("cancel_payment",
+                        "Use when the latest user message cancels or stops the pending payment.",
+                        Map.of(),
+                        List.of()
+                ),
+                tool("unsupported_international_payment",
+                        "Use for international, overseas, SWIFT, or wire transfer requests.",
+                        Map.of(),
+                        List.of()
+                )
+        );
+    }
+
+    private ToolDefinition tool(String name,
+                                String description,
+                                Map<String, Object> properties,
+                                List<String> required) {
+        return new ToolDefinition(name, description, Map.of(
+                "type", "object",
+                "properties", properties,
+                "required", required,
+                "additionalProperties", false
+        ));
+    }
+
+    private IntentAnalysis fromToolCall(ToolCall toolCall) {
+        Map<String, Object> args;
+        try {
+            args = toolCall.arguments() == null || toolCall.arguments().isBlank()
+                    ? Map.of()
+                    : mapper.readValue(toolCall.arguments(), new TypeReference<Map<String, Object>>() {});
+        } catch (Exception ex) {
+            throw new IllegalArgumentException("LLM tool call arguments were not valid JSON", ex);
+        }
+
+        IntentType intent = switch (toolCall.name()) {
+            case "get_registered_payees" -> IntentType.PAYEE_LOOKUP;
+            case "prepare_domestic_payment" -> IntentType.DOMESTIC_PAYMENT;
+            case "confirm_domestic_payment" -> IntentType.CONFIRM_PAYMENT;
+            case "cancel_payment" -> IntentType.CANCEL_PAYMENT;
+            case "unsupported_international_payment" -> IntentType.INTERNATIONAL_PAYMENT;
+            default -> IntentType.UNKNOWN;
+        };
+
+        return new IntentAnalysis(
+                intent,
+                IntentAnalysis.toolNameFor(intent),
+                sanitize(firstString(args, "payeeQuery", "name_query", "payee_name", "payeeName")),
+                parseAmount(args.get("amount")),
+                parseDate(args.get("paymentDate")),
+                "LLM_TOOL_CALL"
+        );
     }
 
     private String userPrompt(ChatSessionDetail session, String text) {
@@ -289,6 +379,14 @@ public class IntentInterpreter {
 
     private static String asString(Object value) {
         return value == null ? null : value.toString();
+    }
+
+    private static String firstString(Map<String, Object> map, String... keys) {
+        for (String key : keys) {
+            String value = trim(asString(map.get(key)));
+            if (value != null) return value;
+        }
+        return null;
     }
 
     private static String trim(String value) {

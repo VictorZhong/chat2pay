@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { ChatMessage, ContentBlock, SendMessageRequest, UiEventRequest } from '@/shared/api/contracts';
@@ -60,6 +61,50 @@ function derivePendingUiEventText(messages: ChatMessage[], payload: UiEventReque
   return 'Submitted action';
 }
 
+function summaryActions(block: ContentBlock) {
+  if (block.type !== 'SUMMARY_CARD') return [];
+  const actions = block.metadata?.actions;
+  return Array.isArray(actions)
+    ? actions.filter(
+        (item): item is { id: string; label: string } =>
+          typeof item === 'object' &&
+          item !== null &&
+          'id' in item &&
+          'label' in item &&
+          typeof item.id === 'string' &&
+          typeof item.label === 'string',
+      )
+    : [];
+}
+
+function pendingInteraction(messages: ChatMessage[]) {
+  const latestAssistant = [...messages].reverse().find((message) => message.role === 'ASSISTANT');
+  const blocks = latestAssistant?.contentBlocks ?? [];
+
+  for (const block of [...blocks].reverse()) {
+    if (block.type === 'SELECTABLE_LIST' && block.items.length > 0) {
+      return {
+        key: `${latestAssistant?.messageId}:${block.blockId}`,
+        reason: 'Select one of the listed payees to continue.',
+      };
+    }
+    if (block.type === 'SUMMARY_CARD' && summaryActions(block).length > 0) {
+      return {
+        key: `${latestAssistant?.messageId}:${block.blockId}`,
+        reason: 'Use the confirmation actions above to continue.',
+      };
+    }
+    if (block.type === 'SIMPLE_FORM') {
+      return {
+        key: `${latestAssistant?.messageId}:${block.blockId}`,
+        reason: 'Submit the form above to continue.',
+      };
+    }
+  }
+
+  return null;
+}
+
 export function ChatWorkspacePage() {
   const navigate = useNavigate();
   const { sessionId } = useParams();
@@ -68,6 +113,7 @@ export function ChatWorkspacePage() {
   const clearCurrentUser = useAuthStore((state) => state.clearCurrentUser);
   const collapsed = useSidebarStore((state) => state.collapsed);
   const setCollapsed = useSidebarStore((state) => state.setCollapsed);
+  const [textInputOverrideKey, setTextInputOverrideKey] = useState<string | null>(null);
 
   const sessionsQuery = useQuery({
     queryKey: queryKeys.sessions(currentUser.profileId),
@@ -205,12 +251,24 @@ export function ChatWorkspacePage() {
   const sessions = sessionsQuery.data ?? [];
   const activeSession = sessionQuery.data;
   const messages = messagesQuery.data ?? [];
+  const requiredInteraction = useMemo(() => pendingInteraction(messages), [messages]);
+
+  useEffect(() => {
+    if (requiredInteraction?.key !== textInputOverrideKey) {
+      setTextInputOverrideKey(null);
+    }
+  }, [requiredInteraction?.key, textInputOverrideKey]);
+
   const busy =
     createSessionMutation.isPending ||
     sendMessageMutation.isPending ||
     submitUiEventMutation.isPending ||
     startChatWithMessageMutation.isPending;
   const readOnly = !activeSession || activeSession.status !== 'ACTIVE';
+  const interactionLocksInput =
+    Boolean(requiredInteraction)
+    && requiredInteraction?.key !== textInputOverrideKey
+    && !readOnly;
   const pendingUserText = sendMessageMutation.isPending
     ? sendMessageMutation.variables
     : submitUiEventMutation.isPending
@@ -289,8 +347,12 @@ export function ChatWorkspacePage() {
                 showAssistantLoading={showAssistantLoading}
               />
               <ChatInputBar
-                disabled={readOnly || !sessionId}
+                disabled={readOnly || !sessionId || interactionLocksInput}
                 busy={busy}
+                disabledReason={interactionLocksInput ? requiredInteraction?.reason : undefined}
+                onEnableTextInput={interactionLocksInput && requiredInteraction
+                  ? () => setTextInputOverrideKey(requiredInteraction.key)
+                  : undefined}
                 onSend={async (messageText) => {
                   await sendMessageMutation.mutateAsync(messageText);
                 }}

@@ -133,7 +133,7 @@ public class ChatOrchestratorService {
 
         return assistantMessage(record.session().sessionId(), List.of(
                 infoBlock("Try a supported request",
-                        "Ask me to find a registered payee, or tell me who to pay, how much, and whether it should go today or tomorrow.")
+                        "Ask me to find a registered payee, or tell me who to pay, how much, and whether it should go now or later.")
         ));
     }
 

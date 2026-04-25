@@ -7,6 +7,7 @@ import com.chat2pay.app.domain.conversation.ConversationState;
 import com.chat2pay.app.domain.conversation.LlmProviderType;
 import com.chat2pay.app.integration.llm.LlmCompletionRequest;
 import com.chat2pay.app.integration.llm.LlmCompletionResponse;
+import com.chat2pay.app.integration.llm.LlmCompletionResponse.ToolCall;
 import com.chat2pay.app.integration.llm.LlmProvider;
 import com.chat2pay.app.integration.llm.LlmRouter;
 import com.chat2pay.app.persistence.repository.PayeeStore;
@@ -15,6 +16,7 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -65,6 +67,34 @@ class IntentInterpreterTests {
         assertThat(analysis.paymentDate()).isEqualTo(paymentDate);
         assertThat(analysis.source()).isEqualTo("LLM:COPILOT_PERSONAL");
         verify(provider).complete(any(LlmCompletionRequest.class));
+    }
+
+    @Test
+    void usesProviderToolCallWhenAvailable() {
+        LlmProvider provider = mock(LlmProvider.class);
+        LocalDate paymentDate = LocalDate.now().plusDays(1);
+        when(provider.providerType()).thenReturn(LlmProviderType.COPILOT_PERSONAL);
+        when(provider.complete(any(LlmCompletionRequest.class))).thenReturn(new LlmCompletionResponse(
+                LlmProviderType.COPILOT_PERSONAL,
+                "gpt-5.4",
+                "",
+                List.of(new ToolCall(
+                        "call_1",
+                        "prepare_domestic_payment",
+                        """
+                        {"payeeQuery":"Sarah Wong","amount":88.5,"paymentDate":"%s"}
+                        """.formatted(paymentDate)
+                ))
+        ));
+        when(router.currentIfAvailable()).thenReturn(Optional.of(provider));
+
+        IntentAnalysis analysis = interpreter().analyze(session(ConversationState.IDLE), "send 88.5 to sarah tomorrow");
+
+        assertThat(analysis.intent()).isEqualTo(IntentType.DOMESTIC_PAYMENT);
+        assertThat(analysis.toolName()).isEqualTo("prepare_domestic_payment");
+        assertThat(analysis.payeeQuery()).isEqualTo("sarah wong");
+        assertThat(analysis.amount()).isEqualTo(88.5);
+        assertThat(analysis.paymentDate()).isEqualTo(paymentDate);
     }
 
     @Test
