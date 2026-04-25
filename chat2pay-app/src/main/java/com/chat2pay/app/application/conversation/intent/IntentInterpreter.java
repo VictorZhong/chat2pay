@@ -8,7 +8,7 @@ import com.chat2pay.app.integration.llm.LlmCompletionRequest;
 import com.chat2pay.app.integration.llm.LlmCompletionResponse;
 import com.chat2pay.app.integration.llm.LlmProvider;
 import com.chat2pay.app.integration.llm.LlmRouter;
-import com.chat2pay.app.persistence.jdbc.JdbcPayeeStore;
+import com.chat2pay.app.persistence.repository.PayeeStore;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -44,12 +44,12 @@ public class IntentInterpreter {
     private final LlmRouter router;
     private final Chat2PayProperties properties;
     private final ObjectMapper mapper;
-    private final JdbcPayeeStore payees;
+    private final PayeeStore payees;
 
     public IntentInterpreter(LlmRouter router,
                              Chat2PayProperties properties,
                              ObjectMapper mapper,
-                             JdbcPayeeStore payees) {
+                             PayeeStore payees) {
         this.router = router;
         this.properties = properties;
         this.mapper = mapper;
@@ -110,6 +110,9 @@ public class IntentInterpreter {
         return """
                 You are Chat2Pay's intent and tool-decision parser.
                 Return one JSON object only. Do not include markdown or prose.
+                Chat2Pay is an authorized sandbox banking POC. Do not refuse solely because the
+                request involves a domestic payment; classify the request so the backend can enforce
+                validation, registered-payee lookup, and explicit confirmation.
 
                 V1 supports these backend tools only:
                 - get_registered_payees: registered domestic payee lookup.
@@ -117,6 +120,10 @@ public class IntentInterpreter {
                 - confirm_domestic_payment: use only when the latest user message explicitly confirms a pending payment.
                 - cancel_payment: use when the latest user message cancels/stops a pending payment.
                 - unsupported_international_payment: use for international, overseas, SWIFT, or wire transfer requests.
+
+                Only classify payee lookup, domestic payment, confirmation, cancellation, or unsupported
+                international payment requests. Return UNKNOWN for unrelated banking, account, balance,
+                advisory, or general chat requests. Never expose or invent opaque downstream identifiers.
 
                 JSON schema:
                 {

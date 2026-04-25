@@ -4,8 +4,8 @@ import com.chat2pay.app.domain.conversation.LlmProviderType;
 import com.chat2pay.app.integration.llm.LlmCompletionRequest;
 import com.chat2pay.app.integration.llm.LlmCompletionResponse;
 import com.chat2pay.app.integration.llm.LlmProvider;
-import com.chat2pay.app.persistence.jdbc.JdbcLlmCredentialStore;
-import com.chat2pay.app.persistence.jdbc.JdbcLlmCredentialStore.Credential;
+import com.chat2pay.app.persistence.repository.LlmCredentialStore;
+import com.chat2pay.app.persistence.repository.LlmCredentialStore.Credential;
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.annotation.PostConstruct;
@@ -55,10 +55,11 @@ public class CopilotPersonalLlmProvider implements LlmProvider {
     /** Copilot session tokens are short-lived (~30 min); we conservatively assume 25. */
     private static final Duration ASSUMED_SESSION_TTL = Duration.ofMinutes(25);
 
-    private final JdbcLlmCredentialStore credentials;
+    private final LlmCredentialStore credentials;
     private final String bootstrapApiKey;
     private final String bootstrapSessionToken;
     private final String configuredModel;
+    private final int maxCompletionTokens;
     private final String accountType;
     private final String editorVersion;
     private final String configuredBaseUrl;
@@ -71,10 +72,11 @@ public class CopilotPersonalLlmProvider implements LlmProvider {
     private final RestClient http;
 
     public CopilotPersonalLlmProvider(
-            JdbcLlmCredentialStore credentials,
+            LlmCredentialStore credentials,
             @Value("${chat2pay.copilot.bootstrap-api-key:}") String bootstrapApiKey,
             @Value("${chat2pay.copilot.bootstrap-session-token:}") String bootstrapSessionToken,
-            @Value("${chat2pay.copilot.model:gpt-4o}") String configuredModel,
+            @Value("${chat2pay.copilot.model:gpt-5.4}") String configuredModel,
+            @Value("${chat2pay.copilot.max-completion-tokens:2048}") int maxCompletionTokens,
             @Value("${chat2pay.copilot.account-type:individual}") String accountType,
             @Value("${chat2pay.copilot.editor-version:1.114.0}") String editorVersion,
             @Value("${chat2pay.copilot.base-url:}") String configuredBaseUrl,
@@ -85,7 +87,8 @@ public class CopilotPersonalLlmProvider implements LlmProvider {
         this.credentials = credentials;
         this.bootstrapApiKey = nullIfBlank(bootstrapApiKey);
         this.bootstrapSessionToken = nullIfBlank(bootstrapSessionToken);
-        this.configuredModel = configuredModel;
+        this.configuredModel = nullIfBlank(configuredModel);
+        this.maxCompletionTokens = maxCompletionTokens;
         this.accountType = accountType;
         this.editorVersion = editorVersion;
         this.configuredBaseUrl = nullIfBlank(configuredBaseUrl);
@@ -135,37 +138,47 @@ public class CopilotPersonalLlmProvider implements LlmProvider {
     @Override
     public LlmCompletionResponse complete(LlmCompletionRequest request) {
         String token = ensureSessionToken();
+        String model = configuredModel == null ? "gpt-5.4" : configuredModel;
 
+        try {
+            return sendCompletion(request, token, model);
+        } catch (HttpClientErrorException ex) {
+            if (ex.getStatusCode().value() == 401) {
+                credentials.upsertSessionToken(LlmProviderType.COPILOT_PERSONAL, null, null);
+                try {
+                    return sendCompletion(request, ensureSessionToken(), model);
+                } catch (HttpClientErrorException retryEx) {
+                    throw new RestClientException("Copilot chat completions failed: "
+                            + retryEx.getStatusCode(), retryEx);
+                }
+            }
+            throw new RestClientException("Copilot chat completions failed: " + ex.getStatusCode(), ex);
+        }
+    }
+
+    private LlmCompletionResponse sendCompletion(LlmCompletionRequest request, String token, String model) {
         Map<String, Object> body = new HashMap<>();
-        body.put("model", configuredModel);
+        body.put("model", model);
         body.put("stream", false);
-        if (request.maxTokens() != null) body.put("max_completion_tokens", request.maxTokens());
+        body.put("max_completion_tokens", request.maxTokens() == null ? maxCompletionTokens : request.maxTokens());
         if (request.temperature() != null) body.put("temperature", request.temperature());
         body.put("messages", request.messages().stream()
                 .map(m -> Map.of("role", m.role().name().toLowerCase(Locale.ROOT), "content", m.content()))
                 .toList());
 
-        try {
-            ChatCompletionResponse resp = http.post()
-                    .uri(baseUrl() + "/chat/completions")
-                    .headers(h -> copilotHeaders(h, token))
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(body)
-                    .retrieve()
-                    .body(ChatCompletionResponse.class);
+        ChatCompletionResponse resp = http.post()
+                .uri(baseUrl() + "/chat/completions")
+                .headers(h -> copilotHeaders(h, token))
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(ChatCompletionResponse.class);
 
-            Object rawContent = resp != null && resp.choices() != null && !resp.choices().isEmpty()
-                    && resp.choices().get(0).message() != null
-                    ? resp.choices().get(0).message().content() : null;
-            String content = extractText(rawContent);
-            return new LlmCompletionResponse(LlmProviderType.COPILOT_PERSONAL, configuredModel, content);
-        } catch (HttpClientErrorException ex) {
-            if (ex.getStatusCode().value() == 401) {
-                // Token expired between cache and call; clear and retry once.
-                credentials.upsertSessionToken(LlmProviderType.COPILOT_PERSONAL, null, null);
-            }
-            throw new RestClientException("Copilot chat completions failed: " + ex.getStatusCode(), ex);
-        }
+        Object rawContent = resp != null && resp.choices() != null && !resp.choices().isEmpty()
+                && resp.choices().get(0).message() != null
+                ? resp.choices().get(0).message().content() : null;
+        String content = extractText(rawContent);
+        return new LlmCompletionResponse(LlmProviderType.COPILOT_PERSONAL, model, content);
     }
 
     // ---- token exchange ------------------------------------------------------

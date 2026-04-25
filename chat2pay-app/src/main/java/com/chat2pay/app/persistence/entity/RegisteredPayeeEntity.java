@@ -1,4 +1,4 @@
-package com.chat2pay.app.persistence.jpa;
+package com.chat2pay.app.persistence.entity;
 
 import jakarta.persistence.CollectionTable;
 import jakarta.persistence.Column;

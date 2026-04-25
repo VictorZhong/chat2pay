@@ -7,7 +7,8 @@ public record Chat2PayProperties(
         String primaryProvider,
         String fallbackProvider,
         String defaultCurrency,
-        IntentProperties intent
+        IntentProperties intent,
+        DownstreamProperties downstream
 ) {
     public boolean useLlmIntent() {
         return intent == null || intent.useLlm() == null || intent.useLlm();
@@ -21,9 +22,50 @@ public record Chat2PayProperties(
         return intent == null || intent.temperature() == null ? 0.0 : intent.temperature();
     }
 
+    public boolean downstreamMockEnabled() {
+        return downstream == null || downstream.mockEnabled() == null || downstream.mockEnabled();
+    }
+
+    public int downstreamRequestTimeoutMs() {
+        return downstream == null || downstream.requestTimeoutMs() == null
+                ? 30000 : downstream.requestTimeoutMs();
+    }
+
+    public int downstreamPayeeCacheTtlSeconds() {
+        return downstream == null || downstream.payeeCacheTtlSeconds() == null
+                ? 60 : downstream.payeeCacheTtlSeconds();
+    }
+
+    public String downstreamCurrency() {
+        return downstream == null || downstream.currency() == null || downstream.currency().isBlank()
+                ? (defaultCurrency == null || defaultCurrency.isBlank() ? "HKD" : defaultCurrency)
+                : downstream.currency();
+    }
+
     public record IntentProperties(
             Boolean useLlm,
             Integer maxTokens,
             Double temperature
+    ) {}
+
+    public record DownstreamProperties(
+            Boolean mockEnabled,
+            String loginUsername,
+            String loginUrlTemplate,
+            String loginPassword,
+            String payeeUrl,
+            String confirmUrl,
+            String debitAccountNumber,
+            String debitProductCategoryCode,
+            String currency,
+            Integer requestTimeoutMs,
+            Integer payeeCacheTtlSeconds,
+            String channelId,
+            String countryCode,
+            String groupMember,
+            String locale,
+            String sourceSystemId,
+            String deviceId,
+            String userAgent
     ) {}
 }

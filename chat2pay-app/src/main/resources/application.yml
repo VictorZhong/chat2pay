@@ -39,7 +39,8 @@ chat2pay:
     # bootstrap values used only when the DB row is missing.
     bootstrap-api-key: ${LLM_API_KEY:}
     bootstrap-session-token: ${COPILOT_SESSION_TOKEN:}
-    model: ${LLM_MODEL:gpt-4o}
+    model: ${LLM_MODEL:gpt-5.4}
+    max-completion-tokens: ${LLM_MAX_OUTPUT_TOKENS:${LLM_MAX_COMPLETION_TOKENS:2048}}
     account-type: ${GITHUB_COPILOT_ACCOUNT_TYPE:individual}
     editor-version: ${COPILOT_EDITOR_VERSION:1.114.0}
     base-url: ${LLM_BASE_URL:}
@@ -57,3 +58,24 @@ chat2pay:
     use-llm: true
     max-tokens: ${LLM_INTENT_MAX_TOKENS:350}
     temperature: ${LLM_INTENT_TEMPERATURE:0}
+  downstream:
+    # Keep true for local POC/test runs. Set PAYMENT_MOCK_ENABLED=false when
+    # the sandbox login, payee lookup, and confirm endpoints are reachable.
+    mock-enabled: ${PAYMENT_MOCK_ENABLED:true}
+    login-username: ${PAYMENT_LOGIN_USERNAME:}
+    login-url-template: ${PAYMENT_LOGIN_URL:https://testdataservices.apps.cf.wgdc-dn-03.cloud.uk.zzzz/dsp/entity/HK/{}/SAML3/30}
+    login-password: ${PAYMENT_LOGIN_PASSWORD:}
+    payee-url: ${PAYMENT_PAYEE_URL:https://mmf-payee-management--hk-hbap-banking-1.zzzz-dsvc-papi-hk01-hbap-cert.svc.default.shp.ape1.pre-prod.aws.cloud.zzzz/payees}
+    confirm-url: ${PAYMENT_CONFIRM_URL:https://dcc-hk-hbap-mvmny-domestic-payments-papi-3.zzzz-dsvc-papi-hk01-hbap-cert.svc.default.shp.ape1.pre-prod.aws.cloud.zzzz/confirm-domestic-payments}
+    debit-account-number: ${PAYMENT_DEBIT_ACCOUNT_NUMBER:VEdTRlNCU0dTQlNHEpP3avL8TimV5LF2nbqGbba2fUVfkHsOGmwg9K1t43GQJgS5mnXu3_EvF0zwJmeFRslRn_min_CT9p_wuTR7nwoWHNdZuxAFiVO2GPQ=}
+    debit-product-category-code: ${PAYMENT_DEBIT_PRODUCT_CATEGORY_CODE:CUR}
+    currency: ${PAYMENT_CURRENCY:HKD}
+    request-timeout-ms: ${PAYMENT_REQUEST_TIMEOUT_MS:30000}
+    payee-cache-ttl-seconds: ${PAYEE_CACHE_TTL_SECONDS:60}
+    channel-id: ${PAYMENT_CHANNEL_ID:WEB}
+    country-code: ${PAYMENT_COUNTRY_CODE:HK}
+    group-member: ${PAYMENT_GROUP_MEMBER:HBAP}
+    locale: ${PAYMENT_LOCALE:en_HK}
+    source-system-id: ${PAYMENT_SOURCE_SYSTEM_ID:11114418_O88}
+    device-id: ${PAYMENT_DEVICE_ID:192.168.1.1, 192.168.1.2}
+    user-agent: ${PAYMENT_USER_AGENT:Mozilla/5.0 (iPad; U; CPU OS 3_2_1 like Mac OS X; en-us) AppleWebKit/531.21.10 (KHTML, like Gecko) Mobile/7B405}

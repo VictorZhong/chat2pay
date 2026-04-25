@@ -1,4 +1,4 @@
-package com.chat2pay.app.persistence.jpa;
+package com.chat2pay.app.persistence.entity;
 
 import com.chat2pay.app.api.dto.ContentBlock;
 import com.chat2pay.app.domain.conversation.MessageKind;

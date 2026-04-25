@@ -1,4 +1,4 @@
-package com.chat2pay.app.persistence.jpa;
+package com.chat2pay.app.persistence.entity;
 
 import com.chat2pay.app.domain.profile.CapabilityType;
 import com.chat2pay.app.domain.profile.ProfileStatus;

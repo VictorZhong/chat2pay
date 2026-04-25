@@ -47,6 +47,7 @@ erDiagram
     CTP_PROFILE ||--o{ CTP_CHAT_SESSION : owns
     CTP_CHAT_SESSION ||--o{ CTP_CHAT_MESSAGE : contains
     CTP_CHAT_SESSION ||--o| CTP_PAYMENT_DRAFT : has_active_draft
+    CTP_REGISTERED_PAYEE ||--o{ CTP_PAYEE_ALIAS : has
 
     CTP_PROFILE {
         varchar(64) id PK
@@ -100,6 +101,7 @@ erDiagram
         varchar(32) selected_bank_code
         varchar(160) selected_bank_name
         varchar(64) selected_account_number
+        varchar(160) selected_display_label
         numeric(18,2) amount
         varchar(3) currency
         date payment_date
@@ -111,6 +113,31 @@ erDiagram
         timestamptz created_at
         timestamptz updated_at
         timestamptz completed_at
+    }
+
+    CTP_REGISTERED_PAYEE {
+        varchar(64) id PK
+        varchar(160) name
+        varchar(32) payee_type
+        varchar(32) bank_code
+        varchar(160) bank_name
+        varchar(64) account_number
+        varchar(160) display_label
+        timestamptz created_at
+    }
+
+    CTP_PAYEE_ALIAS {
+        varchar(64) payee_id PK,FK
+        varchar(160) alias PK
+    }
+
+    CTP_LLM_CREDENTIAL {
+        varchar(32) provider PK
+        text api_key
+        text session_token
+        timestamptz session_token_expires_at
+        jsonb metadata_json
+        timestamptz updated_at
     }
 ```
 
@@ -210,6 +237,7 @@ Stores the current or completed domestic payment draft for a session.
 | `selected_bank_code` | `varchar(32)` | Payee bank code |
 | `selected_bank_name` | `varchar(160)` | Payee bank name |
 | `selected_account_number` | `varchar(64)` | Display-safe account identifier |
+| `selected_display_label` | `varchar(160)` | Product/account label shown in confirmation |
 | `amount` | `numeric(18,2)` | Payment amount |
 | `currency` | `varchar(3)` | V1 normally `HKD` |
 | `payment_date` | `date` | Date only, no time-of-day in V1 |
@@ -227,6 +255,49 @@ Stores the current or completed domestic payment draft for a session.
 - payee query alone does not require a draft row
 - V2 can extend `context_json` or add targeted columns when international
   payment becomes concrete
+
+## 4.5 `ctp_registered_payee`
+
+Stores the local POC registered-payee directory used when
+`PAYMENT_MOCK_ENABLED=true`.
+
+For real downstream mode (`PAYMENT_MOCK_ENABLED=false`), payees are fetched from
+`PAYMENT_PAYEE_URL`; selected downstream `payeeIdIndex` values are persisted in
+`ctp_payment_draft.selected_payee_id`.
+
+### Important Columns
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `varchar(64)` | Local POC payee id |
+| `name` | `varchar(160)` | User-facing payee name |
+| `payee_type` | `varchar(32)` | Domestic downstream payee type |
+| `bank_code` | `varchar(32)` | Payee bank code |
+| `bank_name` | `varchar(160)` | Payee bank name |
+| `account_number` | `varchar(64)` | Display-safe account identifier |
+| `display_label` | `varchar(160)` | Product/account label |
+
+## 4.6 `ctp_payee_alias`
+
+Stores local alias hints for regex fallback and DB-seeded POC payee lookup.
+
+| Column | Type | Notes |
+|---|---|---|
+| `payee_id` | `varchar(64)` | FK to `ctp_registered_payee.id` |
+| `alias` | `varchar(160)` | Lowercase alias used for fallback matching |
+
+## 4.7 `ctp_llm_credential`
+
+Stores LLM provider credentials and short-lived session tokens.
+
+| Column | Type | Notes |
+|---|---|---|
+| `provider` | `varchar(32)` | `COPILOT_PERSONAL` / `REMOTE_API` |
+| `api_key` | `text` | GitHub token/PAT used for Copilot session-token exchange |
+| `session_token` | `text` | Cached Copilot bearer token |
+| `session_token_expires_at` | `timestamptz` | Cached token expiry |
+| `metadata_json` | `jsonb` | Future provider metadata |
+| `updated_at` | `timestamptz` | Last credential/token update |
 
 ## 5. Indexing Strategy
 
@@ -275,10 +346,12 @@ changes should be made through a new Flyway migration.
 
 For V1:
 
-- seed one or a few `ACTIVE` profiles
+- insert one or a few `ACTIVE` profiles manually
 - keep `supported_capabilities_json` as `["DOMESTIC_PAYMENT"]`
-- set `username` to the downstream identity needed by `LOGIN_URL`
+- set `username` for operator/user display; current downstream login identity is
+  configured through `PAYMENT_LOGIN_USERNAME`
 - keep profile display data lightweight
+- use `V2__seed_payees.sql` only for local POC/mock mode payee data
 
 ## 8. Operational Notes
 

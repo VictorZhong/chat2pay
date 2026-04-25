@@ -3,6 +3,7 @@ package com.chat2pay.app.application.conversation;
 import com.chat2pay.app.api.dto.ChatDtos.ChatMessage;
 import com.chat2pay.app.api.dto.ChatDtos.ChatSessionDetail;
 import com.chat2pay.app.api.dto.ChatDtos.ChatTurnResponse;
+import com.chat2pay.app.api.dto.ChatDtos.ErrorSummary;
 import com.chat2pay.app.api.dto.ChatDtos.PayeeSummary;
 import com.chat2pay.app.api.dto.ChatDtos.PaymentDraft;
 import com.chat2pay.app.api.dto.ChatDtos.SendMessageRequest;
@@ -19,15 +20,19 @@ import com.chat2pay.app.domain.conversation.MessageKind;
 import com.chat2pay.app.domain.conversation.MessageRole;
 import com.chat2pay.app.domain.payment.PaymentDraftStatus;
 import com.chat2pay.app.domain.payment.PaymentType;
-import com.chat2pay.app.persistence.jdbc.JdbcPayeeStore;
-import com.chat2pay.app.persistence.jdbc.JdbcPayeeStore.RegisteredPayee;
-import com.chat2pay.app.persistence.jdbc.JdbcSessionStore;
-import com.chat2pay.app.persistence.jdbc.JdbcSessionStore.SessionRecord;
+import com.chat2pay.app.integration.downstream.domestic.DomesticPaymentClient;
+import com.chat2pay.app.integration.downstream.domestic.DomesticPaymentClient.DomesticPaymentRequest;
+import com.chat2pay.app.integration.downstream.domestic.DomesticPaymentClient.PaymentConfirmationResult;
+import com.chat2pay.app.persistence.repository.PayeeStore;
+import com.chat2pay.app.persistence.repository.PayeeStore.RegisteredPayee;
+import com.chat2pay.app.persistence.repository.SessionStore;
+import com.chat2pay.app.persistence.repository.SessionStore.SessionRecord;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -38,16 +43,19 @@ public class ChatOrchestratorService {
 
     private static final String DEFAULT_CURRENCY = "HKD";
 
-    private final JdbcSessionStore sessions;
-    private final JdbcPayeeStore payees;
+    private final SessionStore sessions;
+    private final PayeeStore payees;
     private final IntentInterpreter intentInterpreter;
+    private final DomesticPaymentClient domesticPayments;
 
-    public ChatOrchestratorService(JdbcSessionStore sessions,
-                                   JdbcPayeeStore payees,
-                                   IntentInterpreter intentInterpreter) {
+    public ChatOrchestratorService(SessionStore sessions,
+                                   PayeeStore payees,
+                                   IntentInterpreter intentInterpreter,
+                                   DomesticPaymentClient domesticPayments) {
         this.sessions = sessions;
         this.payees = payees;
         this.intentInterpreter = intentInterpreter;
+        this.domesticPayments = domesticPayments;
     }
 
     public ChatMessage welcomeMessage(String sessionId) {
@@ -347,10 +355,49 @@ public class ChatOrchestratorService {
                             "The payment draft is incomplete. Please provide the missing details first.")));
         }
 
-        String reference = "DOM-" + LocalDate.now().toString().replace("-", "") + "-"
-                + draft.draftId().substring(Math.max(0, draft.draftId().length() - 4));
         draft = updateDraft(draft, draft.payeeQueryText(), draft.selectedPayee(), draft.amount(),
-                draft.paymentDate(), PaymentDraftStatus.CONFIRMED, reference);
+                draft.paymentDate(), PaymentDraftStatus.EXECUTING, draft.downstreamReference());
+        record.setSession(withDraft(record.session(), draft));
+        transition(record, ConversationState.EXECUTING, ChatSessionStatus.ACTIVE);
+
+        PaymentConfirmationResult result;
+        try {
+            result = domesticPayments.confirm(new DomesticPaymentRequest(
+                    draft.selectedPayee().payeeId(),
+                    draft.selectedPayee().name(),
+                    draft.amount(),
+                    draft.paymentDate()
+            ));
+            if (!result.ok()) {
+                throw new IllegalStateException(result.message() == null
+                        ? "Domestic payment confirmation was rejected." : result.message());
+            }
+        } catch (RuntimeException ex) {
+            Map<String, Object> context = withContext(draft.context(), Map.of(
+                    "downstreamError", ex.getMessage() == null ? "Unknown downstream error" : ex.getMessage()
+            ));
+            draft = updateDraft(draft, draft.payeeQueryText(), draft.selectedPayee(), draft.amount(),
+                    draft.paymentDate(), PaymentDraftStatus.FAILED, draft.downstreamReference(),
+                    new ErrorSummary("DOWNSTREAM_PAYMENT_FAILED", ex.getMessage()), context);
+            record.setSession(withDraft(record.session(), draft));
+            transition(record, ConversationState.FAILED, ChatSessionStatus.FAILED);
+            return assistantMessage(record.session().sessionId(), List.of(
+                    errorBlock("Payment failed",
+                            "The domestic payment could not be submitted: " + ex.getMessage()),
+                    summaryBlock("Failed payment", draftFields(draft), null)
+            ));
+        }
+
+        String reference = result.reference() == null || result.reference().isBlank()
+                ? "DOM-" + LocalDate.now().toString().replace("-", "") + "-"
+                    + draft.draftId().substring(Math.max(0, draft.draftId().length() - 4))
+                : result.reference();
+        Map<String, Object> context = withContext(draft.context(), Map.of(
+                "downstreamStatusCode", result.statusCode(),
+                "downstreamResponse", result.response() == null ? Map.of() : result.response()
+        ));
+        draft = updateDraft(draft, draft.payeeQueryText(), draft.selectedPayee(), draft.amount(),
+                draft.paymentDate(), PaymentDraftStatus.CONFIRMED, reference, null, context);
         record.setSession(withDraft(record.session(), draft));
         transition(record, ConversationState.COMPLETED, ChatSessionStatus.COMPLETED);
 
@@ -401,9 +448,29 @@ public class ChatOrchestratorService {
     private PaymentDraft updateDraft(PaymentDraft d, String payeeQuery, PayeeSummary selected,
                                      Double amount, LocalDate date, PaymentDraftStatus status,
                                      String reference) {
+        return updateDraft(d, payeeQuery, selected, amount, date, status, reference, null);
+    }
+
+    private PaymentDraft updateDraft(PaymentDraft d, String payeeQuery, PayeeSummary selected,
+                                     Double amount, LocalDate date, PaymentDraftStatus status,
+                                     String reference, ErrorSummary lastError) {
+        return updateDraft(d, payeeQuery, selected, amount, date, status, reference, lastError, d.context());
+    }
+
+    private PaymentDraft updateDraft(PaymentDraft d, String payeeQuery, PayeeSummary selected,
+                                     Double amount, LocalDate date, PaymentDraftStatus status,
+                                     String reference, ErrorSummary lastError,
+                                     Map<String, Object> context) {
         return new PaymentDraft(d.draftId(), d.sessionId(), d.paymentType(), status,
                 payeeQuery, selected, amount, d.currency() != null ? d.currency() : DEFAULT_CURRENCY,
-                date, reference, null, d.context(), Instant.now());
+                date, reference, lastError, context, Instant.now());
+    }
+
+    private Map<String, Object> withContext(Map<String, Object> existing, Map<String, Object> updates) {
+        Map<String, Object> next = new HashMap<>();
+        if (existing != null) next.putAll(existing);
+        next.putAll(updates);
+        return next;
     }
 
     private ChatSessionDetail withDraft(ChatSessionDetail s, PaymentDraft draft) {

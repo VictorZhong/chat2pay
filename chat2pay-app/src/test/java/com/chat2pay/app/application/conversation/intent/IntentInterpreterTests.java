@@ -9,7 +9,7 @@ import com.chat2pay.app.integration.llm.LlmCompletionRequest;
 import com.chat2pay.app.integration.llm.LlmCompletionResponse;
 import com.chat2pay.app.integration.llm.LlmProvider;
 import com.chat2pay.app.integration.llm.LlmRouter;
-import com.chat2pay.app.persistence.jdbc.JdbcPayeeStore;
+import com.chat2pay.app.persistence.repository.PayeeStore;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
@@ -26,12 +26,13 @@ import static org.mockito.Mockito.when;
 class IntentInterpreterTests {
 
     private final LlmRouter router = mock(LlmRouter.class);
-    private final JdbcPayeeStore payees = mock(JdbcPayeeStore.class);
+    private final PayeeStore payees = mock(PayeeStore.class);
     private final Chat2PayProperties properties = new Chat2PayProperties(
             "COPILOT_PERSONAL",
             "REMOTE_API",
             "HKD",
-            new Chat2PayProperties.IntentProperties(true, 350, 0.0)
+            new Chat2PayProperties.IntentProperties(true, 350, 0.0),
+            null
     );
 
     @Test
@@ -41,7 +42,7 @@ class IntentInterpreterTests {
         when(provider.providerType()).thenReturn(LlmProviderType.COPILOT_PERSONAL);
         when(provider.complete(any(LlmCompletionRequest.class))).thenReturn(new LlmCompletionResponse(
                 LlmProviderType.COPILOT_PERSONAL,
-                "gpt-4o",
+                "gpt-5.4",
                 """
                 {
                   "intent": "DOMESTIC_PAYMENT",
