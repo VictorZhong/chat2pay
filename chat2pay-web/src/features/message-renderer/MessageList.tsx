@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { ChatMessage, UiEventRequest } from '@/shared/api/contracts';
 import { MessageRenderer } from '@/features/message-renderer/MessageRenderer';
-import { BrandLoadingPanel } from '@/shared/ui/BrandLoadingPanel';
+import { BrandAvatar } from '@/shared/ui/BrandAvatar';
 
 export function MessageList({
   messages,
@@ -58,7 +58,22 @@ export function MessageList({
             </div>
           </div>
         ) : null}
-        {showAssistantLoading ? <BrandLoadingPanel compact /> : null}
+        {showAssistantLoading ? (
+          <div className="brand-message-entry flex gap-4" aria-live="polite" aria-label="Assistant response loading">
+            <BrandAvatar name={assistantName} size="sm" />
+            <div className="max-w-[840px] flex-1 space-y-3">
+              <div className="flex items-center gap-3">
+                <p className="text-sm font-semibold text-brand-black">{assistantName}</p>
+                <span className="brand-status-indicator animate-pulse bg-brand-red text-brand-red" />
+                <span className="brand-loading-track" aria-hidden="true">
+                  <span className="brand-loading-bar" />
+                  <span className="brand-loading-bar" />
+                  <span className="brand-loading-bar" />
+                </span>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );

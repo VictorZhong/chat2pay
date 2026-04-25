@@ -1034,6 +1034,7 @@ export function listChatSessions(profileId: string) {
         .map((record) => ({
           sessionId: record.session.sessionId,
           title: record.session.title,
+          titleLocked: record.session.titleLocked ?? false,
           status: record.session.status,
           state: record.session.state,
           llmProvider: record.session.llmProvider ?? null,
@@ -1052,6 +1053,7 @@ export function createChatSession(profileId: string, title = 'New conversation')
     const session: ChatSessionDetail = {
       sessionId: createId('session'),
       title,
+      titleLocked: false,
       status: 'ACTIVE',
       state: 'IDLE',
       llmProvider: 'COPILOT_PERSONAL',
@@ -1078,6 +1080,32 @@ export function createChatSession(profileId: string, title = 'New conversation')
 
 export function getChatSession(profileId: string, sessionId: string) {
   return withLatency<ChatSessionDetail>(() => clone(getRecord(profileId, sessionId).session));
+}
+
+export function deleteChatSession(profileId: string, sessionId: string) {
+  return withLatency<void>(() => {
+    const database = getDatabase();
+    const records = database.sessionsByProfile[profileId] ?? [];
+    const next = records.filter((entry) => entry.session.sessionId !== sessionId);
+    if (next.length === records.length) {
+      throw new Error('Session not found.');
+    }
+    database.sessionsByProfile[profileId] = next;
+    persistDatabase();
+  });
+}
+
+export function renameChatSession(profileId: string, sessionId: string, title: string) {
+  return withLatency<ChatSessionDetail>(() => {
+    const trimmed = (title ?? '').trim();
+    if (!trimmed) throw new Error('Session title must not be blank.');
+    const record = getRecord(profileId, sessionId);
+    record.session.title = trimmed.slice(0, 120);
+    record.session.titleLocked = true;
+    record.session.updatedAt = nowIso();
+    persistDatabase();
+    return clone(record.session);
+  });
 }
 
 export function listChatMessages(profileId: string, sessionId: string) {

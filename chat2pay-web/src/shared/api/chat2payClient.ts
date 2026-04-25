@@ -32,6 +32,16 @@ export const chat2payClient = {
       ? mockServer.getChatSession(profileId, sessionId)
       : chat2payHttpClient.getChatSession(profileId, sessionId);
   },
+  deleteChatSession(profileId: string, sessionId: string) {
+    return USE_MOCK_API
+      ? mockServer.deleteChatSession(profileId, sessionId)
+      : chat2payHttpClient.deleteChatSession(profileId, sessionId);
+  },
+  renameChatSession(profileId: string, sessionId: string, title: string) {
+    return USE_MOCK_API
+      ? mockServer.renameChatSession(profileId, sessionId, title)
+      : chat2payHttpClient.renameChatSession(profileId, sessionId, title);
+  },
   listChatMessages(profileId: string, sessionId: string) {
     return USE_MOCK_API
       ? mockServer.listChatMessages(profileId, sessionId)

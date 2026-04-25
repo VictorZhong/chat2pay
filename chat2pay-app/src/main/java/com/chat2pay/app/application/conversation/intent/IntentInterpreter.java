@@ -17,6 +17,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.Locale;
 import java.util.Map;
@@ -182,7 +183,7 @@ public class IntentInterpreter {
         }
 
         String payeeQuery = extractPayeeQuery(profileId, text);
-        Double amount = extractAmount(text);
+        BigDecimal amount = extractAmount(text);
         LocalDate date = extractPaymentDate(text);
         boolean hasDraft = session.activeDraft() != null;
         boolean detailOnlyForDraft = hasDraft && (payeeQuery != null || amount != null || date != null)
@@ -197,7 +198,7 @@ public class IntentInterpreter {
         return IntentAnalysis.unknown("REGEX_FALLBACK");
     }
 
-    private IntentAnalysis analysis(IntentType intent, String payeeQuery, Double amount, LocalDate paymentDate) {
+    private IntentAnalysis analysis(IntentType intent, String payeeQuery, BigDecimal amount, LocalDate paymentDate) {
         return new IntentAnalysis(
                 intent,
                 IntentAnalysis.toolNameFor(intent),
@@ -221,7 +222,7 @@ public class IntentInterpreter {
         return null;
     }
 
-    private Double extractAmount(String text) {
+    private BigDecimal extractAmount(String text) {
         Matcher m = AMOUNT.matcher(text.replace(",", ""));
         if (!m.find()) return null;
         return parseAmount(m.group(1));
@@ -248,17 +249,18 @@ public class IntentInterpreter {
         };
     }
 
-    private Double parseAmount(Object raw) {
+    private BigDecimal parseAmount(Object raw) {
         if (raw == null) return null;
+        if (raw instanceof BigDecimal bd) return bd.signum() > 0 ? bd : null;
         if (raw instanceof Number n) {
-            double value = n.doubleValue();
-            return value > 0 ? value : null;
+            BigDecimal value = new BigDecimal(n.toString());
+            return value.signum() > 0 ? value : null;
         }
         String value = asString(raw);
         if (value == null) return null;
         try {
-            double parsed = Double.parseDouble(value.replace(",", "").replaceAll("(?i)hkd", "").trim());
-            return parsed > 0 ? parsed : null;
+            BigDecimal parsed = new BigDecimal(value.replace(",", "").replaceAll("(?i)hkd", "").trim());
+            return parsed.signum() > 0 ? parsed : null;
         } catch (NumberFormatException ex) {
             return null;
         }

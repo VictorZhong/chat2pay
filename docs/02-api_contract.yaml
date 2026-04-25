@@ -143,6 +143,40 @@ paths:
                 $ref: '#/components/schemas/ChatSessionDetail'
         '404':
           $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Chat]
+      summary: Rename a chat session
+      operationId: renameChatSession
+      parameters:
+        - $ref: '#/components/parameters/XProfileId'
+        - $ref: '#/components/parameters/SessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RenameChatSessionRequest'
+      responses:
+        '200':
+          description: Updated session detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatSessionDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Chat]
+      summary: Delete a chat session and its messages/draft
+      operationId: deleteChatSession
+      parameters:
+        - $ref: '#/components/parameters/XProfileId'
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '204':
+          description: Session deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   /chat/sessions/{sessionId}/messages:
     get:
@@ -386,11 +420,23 @@ components:
           maxLength: 120
           example: Pay Bob
 
+    RenameChatSessionRequest:
+      type: object
+      required:
+        - title
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 120
+          example: Pay Bob Rent
+
     ChatSessionSummary:
       type: object
       required:
         - sessionId
         - title
+        - titleLocked
         - status
         - state
         - createdAt
@@ -401,6 +447,9 @@ components:
         title:
           type: string
           example: Pay Bob
+        titleLocked:
+          type: boolean
+          description: True when the user manually renamed the session.
         status:
           $ref: '#/components/schemas/ChatSessionStatus'
         state:
@@ -425,6 +474,7 @@ components:
       required:
         - sessionId
         - title
+        - titleLocked
         - status
         - state
         - createdAt
@@ -434,6 +484,9 @@ components:
           type: string
         title:
           type: string
+        titleLocked:
+          type: boolean
+          description: True when the user manually renamed the session.
         status:
           $ref: '#/components/schemas/ChatSessionStatus'
         state:
@@ -579,10 +632,11 @@ components:
             - $ref: '#/components/schemas/PayeeSummary'
           nullable: true
         amount:
-          type: number
-          format: double
+          type: string
+          format: decimal
           nullable: true
-          example: 500
+          description: Decimal string serialized by the backend to avoid precision loss.
+          example: "500.00"
         currency:
           type: string
           nullable: true

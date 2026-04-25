@@ -19,17 +19,18 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
-import java.util.AbstractList;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Function;
 
 /**
  * Session + draft + message persistence. SessionRecord acts as a short-lived
- * snapshot whose mutations write through to PostgreSQL through JPA repositories.
+ * turn snapshot; applyTurn persists all mutations in one transaction.
  */
 @Repository
 public class SessionStore {
@@ -55,12 +56,14 @@ public class SessionStore {
     public class SessionRecord {
         private final String profileId;
         private ChatSessionDetail snapshot;
-        private final WriteThroughMessages writeThroughMessages;
+        private final CopyOnWriteArrayList<ChatMessage> messages;
+        private final int persistedMessageCount;
 
         SessionRecord(String profileId, ChatSessionDetail snapshot, List<ChatMessage> seed) {
             this.profileId = profileId;
             this.snapshot = snapshot;
-            this.writeThroughMessages = new WriteThroughMessages(profileId, snapshot.sessionId(), seed);
+            this.messages = new CopyOnWriteArrayList<>(seed);
+            this.persistedMessageCount = seed.size();
         }
 
         public String profileId() { return profileId; }
@@ -68,33 +71,28 @@ public class SessionStore {
         public ChatSessionDetail session() { return snapshot; }
 
         public void setSession(ChatSessionDetail updated) {
-            persistSessionAndDraft(profileId, updated);
             this.snapshot = updated;
         }
 
-        public List<ChatMessage> messages() { return writeThroughMessages; }
-    }
-
-    private class WriteThroughMessages extends AbstractList<ChatMessage> {
-        private final String profileId;
-        private final String sessionId;
-        private final List<ChatMessage> cache;
-
-        WriteThroughMessages(String profileId, String sessionId, List<ChatMessage> seed) {
-            this.profileId = profileId;
-            this.sessionId = sessionId;
-            this.cache = new ArrayList<>(seed);
+        /** Refresh the in-memory snapshot from the DB without writing through. */
+        public void reloadSnapshot() {
+            ChatSessionEntity entity = sessions.findByIdAndProfileId(snapshot.sessionId(), profileId)
+                    .orElse(null);
+            if (entity == null) return;
+            this.snapshot = mapSession(entity, loadDraftBySession(entity.getId()));
         }
 
-        @Override public int size() { return cache.size(); }
+        public List<ChatMessage> messages() {
+            return messages;
+        }
 
-        @Override public ChatMessage get(int index) { return cache.get(index); }
+        public List<ChatMessage> messageSnapshot() {
+            return List.copyOf(messages);
+        }
 
-        @Override
-        public boolean add(ChatMessage message) {
-            int sequenceNo = cache.size() + 1;
-            insertMessage(profileId, sessionId, sequenceNo, message);
-            return cache.add(message);
+        private List<ChatMessage> newMessages() {
+            if (messages.size() <= persistedMessageCount) return List.of();
+            return new ArrayList<>(messages.subList(persistedMessageCount, messages.size()));
         }
     }
 
@@ -122,6 +120,23 @@ public class SessionStore {
     }
 
     public SessionRecord get(String profileId, String sessionId) {
+        return loadRecord(profileId, sessionId);
+    }
+
+    public <T> T applyTurn(String profileId, String sessionId, Function<SessionRecord, T> mutator) {
+        return transactions.execute(status -> {
+            SessionRecord record = loadRecord(profileId, sessionId);
+            T result = mutator.apply(record);
+            persistRecord(record);
+            return result;
+        });
+    }
+
+    public List<ChatMessage> listMessages(String profileId, String sessionId) {
+        return transactions.execute(status -> loadRecord(profileId, sessionId).messageSnapshot());
+    }
+
+    private SessionRecord loadRecord(String profileId, String sessionId) {
         ChatSessionEntity entity = sessions.findByIdAndProfileId(sessionId, profileId)
                 .orElseThrow(() -> new NoSuchElementException("Session not found: " + sessionId));
         PaymentDraft draft = loadDraftBySession(sessionId);
@@ -137,46 +152,98 @@ public class SessionStore {
                 .toList();
     }
 
-    private void persistSessionAndDraft(String profileId, ChatSessionDetail detail) {
+    public void delete(String profileId, String sessionId) {
         transactions.executeWithoutResult(status -> {
-            Instant now = Instant.now();
-            PaymentDraft draft = detail.activeDraft();
-            if (draft != null) saveDraft(profileId, draft, detail.sessionId(), now);
+            ChatSessionEntity entity = sessions.findByIdAndProfileId(sessionId, profileId)
+                    .orElseThrow(() -> new NoSuchElementException("Session not found: " + sessionId));
+            // Break the deferred FK from session.active_draft_id before removing the draft.
+            entity.setActiveDraftId(null);
+            sessions.save(entity);
+            drafts.findBySessionId(sessionId).ifPresent(drafts::delete);
+            messages.deleteBySessionId(sessionId);
+            sessions.delete(entity);
+        });
+    }
 
-            ChatSessionEntity entity = sessions.findById(detail.sessionId())
-                    .orElseThrow(() -> new NoSuchElementException("Session no longer exists: " + detail.sessionId()));
-            entity.setTitle(detail.title());
-            entity.setStatus(detail.status());
-            entity.setState(detail.state());
-            entity.setLlmProvider(detail.llmProvider());
-            entity.setActiveDraftId(draft == null ? null : draft.draftId());
-            entity.setUpdatedAt(now);
+    public ChatSessionDetail rename(String profileId, String sessionId, String title) {
+        return transactions.execute(status -> {
+            ChatSessionEntity entity = sessions.findByIdAndProfileId(sessionId, profileId)
+                    .orElseThrow(() -> new NoSuchElementException("Session not found: " + sessionId));
+            String trimmed = title == null ? "" : title.trim();
+            if (trimmed.isEmpty()) {
+                throw new IllegalArgumentException("Session title must not be blank.");
+            }
+            if (trimmed.length() > 120) trimmed = trimmed.substring(0, 120);
+            entity.setTitle(trimmed);
+            entity.setTitleLocked(true);
+            entity.setUpdatedAt(Instant.now());
+            sessions.save(entity);
+            return mapSession(entity, loadDraftBySession(sessionId));
+        });
+    }
+
+    /**
+     * Replaces the title only when the user has not manually renamed the session.
+     * Used by the AI-suggested title flow.
+     */
+    public void applyAiSuggestedTitle(String profileId, String sessionId, String suggestedTitle) {
+        if (suggestedTitle == null || suggestedTitle.isBlank()) return;
+        transactions.executeWithoutResult(status -> {
+            ChatSessionEntity entity = sessions.findByIdAndProfileId(sessionId, profileId)
+                    .orElseThrow(() -> new NoSuchElementException("Session not found: " + sessionId));
+            if (entity.isTitleLocked()) return;
+            String trimmed = suggestedTitle.trim();
+            if (trimmed.length() > 120) trimmed = trimmed.substring(0, 120);
+            entity.setTitle(trimmed);
+            entity.setUpdatedAt(Instant.now());
             sessions.save(entity);
         });
     }
 
-    private void insertMessage(String profileId, String sessionId, int sequenceNo, ChatMessage message) {
-        transactions.executeWithoutResult(status -> {
-            ChatMessageEntity entity = new ChatMessageEntity();
-            entity.setId(message.messageId());
-            entity.setProfileId(profileId);
-            entity.setSessionId(sessionId);
-            entity.setSequenceNo(sequenceNo);
-            entity.setRole(message.role());
-            entity.setKind(message.kind());
-            entity.setContentText(message.text());
-            entity.setContentBlocks(message.contentBlocks());
-            entity.setMetadata(message.metadata());
-            entity.setCreatedAt(message.createdAt() == null ? Instant.now() : message.createdAt());
-            messages.save(entity);
+    private void persistRecord(SessionRecord record) {
+        ChatSessionDetail detail = record.session();
+        Instant now = Instant.now();
+        PaymentDraft draft = detail.activeDraft();
+        if (draft != null) saveDraft(record.profileId(), draft, detail.sessionId(), now);
 
-            ChatSessionEntity session = sessions.findById(sessionId)
-                    .orElseThrow(() -> new NoSuchElementException("Session no longer exists: " + sessionId));
-            session.setMessageCount(session.getMessageCount() + 1);
-            session.setLastMessagePreview(previewOf(message));
-            session.setUpdatedAt(Instant.now());
-            sessions.save(session);
-        });
+        ChatSessionEntity entity = sessions.findByIdAndProfileId(detail.sessionId(), record.profileId())
+                .orElseThrow(() -> new NoSuchElementException("Session no longer exists: " + detail.sessionId()));
+
+        List<ChatMessage> newMessages = record.newMessages();
+        int sequenceNo = record.persistedMessageCount;
+        for (ChatMessage message : newMessages) {
+            saveMessage(record.profileId(), detail.sessionId(), ++sequenceNo, message);
+        }
+
+        // Snapshot may carry an auto-suggested title; user-locked titles win.
+        if (!entity.isTitleLocked()) {
+            entity.setTitle(detail.title());
+        }
+        entity.setStatus(detail.status());
+        entity.setState(detail.state());
+        entity.setLlmProvider(detail.llmProvider());
+        entity.setActiveDraftId(draft == null ? null : draft.draftId());
+        if (!newMessages.isEmpty()) {
+            entity.setMessageCount(record.persistedMessageCount + newMessages.size());
+            entity.setLastMessagePreview(previewOf(newMessages.get(newMessages.size() - 1)));
+        }
+        entity.setUpdatedAt(now);
+        sessions.save(entity);
+    }
+
+    private void saveMessage(String profileId, String sessionId, int sequenceNo, ChatMessage message) {
+        ChatMessageEntity entity = new ChatMessageEntity();
+        entity.setId(message.messageId());
+        entity.setProfileId(profileId);
+        entity.setSessionId(sessionId);
+        entity.setSequenceNo(sequenceNo);
+        entity.setRole(message.role());
+        entity.setKind(message.kind());
+        entity.setContentText(message.text());
+        entity.setContentBlocks(message.contentBlocks());
+        entity.setMetadata(message.metadata());
+        entity.setCreatedAt(message.createdAt() == null ? Instant.now() : message.createdAt());
+        messages.save(entity);
     }
 
     private void saveDraft(String profileId, PaymentDraft d, String sessionId, Instant now) {
@@ -200,7 +267,7 @@ public class SessionStore {
         entity.setSelectedBankName(p == null ? null : p.bankName());
         entity.setSelectedAccountNumber(p == null ? null : p.accountNumber());
         entity.setSelectedDisplayLabel(p == null ? null : p.displayLabel());
-        entity.setAmount(d.amount() == null ? null : BigDecimal.valueOf(d.amount()).setScale(2, RoundingMode.HALF_UP));
+        entity.setAmount(d.amount() == null ? null : d.amount().setScale(2, RoundingMode.HALF_UP));
         entity.setCurrency(d.currency());
         entity.setPaymentDate(d.paymentDate());
         entity.setDownstreamReference(d.downstreamReference());
@@ -230,6 +297,7 @@ public class SessionStore {
         return new ChatSessionDetail(
                 s.getId(),
                 s.getTitle(),
+                s.isTitleLocked(),
                 s.getStatus(),
                 s.getState(),
                 s.getLlmProvider(),
@@ -262,7 +330,7 @@ public class SessionStore {
                 e.getStatus(),
                 e.getPayeeQueryText(),
                 payee,
-                e.getAmount() == null ? null : e.getAmount().doubleValue(),
+                e.getAmount(),
                 e.getCurrency(),
                 e.getPaymentDate(),
                 e.getDownstreamReference(),

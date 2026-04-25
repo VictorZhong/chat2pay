@@ -14,8 +14,13 @@ import java.io.IOException;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Executor;
-import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Wraps the synchronous orchestrator into an SSE-style event stream that
@@ -31,13 +36,19 @@ public class ChatStreamService {
     private static final long TIMEOUT_MS = 60_000L;
     private static final int CHUNK_SIZE = 32;
     private static final long DELTA_PAUSE_MS = 30L;
+    private static final int MAX_STREAM_THREADS = 16;
+    private static final int STREAM_QUEUE_CAPACITY = 32;
 
     private final ChatOrchestratorService orchestrator;
-    private final Executor executor = Executors.newCachedThreadPool(runnable -> {
-        Thread t = new Thread(runnable, "chat-sse");
-        t.setDaemon(true);
-        return t;
-    });
+    private final Executor executor = new ThreadPoolExecutor(
+            MAX_STREAM_THREADS,
+            MAX_STREAM_THREADS,
+            0L,
+            TimeUnit.MILLISECONDS,
+            new ArrayBlockingQueue<>(STREAM_QUEUE_CAPACITY),
+            chatThreadFactory(),
+            new ThreadPoolExecutor.AbortPolicy()
+    );
 
     public ChatStreamService(ChatOrchestratorService orchestrator) {
         this.orchestrator = orchestrator;
@@ -53,7 +64,8 @@ public class ChatStreamService {
 
     private SseEmitter run(java.util.function.Supplier<ChatTurnResponse> work) {
         SseEmitter emitter = new SseEmitter(TIMEOUT_MS);
-        executor.execute(() -> {
+        try {
+            executor.execute(() -> {
             long startedNanos = System.nanoTime();
             try {
                 ChatTurnResponse turn = work.get();
@@ -115,8 +127,31 @@ public class ChatStreamService {
                     emitter.complete();
                 }
             }
-        });
+            });
+        } catch (RejectedExecutionException ex) {
+            log.warn("Chat SSE turn rejected because the bounded worker pool is full: {}", ex.getMessage());
+            try {
+                emit(emitter, "turn-error", Map.of(
+                        "code", "CHAT_STREAM_BUSY",
+                        "message", "Chat service is busy. Please retry in a moment.",
+                        "processingMs", 0
+                ));
+                emitter.complete();
+            } catch (IOException ioEx) {
+                log.debug("Chat SSE rejection event could not be written", ioEx);
+                emitter.completeWithError(ioEx);
+            }
+        }
         return emitter;
+    }
+
+    private static ThreadFactory chatThreadFactory() {
+        AtomicInteger sequence = new AtomicInteger(1);
+        return runnable -> {
+            Thread t = new Thread(runnable, "chat-sse-worker-" + sequence.getAndIncrement());
+            t.setDaemon(true);
+            return t;
+        };
     }
 
     private static void emit(SseEmitter emitter, String event, Object data) throws IOException {

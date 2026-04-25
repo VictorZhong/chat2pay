@@ -5,6 +5,7 @@ import com.chat2pay.app.api.dto.ChatDtos.ChatSessionDetail;
 import com.chat2pay.app.api.dto.ChatDtos.ChatTurnResponse;
 import com.chat2pay.app.api.dto.ChatDtos.SendMessageRequest;
 import com.chat2pay.app.api.dto.ContentBlock;
+import com.chat2pay.app.application.conversation.tool.PaymentToolRegistry;
 import com.chat2pay.app.application.conversation.intent.IntentInterpreter;
 import com.chat2pay.app.config.Chat2PayProperties;
 import com.chat2pay.app.domain.conversation.ChatSessionStatus;
@@ -24,10 +25,13 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
+import java.util.function.Function;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -52,7 +56,7 @@ class ChatOrchestratorServiceTests {
     @Test
     void obviousUnrelatedRequestReturnsGuidanceWithoutCallingLlm() {
         SessionRecord record = record();
-        when(sessions.get("profile_1", "session_1")).thenReturn(record);
+        givenApplyTurn(record);
 
         ChatTurnResponse response = service().handleUserMessage(
                 "profile_1",
@@ -76,7 +80,7 @@ class ChatOrchestratorServiceTests {
                 "gpt-5.4",
                 "Hi, I can help you find registered payees or prepare a domestic payment."
         ));
-        when(sessions.get("profile_1", "session_1")).thenReturn(record);
+        givenApplyTurn(record);
         when(llmRouter.currentIfAvailable()).thenReturn(Optional.of(provider));
 
         ChatTurnResponse response = service().handleUserMessage(
@@ -100,15 +104,30 @@ class ChatOrchestratorServiceTests {
                 llmRouter,
                 properties,
                 profiles,
-                new ObjectMapper()
+                new ObjectMapper(),
+                mock(SessionTitleSuggester.class),
+                new ChatBlockFactory(),
+                new ConversationStateMachine(),
+                mock(PaymentToolRegistry.class)
         );
+    }
+
+    private void givenApplyTurn(SessionRecord record) {
+        when(sessions.get("profile_1", "session_1")).thenReturn(record);
+        when(sessions.applyTurn(anyString(), anyString(), any())).thenAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            Function<SessionRecord, ?> mutator = (Function<SessionRecord, ?>) invocation.getArgument(2);
+            return mutator.apply(record);
+        });
     }
 
     private SessionRecord record() {
         SessionRecord record = mock(SessionRecord.class);
+        List<ChatMessage> messages = new ArrayList<>();
         when(record.profileId()).thenReturn("profile_1");
         when(record.session()).thenReturn(session());
-        when(record.messages()).thenReturn(new ArrayList<>());
+        when(record.messages()).thenReturn(messages);
+        when(record.messageSnapshot()).thenAnswer(invocation -> List.copyOf(messages));
         return record;
     }
 
@@ -117,6 +136,7 @@ class ChatOrchestratorServiceTests {
         return new ChatSessionDetail(
                 "session_1",
                 "Test",
+                false,
                 ChatSessionStatus.ACTIVE,
                 ConversationState.IDLE,
                 LlmProviderType.COPILOT_PERSONAL,

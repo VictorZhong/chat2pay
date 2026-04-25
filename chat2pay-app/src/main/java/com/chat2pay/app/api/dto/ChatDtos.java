@@ -8,9 +8,11 @@ import com.chat2pay.app.domain.conversation.MessageRole;
 import com.chat2pay.app.domain.conversation.UiEventType;
 import com.chat2pay.app.domain.payment.PaymentDraftStatus;
 import com.chat2pay.app.domain.payment.PaymentType;
+import com.fasterxml.jackson.annotation.JsonFormat;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
@@ -21,9 +23,12 @@ public final class ChatDtos {
 
     public record CreateChatSessionRequest(@Size(max = 120) String title) {}
 
+    public record RenameChatSessionRequest(@NotBlank @Size(max = 120) String title) {}
+
     public record ChatSessionSummary(
             String sessionId,
             String title,
+            boolean titleLocked,
             ChatSessionStatus status,
             ConversationState state,
             LlmProviderType llmProvider,
@@ -35,6 +40,7 @@ public final class ChatDtos {
     public record ChatSessionDetail(
             String sessionId,
             String title,
+            boolean titleLocked,
             ChatSessionStatus status,
             ConversationState state,
             LlmProviderType llmProvider,
@@ -98,7 +104,8 @@ public final class ChatDtos {
             PaymentDraftStatus status,
             String payeeQueryText,
             PayeeSummary selectedPayee,
-            Double amount,
+            @JsonFormat(shape = JsonFormat.Shape.STRING)
+            BigDecimal amount,
             String currency,
             LocalDate paymentDate,
             String downstreamReference,

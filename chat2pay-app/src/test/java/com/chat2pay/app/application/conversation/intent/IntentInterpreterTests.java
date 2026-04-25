@@ -14,6 +14,7 @@ import com.chat2pay.app.persistence.repository.PayeeStore;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
@@ -63,7 +64,7 @@ class IntentInterpreterTests {
         assertThat(analysis.intent()).isEqualTo(IntentType.DOMESTIC_PAYMENT);
         assertThat(analysis.toolName()).isEqualTo("prepare_domestic_payment");
         assertThat(analysis.payeeQuery()).isEqualTo("sarah wong");
-        assertThat(analysis.amount()).isEqualTo(88.5);
+        assertThat(analysis.amount()).isEqualByComparingTo(new BigDecimal("88.5"));
         assertThat(analysis.paymentDate()).isEqualTo(paymentDate);
         assertThat(analysis.source()).isEqualTo("LLM:COPILOT_PERSONAL");
         verify(provider).complete(any(LlmCompletionRequest.class));
@@ -93,7 +94,7 @@ class IntentInterpreterTests {
         assertThat(analysis.intent()).isEqualTo(IntentType.DOMESTIC_PAYMENT);
         assertThat(analysis.toolName()).isEqualTo("prepare_domestic_payment");
         assertThat(analysis.payeeQuery()).isEqualTo("sarah wong");
-        assertThat(analysis.amount()).isEqualTo(88.5);
+        assertThat(analysis.amount()).isEqualByComparingTo(new BigDecimal("88.5"));
         assertThat(analysis.paymentDate()).isEqualTo(paymentDate);
     }
 
@@ -119,6 +120,7 @@ class IntentInterpreterTests {
         return new ChatSessionDetail(
                 "session_test",
                 "Test",
+                false,
                 ChatSessionStatus.ACTIVE,
                 state,
                 LlmProviderType.COPILOT_PERSONAL,

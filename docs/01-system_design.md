@@ -246,11 +246,53 @@ The backend, not the model, enforces these rules:
 The provider boundary is `LlmProvider.complete(LlmCompletionRequest)`.
 `LlmCompletionRequest` carries chat messages, tool definitions, tool choice,
 assistant tool calls, and tool-result messages. Payment tool definitions and
-prompts are centralized in `PaymentToolDefinitions`, while tool execution stays
-inside the backend orchestrator so payment state transitions and side effects
-remain backend-owned.
+prompts are centralized in `PaymentToolDefinitions`; `PaymentToolRegistry`
+selects a `PaymentTool` implementation for execution, and backend action
+methods still own payment state transitions and side effects.
 
 This keeps the controller stable while V2 adds more providers and tools.
+
+### 7.4 How the LLM Tool Loop Really Works
+
+For each text turn, the orchestrator first builds a provider-agnostic tool-loop
+request. The model sees:
+
+- the payment assistant system prompt from `PaymentToolDefinitions`
+- the current date
+- the current `ConversationState`
+- a compact active-draft summary
+- the last 12 persisted chat messages, mapped back to user/assistant roles
+
+The request includes all V1 tool definitions and sets `tool_choice` to `auto`.
+The provider can return plain assistant content, one or more tool calls, or no
+usable decision. If more than one tool call is returned, the backend logs the
+dropped tool names and executes only the first call for this V1 loop.
+
+The loop stops when one of these conditions is met:
+
+- the provider returns final assistant content and no tool calls
+- a backend tool handler returns a terminal assistant message
+- payment execution reaches `COMPLETED`, `FAILED`, or `CANCELLED`
+- the hard `MAX_TOOL_LOOP_ITERATIONS` cap is hit
+- the provider path fails and the deterministic fallback takes over
+
+The current cap is 4 iterations. Tool results are appended as tool-result
+messages and sent back to the same provider until one of the terminal
+conditions above occurs.
+
+SSE streaming is synthesized after the synchronous backend turn completes. The
+backend emits `user-message`, `assistant-message-start`, one or more
+`assistant-message-delta` events, then `assistant-message-complete`. Leading
+assistant text is chunked into small deltas; structured blocks are emitted as
+block deltas. This is not provider token-level streaming in V1.
+
+Backend guardrails fire outside the model decision:
+
+- confirmation is gated by explicit user confirmation text or UI action
+- domestic payment execution validates payee, amount, and payment date
+- payee identifiers are resolved and validated against registered payees
+- unsupported international-payment requests are stopped before downstream work
+- downstream failures are normalized into error blocks and failed draft state
 
 ## 8. LLM Provider Strategy
 

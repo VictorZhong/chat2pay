@@ -11,7 +11,11 @@ import com.chat2pay.app.api.dto.ChatDtos.UiEventRequest;
 import com.chat2pay.app.api.dto.ContentBlock;
 import com.chat2pay.app.api.dto.ContentBlock.DisplayField;
 import com.chat2pay.app.api.dto.ContentBlock.SelectableItem;
+import com.chat2pay.app.application.conversation.tool.PaymentToolActions;
+import com.chat2pay.app.application.conversation.tool.PaymentToolContext;
 import com.chat2pay.app.application.conversation.tool.PaymentToolDefinitions;
+import com.chat2pay.app.application.conversation.tool.PaymentToolExecution;
+import com.chat2pay.app.application.conversation.tool.PaymentToolRegistry;
 import com.chat2pay.app.application.conversation.intent.IntentAnalysis;
 import com.chat2pay.app.application.conversation.intent.IntentInterpreter;
 import com.chat2pay.app.application.conversation.intent.IntentType;
@@ -21,7 +25,6 @@ import com.chat2pay.app.domain.conversation.ConversationState;
 import com.chat2pay.app.domain.conversation.MessageKind;
 import com.chat2pay.app.domain.conversation.MessageRole;
 import com.chat2pay.app.domain.payment.PaymentDraftStatus;
-import com.chat2pay.app.domain.payment.PaymentType;
 import com.chat2pay.app.integration.downstream.domestic.DomesticPaymentClient;
 import com.chat2pay.app.integration.downstream.domestic.DomesticPaymentClient.DomesticPaymentRequest;
 import com.chat2pay.app.integration.downstream.domestic.DomesticPaymentClient.PaymentConfirmationResult;
@@ -43,6 +46,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -52,14 +56,12 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
-import java.util.UUID;
 import java.util.regex.Pattern;
 
 @Service
-public class ChatOrchestratorService {
+public class ChatOrchestratorService implements PaymentToolActions {
 
     private static final Logger log = LoggerFactory.getLogger(ChatOrchestratorService.class);
-    private static final String DEFAULT_CURRENCY = "HKD";
     private static final int MAX_TOOL_LOOP_ITERATIONS = 4;
     private static final Pattern EXPLICIT_CONFIRMATION = Pattern.compile(
             "\\b(confirm|confirmed|yes|okay|ok|go ahead|proceed|send it|approve)\\b",
@@ -85,6 +87,10 @@ public class ChatOrchestratorService {
     private final Chat2PayProperties properties;
     private final ProfileStore profiles;
     private final ObjectMapper mapper;
+    private final SessionTitleSuggester titleSuggester;
+    private final ChatBlockFactory blocks;
+    private final ConversationStateMachine stateMachine;
+    private final PaymentToolRegistry paymentTools;
 
     public ChatOrchestratorService(SessionStore sessions,
                                    PayeeStore payees,
@@ -93,7 +99,11 @@ public class ChatOrchestratorService {
                                    LlmRouter llmRouter,
                                    Chat2PayProperties properties,
                                    ProfileStore profiles,
-                                   ObjectMapper mapper) {
+                                   ObjectMapper mapper,
+                                   SessionTitleSuggester titleSuggester,
+                                   ChatBlockFactory blocks,
+                                   ConversationStateMachine stateMachine,
+                                   PaymentToolRegistry paymentTools) {
         this.sessions = sessions;
         this.payees = payees;
         this.intentInterpreter = intentInterpreter;
@@ -102,6 +112,10 @@ public class ChatOrchestratorService {
         this.properties = properties;
         this.profiles = profiles;
         this.mapper = mapper;
+        this.titleSuggester = titleSuggester;
+        this.blocks = blocks;
+        this.stateMachine = stateMachine;
+        this.paymentTools = paymentTools;
     }
 
     public ChatMessage welcomeMessage(String sessionId) {
@@ -113,44 +127,64 @@ public class ChatOrchestratorService {
 
     public ChatTurnResponse handleUserMessage(String profileId, String sessionId, SendMessageRequest request) {
         long startedNanos = System.nanoTime();
-        SessionRecord record = sessions.get(profileId, sessionId);
         String text = request.messageText().trim();
-        ChatMessage userMessage = userTextMessage(sessionId, text);
-        record.messages().add(userMessage);
+        CompletedTurn turn = sessions.applyTurn(profileId, sessionId, record -> {
+            ChatMessage userMessage = userTextMessage(sessionId, text);
+            record.messages().add(userMessage);
 
-        ChatMessage assistant = withProcessingMetadata(handleTextTurn(record, text), startedNanos);
-        record.messages().add(assistant);
-        touchPreview(record, assistant);
-        log.debug("Chat text turn processed: profileId={} sessionId={} userMessageId={} assistantMessageId={} processingMs={}",
-                profileId, sessionId, userMessage.messageId(), assistant.messageId(), processingMs(assistant));
+            ChatMessage assistant = withProcessingMetadata(handleTextTurn(record, text), startedNanos);
+            record.messages().add(assistant);
+            stateMachine.touch(record);
+            log.debug("Chat text turn processed: profileId={} sessionId={} userMessageId={} assistantMessageId={} processingMs={}",
+                    profileId, sessionId, userMessage.messageId(), assistant.messageId(), processingMs(assistant));
 
-        return new ChatTurnResponse(
-                record.session(), userMessage, assistant,
-                record.session().activeDraft(), Instant.now()
-        );
+            return new CompletedTurn(record.session(), userMessage, assistant, record.messageSnapshot());
+        });
+
+        ChatSessionDetail session = maybeSuggestTitle(profileId, turn.session(), turn.messages());
+        return new ChatTurnResponse(session, turn.userMessage(), turn.assistantMessage(),
+                session.activeDraft(), Instant.now());
     }
 
     public ChatTurnResponse handleUiEvent(String profileId, String sessionId, UiEventRequest request) {
         long startedNanos = System.nanoTime();
-        SessionRecord record = sessions.get(profileId, sessionId);
-        String userText = describeEvent(request);
-        ChatMessage userMessage = new ChatMessage(
-                newMessageId(), sessionId, MessageRole.USER, MessageKind.UI_EVENT,
-                userText, null, null, Instant.now()
-        );
-        record.messages().add(userMessage);
+        CompletedTurn turn = sessions.applyTurn(profileId, sessionId, record -> {
+            String userText = describeEvent(request);
+            ChatMessage userMessage = new ChatMessage(
+                    newMessageId(), sessionId, MessageRole.USER, MessageKind.UI_EVENT,
+                    userText, null, null, Instant.now()
+            );
+            record.messages().add(userMessage);
 
-        ChatMessage assistant = withProcessingMetadata(handleUiTurn(record, request), startedNanos);
-        record.messages().add(assistant);
-        touchPreview(record, assistant);
-        log.debug("Chat UI turn processed: profileId={} sessionId={} eventType={} userMessageId={} assistantMessageId={} processingMs={}",
-                profileId, sessionId, request.eventType(), userMessage.messageId(), assistant.messageId(),
-                processingMs(assistant));
+            ChatMessage assistant = withProcessingMetadata(handleUiTurn(record, request), startedNanos);
+            record.messages().add(assistant);
+            stateMachine.touch(record);
+            log.debug("Chat UI turn processed: profileId={} sessionId={} eventType={} userMessageId={} assistantMessageId={} processingMs={}",
+                    profileId, sessionId, request.eventType(), userMessage.messageId(), assistant.messageId(),
+                    processingMs(assistant));
 
-        return new ChatTurnResponse(
-                record.session(), userMessage, assistant,
-                record.session().activeDraft(), Instant.now()
-        );
+            return new CompletedTurn(record.session(), userMessage, assistant, record.messageSnapshot());
+        });
+
+        ChatSessionDetail session = maybeSuggestTitle(profileId, turn.session(), turn.messages());
+        return new ChatTurnResponse(session, turn.userMessage(), turn.assistantMessage(),
+                session.activeDraft(), Instant.now());
+    }
+
+    private ChatSessionDetail maybeSuggestTitle(String profileId, ChatSessionDetail s, List<ChatMessage> messages) {
+        titleSuggester.suggestIfEligible(
+                profileId,
+                s.sessionId(),
+                s.title(),
+                s.titleLocked(),
+                messages);
+        // Pull the latest title from the DB so the response reflects any change.
+        try {
+            return sessions.get(profileId, s.sessionId()).session();
+        } catch (RuntimeException ignored) {
+            // If reload fails (e.g. session was just deleted), keep the snapshot we have.
+            return s;
+        }
     }
 
     // ---- text turn ------------------------------------------------------------
@@ -182,7 +216,7 @@ public class ChatOrchestratorService {
         }
 
         if (intent.intent() == IntentType.INTERNATIONAL_PAYMENT) {
-            transition(record, ConversationState.IDLE, ChatSessionStatus.ACTIVE);
+            stateMachine.transition(record, ConversationState.IDLE, ChatSessionStatus.ACTIVE);
             return assistantMessage(record.session().sessionId(), List.of(
                     infoBlock("Not supported in V1",
                             "This POC currently supports registered payee lookup and domestic payment to a registered payee only.")
@@ -246,7 +280,7 @@ public class ChatOrchestratorService {
             ToolCall selected = toolCalls.get(0);
             log.debug("LLM tool loop executing tool: sessionId={} iteration={} toolName={} toolCallId={} arguments={}",
                     record.session().sessionId(), iteration, selected.name(), selected.id(), selected.arguments());
-            ToolExecution execution = executeLlmToolCall(record, selected, latestUserText);
+            PaymentToolExecution execution = executeLlmToolCall(record, selected, latestUserText);
             log.debug("LLM tool loop tool result: sessionId={} iteration={} toolName={} toolCallId={} result={} terminalMessage={} renderBlocks={}",
                     record.session().sessionId(), iteration, execution.toolName(), execution.toolCallId(),
                     toJson(execution.result()), execution.terminalMessage() != null, execution.renderBlocks());
@@ -324,26 +358,16 @@ public class ChatOrchestratorService {
         return assistantMessage(sessionId, blocks);
     }
 
-    private ToolExecution executeLlmToolCall(SessionRecord record, ToolCall toolCall, String latestUserText) {
+    private PaymentToolExecution executeLlmToolCall(SessionRecord record, ToolCall toolCall, String latestUserText) {
         Map<String, Object> args = parseToolArguments(toolCall.arguments());
-        return switch (toolCall.name()) {
-            case "get_registered_payees" -> executePayeeLookupTool(record, toolCall,
-                    firstString(args, "name_query", "payeeQuery", "payee_name", "payeeName"));
-            case "prepare_domestic_payment" -> executePrepareDomesticPaymentTool(record, toolCall, args);
-            case "confirm_domestic_payment" -> executeConfirmPaymentTool(record, toolCall, latestUserText);
-            case "cancel_payment" -> terminalTool(toolCall, Map.of("ok", true, "action", "cancel_payment"),
-                    cancelPayment(record));
-            case "unsupported_international_payment" -> executeUnsupportedInternationalTool(record, toolCall);
-            default -> terminalTool(toolCall,
-                    Map.of("ok", false, "error", "Unsupported tool: " + toolCall.name()),
-                    assistantMessage(record.session().sessionId(), List.of(
-                            infoBlock("Try a supported request",
-                                    "Chat2Pay currently supports registered domestic payee lookup and domestic payments only.")
-                    )));
-        };
+        return paymentTools.execute(new PaymentToolContext(record, toolCall, args, latestUserText, this));
     }
 
-    private ToolExecution executePayeeLookupTool(SessionRecord record, ToolCall toolCall, String query) {
+    @Override
+    public PaymentToolExecution executeRegisteredPayeesTool(PaymentToolContext context) {
+        SessionRecord record = context.record();
+        ToolCall toolCall = context.toolCall();
+        String query = firstString(context.args(), "name_query", "payeeQuery", "payee_name", "payeeName");
         PayeeLookupView view;
         try {
             view = buildPayeeLookupView(record, query);
@@ -366,12 +390,14 @@ public class ChatOrchestratorService {
                         "display_label", p.summary().displayLabel()
                 ))
                 .toList());
-        return new ToolExecution(toolCall.id(), toolCall.name(), result, null, view.blocks());
+        return new PaymentToolExecution(toolCall.id(), toolCall.name(), result, null, view.blocks());
     }
 
-    private ToolExecution executePrepareDomesticPaymentTool(SessionRecord record,
-                                                            ToolCall toolCall,
-                                                            Map<String, Object> args) {
+    @Override
+    public PaymentToolExecution executePrepareDomesticPaymentTool(PaymentToolContext context) {
+        SessionRecord record = context.record();
+        ToolCall toolCall = context.toolCall();
+        Map<String, Object> args = context.args();
         ChatMessage response = continueDomesticPayment(record, new IntentAnalysis(
                 IntentType.DOMESTIC_PAYMENT,
                 IntentAnalysis.toolNameFor(IntentType.DOMESTIC_PAYMENT),
@@ -383,9 +409,12 @@ public class ChatOrchestratorService {
         return terminalTool(toolCall, draftToolResult(record, "prepare_domestic_payment"), response);
     }
 
-    private ToolExecution executeConfirmPaymentTool(SessionRecord record, ToolCall toolCall, String latestUserText) {
+    @Override
+    public PaymentToolExecution executeConfirmDomesticPaymentTool(PaymentToolContext context) {
+        SessionRecord record = context.record();
+        ToolCall toolCall = context.toolCall();
         if (record.session().state() != ConversationState.AWAITING_CONFIRMATION
-                || !EXPLICIT_CONFIRMATION.matcher(latestUserText).find()) {
+                || !EXPLICIT_CONFIRMATION.matcher(context.latestUserText()).find()) {
             PaymentDraft draft = record.session().activeDraft();
             List<ContentBlock> blocks = new ArrayList<>();
             blocks.add(infoBlock("Explicit confirmation required",
@@ -399,8 +428,17 @@ public class ChatOrchestratorService {
         return terminalTool(toolCall, draftToolResult(record, "confirm_domestic_payment"), response);
     }
 
-    private ToolExecution executeUnsupportedInternationalTool(SessionRecord record, ToolCall toolCall) {
-        transition(record, ConversationState.IDLE, ChatSessionStatus.ACTIVE);
+    @Override
+    public PaymentToolExecution executeCancelPaymentTool(PaymentToolContext context) {
+        return terminalTool(context.toolCall(), Map.of("ok", true, "action", "cancel_payment"),
+                cancelPayment(context.record()));
+    }
+
+    @Override
+    public PaymentToolExecution executeUnsupportedInternationalPaymentTool(PaymentToolContext context) {
+        SessionRecord record = context.record();
+        ToolCall toolCall = context.toolCall();
+        stateMachine.transition(record, ConversationState.IDLE, ChatSessionStatus.ACTIVE);
         ChatMessage response = assistantMessage(record.session().sessionId(), List.of(
                 infoBlock("Not supported in V1",
                         "This POC currently supports registered payee lookup and domestic payment to a registered payee only.")
@@ -410,8 +448,19 @@ public class ChatOrchestratorService {
                 response);
     }
 
-    private ToolExecution terminalTool(ToolCall toolCall, Map<String, Object> result, ChatMessage message) {
-        return new ToolExecution(toolCall.id(), toolCall.name(), result, message, List.of());
+    @Override
+    public PaymentToolExecution executeUnknownPaymentTool(PaymentToolContext context) {
+        ToolCall toolCall = context.toolCall();
+        return terminalTool(toolCall,
+                Map.of("ok", false, "error", "Unsupported tool: " + toolCall.name()),
+                assistantMessage(context.record().session().sessionId(), List.of(
+                        infoBlock("Try a supported request",
+                                "Chat2Pay currently supports registered domestic payee lookup and domestic payments only.")
+                )));
+    }
+
+    private PaymentToolExecution terminalTool(ToolCall toolCall, Map<String, Object> result, ChatMessage message) {
+        return new PaymentToolExecution(toolCall.id(), toolCall.name(), result, message, List.of());
     }
 
     private Map<String, Object> draftToolResult(SessionRecord record, String toolName) {
@@ -446,9 +495,9 @@ public class ChatOrchestratorService {
                 ? payees.findByQuery(record.profileId(), query)
                 : payees.all(record.profileId());
 
-        transition(record, ConversationState.IDLE, ChatSessionStatus.ACTIVE);
-        if (query != null) setTitle(record, "Find " + titleCase(query));
-        else setTitle(record, "Registered payees");
+        stateMachine.transition(record, ConversationState.IDLE, ChatSessionStatus.ACTIVE);
+        if (query != null) stateMachine.setTitle(record, "Find " + stateMachine.titleCase(query));
+        else stateMachine.setTitle(record, "Registered payees");
 
         if (matches.isEmpty()) {
             return new PayeeLookupView(matches, List.of(
@@ -479,19 +528,19 @@ public class ChatOrchestratorService {
     }
 
     private ChatMessage continueDomesticPayment(SessionRecord record, IntentAnalysis intent) {
-        PaymentDraft draft = ensureDraft(record);
+        PaymentDraft draft = stateMachine.ensureDraft(record, profileCurrency(record.profileId()));
 
         String payeeQuery = intent.payeeQuery();
-        Double amount = intent.amount();
+        BigDecimal amount = intent.amount();
         LocalDate date = intent.paymentDate();
 
-        draft = updateDraft(draft,
+        draft = stateMachine.updateDraft(draft,
                 payeeQuery != null ? payeeQuery : draft.payeeQueryText(),
                 payeeQuery != null ? null : draft.selectedPayee(),
                 amount != null ? amount : draft.amount(),
                 date != null ? date : draft.paymentDate(),
                 draft.status(), null);
-        record.setSession(withDraft(record.session(), draft));
+        record.setSession(stateMachine.withDraft(record.session(), draft));
 
         if (draft.payeeQueryText() == null) return askForMissingDetails(record, draft);
 
@@ -502,8 +551,8 @@ public class ChatOrchestratorService {
             return payeeLookupFailed(record, ex);
         }
         if (matches.isEmpty()) {
-            transition(record, ConversationState.COLLECTING_DETAILS, ChatSessionStatus.ACTIVE);
-            titleFromDraft(record, draft);
+            stateMachine.transition(record, ConversationState.COLLECTING_DETAILS, ChatSessionStatus.ACTIVE);
+            stateMachine.titleFromDraft(record, draft);
             return assistantMessage(record.session().sessionId(), List.of(
                     infoBlock("Registered payee not found",
                             "I could not find a registered payee matching \"" + draft.payeeQueryText()
@@ -513,8 +562,8 @@ public class ChatOrchestratorService {
         }
 
         if (matches.size() > 1) {
-            transition(record, ConversationState.AWAITING_PAYEE_SELECTION, ChatSessionStatus.ACTIVE);
-            titleFromDraft(record, draft);
+            stateMachine.transition(record, ConversationState.AWAITING_PAYEE_SELECTION, ChatSessionStatus.ACTIVE);
+            stateMachine.titleFromDraft(record, draft);
             List<SelectableItem> items = matches.stream().map(p ->
                     new SelectableItem(p.summary().payeeId(), p.summary().name(),
                             p.summary().bankName() + " • " + p.summary().displayLabel(),
@@ -528,9 +577,9 @@ public class ChatOrchestratorService {
             ));
         }
 
-        draft = updateDraft(draft, draft.payeeQueryText(), matches.get(0).summary(),
+        draft = stateMachine.updateDraft(draft, draft.payeeQueryText(), matches.get(0).summary(),
                 draft.amount(), draft.paymentDate(), draft.status(), null);
-        record.setSession(withDraft(record.session(), draft));
+        record.setSession(stateMachine.withDraft(record.session(), draft));
 
         if (draft.amount() == null || draft.paymentDate() == null) return askForMissingDetails(record, draft);
         return prepareConfirmation(record, draft);
@@ -559,9 +608,9 @@ public class ChatOrchestratorService {
                     errorBlock("Selection expired", "The selected payee is no longer available.")));
         }
 
-        draft = updateDraft(draft, draft.payeeQueryText(), payee.summary(),
+        draft = stateMachine.updateDraft(draft, draft.payeeQueryText(), payee.summary(),
                 draft.amount(), draft.paymentDate(), draft.status(), null);
-        record.setSession(withDraft(record.session(), draft));
+        record.setSession(stateMachine.withDraft(record.session(), draft));
         if (draft.amount() == null || draft.paymentDate() == null) return askForMissingDetails(record, draft);
         return prepareConfirmation(record, draft);
     }
@@ -585,11 +634,11 @@ public class ChatOrchestratorService {
         String amountText = trim(values.get("amount"));
         String paymentDate = trim(values.get("paymentDate"));
 
-        Double amount = draft.amount();
+        BigDecimal amount = draft.amount();
         if (amountText != null) {
             try {
-                double parsed = Double.parseDouble(amountText);
-                if (parsed > 0) amount = parsed;
+                BigDecimal parsed = new BigDecimal(amountText);
+                if (parsed.signum() > 0) amount = parsed;
             } catch (NumberFormatException ignored) { }
         }
         LocalDate date = draft.paymentDate();
@@ -597,11 +646,11 @@ public class ChatOrchestratorService {
             try { date = LocalDate.parse(paymentDate); } catch (Exception ignored) { }
         }
 
-        draft = updateDraft(draft,
+        draft = stateMachine.updateDraft(draft,
                 payeeQuery != null ? payeeQuery : draft.payeeQueryText(),
                 payeeQuery != null ? null : draft.selectedPayee(),
                 amount, date, draft.status(), null);
-        record.setSession(withDraft(record.session(), draft));
+        record.setSession(stateMachine.withDraft(record.session(), draft));
         return continueDomesticPayment(record, new IntentAnalysis(
                 IntentType.DOMESTIC_PAYMENT,
                 IntentAnalysis.toolNameFor(IntentType.DOMESTIC_PAYMENT),
@@ -615,11 +664,11 @@ public class ChatOrchestratorService {
     // ---- state transitions ----------------------------------------------------
 
     private ChatMessage askForMissingDetails(SessionRecord record, PaymentDraft draft) {
-        draft = updateDraft(draft, draft.payeeQueryText(), draft.selectedPayee(),
+        draft = stateMachine.updateDraft(draft, draft.payeeQueryText(), draft.selectedPayee(),
                 draft.amount(), draft.paymentDate(), PaymentDraftStatus.DRAFT, null);
-        record.setSession(withDraft(record.session(), draft));
-        transition(record, ConversationState.COLLECTING_DETAILS, ChatSessionStatus.ACTIVE);
-        titleFromDraft(record, draft);
+        record.setSession(stateMachine.withDraft(record.session(), draft));
+        stateMachine.transition(record, ConversationState.COLLECTING_DETAILS, ChatSessionStatus.ACTIVE);
+        stateMachine.titleFromDraft(record, draft);
 
         List<String> missing = new ArrayList<>();
         if (draft.payeeQueryText() == null && draft.selectedPayee() == null) missing.add("payee");
@@ -638,11 +687,11 @@ public class ChatOrchestratorService {
     }
 
     private ChatMessage prepareConfirmation(SessionRecord record, PaymentDraft draft) {
-        draft = updateDraft(draft, draft.payeeQueryText(), draft.selectedPayee(), draft.amount(),
+        draft = stateMachine.updateDraft(draft, draft.payeeQueryText(), draft.selectedPayee(), draft.amount(),
                 draft.paymentDate(), PaymentDraftStatus.AWAITING_CONFIRMATION, null);
-        record.setSession(withDraft(record.session(), draft));
-        transition(record, ConversationState.AWAITING_CONFIRMATION, ChatSessionStatus.ACTIVE);
-        titleFromDraft(record, draft);
+        record.setSession(stateMachine.withDraft(record.session(), draft));
+        stateMachine.transition(record, ConversationState.AWAITING_CONFIRMATION, ChatSessionStatus.ACTIVE);
+        stateMachine.titleFromDraft(record, draft);
 
         Map<String, Object> actions = Map.of("actions", List.of(
                 Map.of("id", "CONFIRM_PAYMENT", "label", "Confirm payment"),
@@ -665,10 +714,10 @@ public class ChatOrchestratorService {
                             "The payment draft is incomplete. Please provide the missing details first.")));
         }
 
-        draft = updateDraft(draft, draft.payeeQueryText(), draft.selectedPayee(), draft.amount(),
+        draft = stateMachine.updateDraft(draft, draft.payeeQueryText(), draft.selectedPayee(), draft.amount(),
                 draft.paymentDate(), PaymentDraftStatus.EXECUTING, draft.downstreamReference());
-        record.setSession(withDraft(record.session(), draft));
-        transition(record, ConversationState.EXECUTING, ChatSessionStatus.ACTIVE);
+        record.setSession(stateMachine.withDraft(record.session(), draft));
+        stateMachine.transition(record, ConversationState.EXECUTING, ChatSessionStatus.ACTIVE);
 
         PaymentConfirmationResult result;
         try {
@@ -690,11 +739,11 @@ public class ChatOrchestratorService {
             Map<String, Object> context = withContext(draft.context(), Map.of(
                     "downstreamError", ex.getMessage() == null ? "Unknown downstream error" : ex.getMessage()
             ));
-            draft = updateDraft(draft, draft.payeeQueryText(), draft.selectedPayee(), draft.amount(),
+            draft = stateMachine.updateDraft(draft, draft.payeeQueryText(), draft.selectedPayee(), draft.amount(),
                     draft.paymentDate(), PaymentDraftStatus.FAILED, draft.downstreamReference(),
                     new ErrorSummary("DOWNSTREAM_PAYMENT_FAILED", ex.getMessage()), context);
-            record.setSession(withDraft(record.session(), draft));
-            transition(record, ConversationState.FAILED, ChatSessionStatus.FAILED);
+            record.setSession(stateMachine.withDraft(record.session(), draft));
+            stateMachine.transition(record, ConversationState.FAILED, ChatSessionStatus.FAILED);
             return assistantMessage(record.session().sessionId(), List.of(
                     errorBlock("Payment failed",
                             "The domestic payment could not be submitted: " + ex.getMessage()),
@@ -710,10 +759,10 @@ public class ChatOrchestratorService {
                 "downstreamStatusCode", result.statusCode(),
                 "downstreamResponse", result.response() == null ? Map.of() : result.response()
         ));
-        draft = updateDraft(draft, draft.payeeQueryText(), draft.selectedPayee(), draft.amount(),
+        draft = stateMachine.updateDraft(draft, draft.payeeQueryText(), draft.selectedPayee(), draft.amount(),
                 draft.paymentDate(), PaymentDraftStatus.CONFIRMED, reference, null, context);
-        record.setSession(withDraft(record.session(), draft));
-        transition(record, ConversationState.COMPLETED, ChatSessionStatus.COMPLETED);
+        record.setSession(stateMachine.withDraft(record.session(), draft));
+        stateMachine.transition(record, ConversationState.COMPLETED, ChatSessionStatus.COMPLETED);
 
         List<DisplayField> fields = new ArrayList<>(draftFields(draft));
         fields.add(new DisplayField("Reference", reference));
@@ -732,10 +781,10 @@ public class ChatOrchestratorService {
             return assistantMessage(record.session().sessionId(), List.of(
                     infoBlock("No active draft", "There is no active domestic payment draft to cancel.")));
         }
-        draft = updateDraft(draft, draft.payeeQueryText(), draft.selectedPayee(), draft.amount(),
+        draft = stateMachine.updateDraft(draft, draft.payeeQueryText(), draft.selectedPayee(), draft.amount(),
                 draft.paymentDate(), PaymentDraftStatus.CANCELLED, draft.downstreamReference());
-        record.setSession(withDraft(record.session(), draft));
-        transition(record, ConversationState.CANCELLED, ChatSessionStatus.CANCELLED);
+        record.setSession(stateMachine.withDraft(record.session(), draft));
+        stateMachine.transition(record, ConversationState.CANCELLED, ChatSessionStatus.CANCELLED);
         String who = draft.selectedPayee() != null ? draft.selectedPayee().name()
                 : draft.payeeQueryText() != null ? draft.payeeQueryText() : "the selected payee";
         return assistantMessage(record.session().sessionId(), List.of(
@@ -747,15 +796,14 @@ public class ChatOrchestratorService {
 
     // ---- helpers --------------------------------------------------------------
 
-    private record ToolExecution(
-            String toolCallId,
-            String toolName,
-            Map<String, Object> result,
-            ChatMessage terminalMessage,
-            List<ContentBlock> renderBlocks
-    ) {}
-
     private record PayeeLookupView(List<RegisteredPayee> matches, List<ContentBlock> blocks) {}
+
+    private record CompletedTurn(
+            ChatSessionDetail session,
+            ChatMessage userMessage,
+            ChatMessage assistantMessage,
+            List<ChatMessage> messages
+    ) {}
 
     private String draftSummary(PaymentDraft draft) {
         if (draft == null) return "none";
@@ -783,6 +831,10 @@ public class ChatOrchestratorService {
                     name,
                     trim(toolCall.arguments()) == null ? "{}" : toolCall.arguments()
             ));
+        }
+        if (normalized.size() > 1) {
+            log.warn("LLM returned multiple tool calls; executing first and dropping additional tools: sessionToolNames={}",
+                    normalized.subList(1, normalized.size()).stream().map(ToolCall::name).toList());
         }
         return normalized;
     }
@@ -816,7 +868,7 @@ public class ChatOrchestratorService {
         log.warn("Registered payee lookup failed: profileId={} sessionId={} message={}",
                 record.profileId(), record.session().sessionId(), ex.getMessage());
         log.debug("Registered payee lookup failure details", ex);
-        transition(record, ConversationState.IDLE, ChatSessionStatus.ACTIVE);
+        stateMachine.transition(record, ConversationState.IDLE, ChatSessionStatus.ACTIVE);
         return assistantMessage(record.session().sessionId(), List.of(
                 errorBlock("Registered payee lookup failed",
                         "I could not retrieve registered payees right now. Please try again after downstream access is restored.")
@@ -870,17 +922,18 @@ public class ChatOrchestratorService {
         return null;
     }
 
-    private Double numberArg(Map<String, Object> args, String key) {
+    private BigDecimal numberArg(Map<String, Object> args, String key) {
         Object raw = args.get(key);
+        if (raw instanceof BigDecimal bd) return bd.signum() > 0 ? bd : null;
         if (raw instanceof Number n) {
-            double value = n.doubleValue();
-            return value > 0 ? value : null;
+            BigDecimal value = new BigDecimal(n.toString());
+            return value.signum() > 0 ? value : null;
         }
         String value = trim(raw == null ? null : raw.toString());
         if (value == null) return null;
         try {
-            double parsed = Double.parseDouble(value.replace(",", "").replaceAll("(?i)hkd", "").trim());
-            return parsed > 0 ? parsed : null;
+            BigDecimal parsed = new BigDecimal(value.replace(",", "").replaceAll("(?i)hkd", "").trim());
+            return parsed.signum() > 0 ? parsed : null;
         } catch (NumberFormatException ex) {
             return null;
         }
@@ -903,39 +956,6 @@ public class ChatOrchestratorService {
         return profiles.runtimeProfile(profileId).paymentCurrencyOrDefault(properties.defaultCurrencyOrHkd());
     }
 
-    private PaymentDraft ensureDraft(SessionRecord record) {
-        PaymentDraft existing = record.session().activeDraft();
-        if (existing != null) return existing;
-        PaymentDraft draft = new PaymentDraft(
-                "draft_" + UUID.randomUUID().toString().replace("-", "").substring(0, 10),
-                record.session().sessionId(), PaymentType.DOMESTIC_PAYMENT, PaymentDraftStatus.DRAFT,
-                null, null, null, profileCurrency(record.profileId()), null, null, null, null, Instant.now()
-        );
-        record.setSession(withDraft(record.session(), draft));
-        return draft;
-    }
-
-    private PaymentDraft updateDraft(PaymentDraft d, String payeeQuery, PayeeSummary selected,
-                                     Double amount, LocalDate date, PaymentDraftStatus status,
-                                     String reference) {
-        return updateDraft(d, payeeQuery, selected, amount, date, status, reference, null);
-    }
-
-    private PaymentDraft updateDraft(PaymentDraft d, String payeeQuery, PayeeSummary selected,
-                                     Double amount, LocalDate date, PaymentDraftStatus status,
-                                     String reference, ErrorSummary lastError) {
-        return updateDraft(d, payeeQuery, selected, amount, date, status, reference, lastError, d.context());
-    }
-
-    private PaymentDraft updateDraft(PaymentDraft d, String payeeQuery, PayeeSummary selected,
-                                     Double amount, LocalDate date, PaymentDraftStatus status,
-                                     String reference, ErrorSummary lastError,
-                                     Map<String, Object> context) {
-        return new PaymentDraft(d.draftId(), d.sessionId(), d.paymentType(), status,
-                payeeQuery, selected, amount, d.currency() != null ? d.currency() : DEFAULT_CURRENCY,
-                date, reference, lastError, context, Instant.now());
-    }
-
     private Map<String, Object> withContext(Map<String, Object> existing, Map<String, Object> updates) {
         Map<String, Object> next = new HashMap<>();
         if (existing != null) next.putAll(existing);
@@ -943,103 +963,33 @@ public class ChatOrchestratorService {
         return next;
     }
 
-    private ChatSessionDetail withDraft(ChatSessionDetail s, PaymentDraft draft) {
-        return new ChatSessionDetail(s.sessionId(), s.title(), s.status(), s.state(),
-                s.llmProvider(), draft, s.createdAt(), Instant.now());
-    }
-
-    private void transition(SessionRecord record, ConversationState state, ChatSessionStatus status) {
-        ChatSessionDetail s = record.session();
-        record.setSession(new ChatSessionDetail(s.sessionId(), s.title(), status, state,
-                s.llmProvider(), s.activeDraft(), s.createdAt(), Instant.now()));
-    }
-
-    private void setTitle(SessionRecord record, String title) {
-        ChatSessionDetail s = record.session();
-        String trimmed = title.length() > 120 ? title.substring(0, 120) : title;
-        record.setSession(new ChatSessionDetail(s.sessionId(), trimmed, s.status(), s.state(),
-                s.llmProvider(), s.activeDraft(), s.createdAt(), Instant.now()));
-    }
-
-    private void titleFromDraft(SessionRecord record, PaymentDraft draft) {
-        if (draft.selectedPayee() != null) setTitle(record, "Pay " + draft.selectedPayee().name());
-        else if (draft.payeeQueryText() != null) setTitle(record, "Pay " + titleCase(draft.payeeQueryText()));
-    }
-
-    private void touchPreview(SessionRecord record, ChatMessage assistant) {
-        // ChatSessionDetail has no preview field (matches contract); previews are derived at list time.
-        // Bump updatedAt so listings reflect the latest assistant turn.
-        ChatSessionDetail s = record.session();
-        record.setSession(new ChatSessionDetail(s.sessionId(), s.title(), s.status(), s.state(),
-                s.llmProvider(), s.activeDraft(), s.createdAt(), Instant.now()));
-        @SuppressWarnings("unused") String unused = previewOf(assistant);
-    }
-
-    private String previewOf(ChatMessage message) {
-        if (message.text() != null && !message.text().isBlank()) {
-            return message.text().length() > 140 ? message.text().substring(0, 140) : message.text();
-        }
-        if (message.contentBlocks() != null && !message.contentBlocks().isEmpty()) {
-            ContentBlock first = message.contentBlocks().get(0);
-            if (first instanceof ContentBlock.TextBlock t) return t.text();
-            if (first instanceof ContentBlock.InfoCardBlock i) return i.text();
-            if (first instanceof ContentBlock.ErrorCardBlock e) return e.text();
-            if (first instanceof ContentBlock.SummaryCardBlock s) return s.title();
-            if (first instanceof ContentBlock.SelectableListBlock s) return s.title();
-        }
-        return "";
-    }
-
-    private String titleCase(String s) {
-        String[] parts = s.split("\\s+");
-        StringBuilder b = new StringBuilder();
-        for (String p : parts) {
-            if (p.isEmpty()) continue;
-            if (!b.isEmpty()) b.append(' ');
-            b.append(Character.toUpperCase(p.charAt(0))).append(p.substring(1));
-        }
-        return b.toString();
-    }
-
     // ---- block builders -------------------------------------------------------
 
     private ContentBlock.TextBlock textBlock(String title, String text) {
-        return new ContentBlock.TextBlock(newBlockId("text"), title, text, null);
+        return blocks.textBlock(title, text);
     }
 
     private ContentBlock.InfoCardBlock infoBlock(String title, String text) {
-        return new ContentBlock.InfoCardBlock(newBlockId("info"), title, text, null);
+        return blocks.infoBlock(title, text);
     }
 
     private ContentBlock.ErrorCardBlock errorBlock(String title, String text) {
-        return new ContentBlock.ErrorCardBlock(newBlockId("error"), title, text, null);
+        return blocks.errorBlock(title, text);
     }
 
     private ContentBlock.SummaryCardBlock summaryBlock(String title, List<DisplayField> fields,
                                                        Map<String, Object> metadata) {
-        return new ContentBlock.SummaryCardBlock(newBlockId("summary"), title, fields, metadata);
+        return blocks.summaryBlock(title, fields, metadata);
     }
 
     private List<DisplayField> draftFields(PaymentDraft d) {
-        String amount = d.amount() != null
-                ? String.format(Locale.ROOT, "%s %,.2f", d.currency() != null ? d.currency() : DEFAULT_CURRENCY, d.amount())
-                : "Pending";
-        return List.of(
-                new DisplayField("Payee", d.selectedPayee() != null ? d.selectedPayee().name()
-                        : d.payeeQueryText() != null ? d.payeeQueryText() : "Pending"),
-                new DisplayField("Account", d.selectedPayee() != null ? d.selectedPayee().displayLabel() : "Pending"),
-                new DisplayField("Bank", d.selectedPayee() != null ? d.selectedPayee().bankName() : "Pending"),
-                new DisplayField("Amount", amount),
-                new DisplayField("Payment date", d.paymentDate() != null ? d.paymentDate().toString() : "Pending")
-        );
+        return blocks.draftFields(d);
     }
 
     // ---- message constructors -------------------------------------------------
 
     private ChatMessage assistantMessage(String sessionId, List<ContentBlock> blocks) {
-        return new ChatMessage(newMessageId(), sessionId, MessageRole.ASSISTANT,
-                blocks.isEmpty() ? MessageKind.TEXT : MessageKind.BLOCKS,
-                null, blocks.isEmpty() ? null : blocks, null, Instant.now());
+        return this.blocks.assistantMessage(sessionId, blocks);
     }
 
     private ChatMessage withProcessingMetadata(ChatMessage message, long startedNanos) {
@@ -1065,8 +1015,7 @@ public class ChatOrchestratorService {
     }
 
     private ChatMessage userTextMessage(String sessionId, String text) {
-        return new ChatMessage(newMessageId(), sessionId, MessageRole.USER, MessageKind.TEXT,
-                text, null, null, Instant.now());
+        return blocks.userTextMessage(sessionId, text);
     }
 
     private String describeEvent(UiEventRequest request) {
@@ -1086,10 +1035,10 @@ public class ChatOrchestratorService {
     }
 
     private static String newMessageId() {
-        return "msg_" + UUID.randomUUID().toString().replace("-", "").substring(0, 14);
+        return ChatBlockFactory.newMessageId();
     }
 
     private static String newBlockId(String kind) {
-        return "blk_" + kind + "_" + UUID.randomUUID().toString().replace("-", "").substring(0, 10);
+        return ChatBlockFactory.newBlockId(kind);
     }
 }

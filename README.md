@@ -4,6 +4,34 @@ Chat2Pay is a Spring Boot + React POC for registered-payee lookup and domestic-p
 
 The backend owns payment guardrails, PostgreSQL persistence, Flyway migrations, downstream payment calls, and the LLM tool loop. The frontend renders chat history and structured interaction blocks.
 
+See [TODO.md](TODO.md) for the living cleanup checklist and current implementation priorities.
+
+## Project Structure
+
+The repository stays flat at the top level:
+
+```text
+chat2pay/
+├── README.md
+├── TODO.md
+├── docs/
+│   ├── 01-system_design.md
+│   ├── 02-api_contract.yaml
+│   ├── 03-db_design.md
+│   ├── 04-extending.md
+│   └── 99-ref.md
+├── chat2pay-app/
+└── chat2pay-web/
+```
+
+`chat2pay-app/` is the Spring Boot backend. REST and streaming endpoints live in `api/`; turn orchestration, tool-loop handling, state transitions, and response block construction live in `application/conversation/`; provider adapters live in `integration/llm/`; downstream payment/payee clients live in `integration/downstream/`; JPA entities and repository-backed stores live in `persistence/`.
+
+`chat2pay-web/` is the React + TypeScript frontend. `pages/` owns profile selection and the chat workspace, `features/` owns chat input, message rendering, session history, sidebar, and user menu behavior, and `shared/` contains handwritten API contracts, client calls, reusable UI primitives, styles, config, and small formatting helpers.
+
+`docs/02-api_contract.yaml` is kept for manual FE/BE alignment only. V1 intentionally does not generate models from it and does not maintain a duplicate contract mirror.
+
+The frontend renders backend-provided structured blocks: text blocks for normal conversation, selectable lists for payee disambiguation, summary cards for confirmation/results, and info/error blocks for guardrail outcomes. The frontend does not own intent detection, LLM access, downstream API access, or payment workflow branching.
+
 ## Prerequisites
 
 - JDK 21+

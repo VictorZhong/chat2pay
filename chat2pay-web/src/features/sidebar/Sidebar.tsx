@@ -24,8 +24,10 @@ export function Sidebar({
   onToggleCollapsed,
   onNewChat,
   onSelectSession,
+  onDeleteSession,
   onQuickAction,
   onLogout,
+  pendingDeleteSessionId,
 }: {
   user: CurrentUserContext;
   sessions: ChatSessionSummary[];
@@ -34,8 +36,10 @@ export function Sidebar({
   onToggleCollapsed: () => void;
   onNewChat: () => void;
   onSelectSession: (sessionId: string) => void;
+  onDeleteSession: (session: ChatSessionSummary) => void;
   onQuickAction: (prompt: string) => void;
   onLogout: () => void;
+  pendingDeleteSessionId?: string | null;
 }) {
   return (
     <aside
@@ -104,7 +108,9 @@ export function Sidebar({
             sessions={sessions}
             selectedSessionId={selectedSessionId}
             onSelect={onSelectSession}
+            onDelete={onDeleteSession}
             collapsed={collapsed}
+            pendingDeleteSessionId={pendingDeleteSessionId}
           />
         </div>
       </div>

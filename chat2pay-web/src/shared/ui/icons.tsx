@@ -135,3 +135,24 @@ export function SpinnerIcon(props: IconProps) {
     </BaseIcon>
   );
 }
+
+export function TrashIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <path d="M3 6h18" />
+      <path d="M8 6V4h8v2" />
+      <path d="M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+    </BaseIcon>
+  );
+}
+
+export function PencilIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <path d="M4 20h4l11-11-4-4L4 16v4Z" />
+      <path d="m13.5 6.5 4 4" />
+    </BaseIcon>
+  );
+}

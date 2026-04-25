@@ -1,7 +1,7 @@
 import type { ChatMessage, UiEventRequest } from '@/shared/api/contracts';
 import { BrandAvatar } from '@/shared/ui/BrandAvatar';
 import { StructuredBlock } from '@/features/ui-events/StructuredBlocks';
-import { formatDateTime } from '@/shared/lib/format';
+import { formatAbsoluteTimestamp, formatDateTime } from '@/shared/lib/format';
 import { cn } from '@/shared/lib/cn';
 
 function processingMs(message: ChatMessage) {
@@ -40,7 +40,12 @@ export function MessageRenderer({
       <div className={cn('max-w-[840px] flex-1 space-y-3', isUser && 'flex max-w-[720px] flex-col items-end')}>
         <div className={cn('flex items-center gap-3', isUser && 'justify-end')}>
           <p className="text-sm font-semibold text-brand-black">{isUser ? 'You' : assistantName}</p>
-          <p className="text-[11px] uppercase tracking-[0.12em] text-brand-gray">{formatDateTime(message.createdAt)}</p>
+          <p
+            className="text-[11px] uppercase tracking-[0.12em] text-brand-gray"
+            title={formatAbsoluteTimestamp(message.createdAt)}
+          >
+            {formatDateTime(message.createdAt)}
+          </p>
           {elapsedMs !== null ? (
             <p className="text-[11px] uppercase tracking-[0.12em] text-brand-gray">
               Processed in {formatProcessingTime(elapsedMs)}

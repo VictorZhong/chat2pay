@@ -139,7 +139,7 @@ public class HttpDomesticPaymentClient implements DomesticPaymentClient {
                 "currency", currency
         );
         LocalDate scheduleDate = request.paymentDate() == null ? LocalDate.now() : request.paymentDate();
-        BigDecimal amount = BigDecimal.valueOf(request.amount()).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal amount = request.amount().setScale(2, RoundingMode.HALF_UP);
 
         Map<String, Object> payload = new HashMap<>();
         payload.put("debitAccount", debitAccount);
@@ -205,7 +205,7 @@ public class HttpDomesticPaymentClient implements DomesticPaymentClient {
         if (request.payeeIdIndex() == null || request.payeeIdIndex().isBlank()) {
             throw new IllegalArgumentException("payee_id_index is required.");
         }
-        if (request.amount() == null || request.amount() <= 0) {
+        if (request.amount() == null || request.amount().signum() <= 0) {
             throw new IllegalArgumentException("amount must be a positive number.");
         }
     }

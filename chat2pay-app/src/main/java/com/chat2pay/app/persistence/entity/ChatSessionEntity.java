@@ -51,6 +51,9 @@ public class ChatSessionEntity {
     @Column(name = "message_count", nullable = false)
     private int messageCount = 0;
 
+    @Column(name = "title_locked", nullable = false)
+    private boolean titleLocked = false;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt = Instant.now();
 

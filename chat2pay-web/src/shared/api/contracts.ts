@@ -187,6 +187,7 @@ export interface PaymentDraft {
 export interface ChatSessionSummary {
   sessionId: string;
   title: string;
+  titleLocked: boolean;
   status: ChatSessionStatus;
   state: ConversationState;
   llmProvider?: LlmProviderType | null;
@@ -198,6 +199,7 @@ export interface ChatSessionSummary {
 export interface ChatSessionDetail {
   sessionId: string;
   title: string;
+  titleLocked: boolean;
   status: ChatSessionStatus;
   state: ConversationState;
   llmProvider?: LlmProviderType | null;
@@ -205,6 +207,10 @@ export interface ChatSessionDetail {
   createdAt: string;
   updatedAt: string;
   activeDraft?: PaymentDraft | null;
+}
+
+export interface RenameChatSessionRequest {
+  title: string;
 }
 
 export interface SendMessageRequest {

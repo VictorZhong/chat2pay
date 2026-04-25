@@ -1,12 +1,13 @@
 package com.chat2pay.app.application.conversation.intent;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 
 public record IntentAnalysis(
         IntentType intent,
         String toolName,
         String payeeQuery,
-        Double amount,
+        BigDecimal amount,
         LocalDate paymentDate,
         String source
 ) {

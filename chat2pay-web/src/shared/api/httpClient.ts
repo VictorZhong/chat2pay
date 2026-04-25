@@ -6,6 +6,7 @@ import type {
   ChatTurnResponse,
   ContentBlock,
   CurrentUserContext,
+  PaymentDraft,
   ProfileLoginRequest,
   ProfileSummary,
   SendMessageRequest,
@@ -103,17 +104,38 @@ export const chat2payHttpClient = {
     });
   },
   listChatSessions(profileId: string): Promise<ChatSessionSummary[]> {
-    return request<ChatSessionSummary[]>('/chat/sessions', { profileId });
+    return request<ChatSessionSummary[]>('/chat/sessions', { profileId }).then((sessions) =>
+      sessions.map(normalizeChatSessionSummary),
+    );
   },
   createChatSession(profileId: string, title?: string): Promise<ChatSessionDetail> {
     return request<ChatSessionDetail>('/chat/sessions', {
       method: 'POST',
       profileId,
       body: title ? { title } : {},
-    });
+    }).then(normalizeChatSessionDetail);
   },
   getChatSession(profileId: string, sessionId: string): Promise<ChatSessionDetail> {
-    return request<ChatSessionDetail>(`/chat/sessions/${sessionId}`, { profileId });
+    return request<ChatSessionDetail>(`/chat/sessions/${sessionId}`, { profileId }).then(
+      normalizeChatSessionDetail,
+    );
+  },
+  deleteChatSession(profileId: string, sessionId: string): Promise<void> {
+    return request<void>(`/chat/sessions/${sessionId}`, {
+      method: 'DELETE',
+      profileId,
+    });
+  },
+  renameChatSession(
+    profileId: string,
+    sessionId: string,
+    title: string,
+  ): Promise<ChatSessionDetail> {
+    return request<ChatSessionDetail>(`/chat/sessions/${sessionId}`, {
+      method: 'PATCH',
+      profileId,
+      body: { title },
+    }).then(normalizeChatSessionDetail);
   },
   listChatMessages(profileId: string, sessionId: string): Promise<ChatMessage[]> {
     return request<ChatMessage[]>(`/chat/sessions/${sessionId}/messages`, { profileId });
@@ -127,7 +149,7 @@ export const chat2payHttpClient = {
       method: 'POST',
       profileId,
       body: { ...payload, stream: false },
-    });
+    }).then(normalizeChatTurnResponse);
   },
   submitUiEvent(
     profileId: string,
@@ -138,7 +160,7 @@ export const chat2payHttpClient = {
       method: 'POST',
       profileId,
       body: { ...payload, stream: false },
-    });
+    }).then(normalizeChatTurnResponse);
   },
 };
 
@@ -210,7 +232,7 @@ export async function* streamChatTurn(
       payload,
     });
 
-    yield { type: frame.event, ...payload } as TurnStreamEvent;
+    yield normalizeTurnStreamEvent({ type: frame.event, ...payload } as TurnStreamEvent);
   }
 }
 
@@ -220,4 +242,51 @@ function safeParseJson(raw: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+function normalizeAmount(value: unknown): number | null | undefined {
+  if (value === null || value === undefined) return value;
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function normalizePaymentDraft<T extends PaymentDraft | null | undefined>(draft: T): T {
+  if (!draft) return draft;
+  return {
+    ...draft,
+    amount: normalizeAmount(draft.amount),
+  } as T;
+}
+
+function normalizeChatSessionSummary(session: ChatSessionSummary): ChatSessionSummary {
+  return session;
+}
+
+function normalizeChatSessionDetail(session: ChatSessionDetail): ChatSessionDetail {
+  return {
+    ...session,
+    activeDraft: normalizePaymentDraft(session.activeDraft),
+  };
+}
+
+function normalizeChatTurnResponse(turn: ChatTurnResponse): ChatTurnResponse {
+  return {
+    ...turn,
+    session: normalizeChatSessionDetail(turn.session),
+    activeDraft: normalizePaymentDraft(turn.activeDraft),
+  };
+}
+
+function normalizeTurnStreamEvent(event: TurnStreamEvent): TurnStreamEvent {
+  if (event.type === 'assistant-message-complete') {
+    return {
+      ...event,
+      session: normalizeChatSessionDetail(event.session),
+    };
+  }
+  return event;
 }

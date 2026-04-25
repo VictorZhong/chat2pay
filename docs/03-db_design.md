@@ -72,6 +72,7 @@ erDiagram
         varchar(64) id PK
         varchar(64) profile_id FK
         varchar(160) title
+        boolean title_locked
         varchar(24) status
         varchar(48) state
         varchar(32) llm_provider
@@ -187,6 +188,7 @@ Represents one visible conversation thread in the sidebar.
 | `id` | `varchar(64)` | ULID primary key |
 | `profile_id` | `varchar(64)` | FK to `ctp_profile.id` |
 | `title` | `varchar(160)` | Sidebar title |
+| `title_locked` | `boolean` | Set when the user manually renamed the session; AI title suggestions stop updating locked rows |
 | `status` | `varchar(24)` | `ACTIVE`, `COMPLETED`, `FAILED`, `CANCELLED`, `ARCHIVED` |
 | `state` | `varchar(48)` | Current conversation state |
 | `llm_provider` | `varchar(32)` | Example `COPILOT_PERSONAL` |

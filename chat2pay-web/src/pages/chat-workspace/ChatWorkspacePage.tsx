@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
-import type { ChatMessage, ContentBlock, SendMessageRequest, UiEventRequest } from '@/shared/api/contracts';
+import type {
+  ChatMessage,
+  ChatSessionSummary,
+  ContentBlock,
+  SendMessageRequest,
+  UiEventRequest,
+} from '@/shared/api/contracts';
 import { chat2payClient, queryKeys } from '@/shared/api/chat2payClient';
 import { USE_MOCK_API } from '@/shared/config/env';
 import type { TurnStreamEvent } from '@/shared/api/httpClient';
@@ -13,7 +19,8 @@ import { ChatInputBar } from '@/features/chat-input/ChatInputBar';
 import { EmptyStatePanel } from '@/shared/ui/EmptyStatePanel';
 import { BrandButton } from '@/shared/ui/BrandButton';
 import { BrandLoadingPanel } from '@/shared/ui/BrandLoadingPanel';
-import { StatusBadge } from '@/shared/ui/StatusBadge';
+import { ConversationStatusPill } from '@/features/session-history/ConversationStatusPill';
+import { SessionTitleEditor } from '@/features/session-history/SessionTitleEditor';
 import { INTERACTION_DELAY_MS } from '@/shared/config/env';
 import { wait } from '@/shared/lib/time';
 import { createId } from '@/shared/lib/id';
@@ -189,14 +196,44 @@ export function ChatWorkspacePage() {
   const startChatWithMessageMutation = useMutation({
     mutationFn: async (messageText: string) => {
       const session = await chat2payClient.createChatSession(currentUser.profileId);
+      navigate(`/chat/${session.sessionId}`);
       await chat2payClient.sendChatMessage(currentUser.profileId, session.sessionId, {
         messageText,
       });
       return session;
     },
     onSuccess: async (session) => {
-      navigate(`/chat/${session.sessionId}`);
       await refreshCurrentSession(session.sessionId);
+    },
+  });
+
+  const deleteSessionMutation = useMutation({
+    mutationFn: (targetSessionId: string) =>
+      chat2payClient.deleteChatSession(currentUser.profileId, targetSessionId),
+    onSuccess: async (_void, deletedSessionId) => {
+      queryClient.removeQueries({
+        queryKey: queryKeys.session(currentUser.profileId, deletedSessionId),
+      });
+      queryClient.removeQueries({
+        queryKey: queryKeys.messages(currentUser.profileId, deletedSessionId),
+      });
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.sessions(currentUser.profileId),
+      });
+      if (sessionId === deletedSessionId) {
+        navigate('/chat');
+      }
+    },
+  });
+
+  const renameSessionMutation = useMutation({
+    mutationFn: ({ id, title }: { id: string; title: string }) =>
+      chat2payClient.renameChatSession(currentUser.profileId, id, title),
+    onSuccess: async (updated) => {
+      queryClient.setQueryData(queryKeys.session(currentUser.profileId, updated.sessionId), updated);
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.sessions(currentUser.profileId),
+      });
     },
   });
 
@@ -353,6 +390,16 @@ export function ChatWorkspacePage() {
         onToggleCollapsed={() => setCollapsed(!collapsed)}
         onNewChat={() => createSessionMutation.mutate()}
         onSelectSession={(selectedSessionId) => navigate(`/chat/${selectedSessionId}`)}
+        onDeleteSession={(target: ChatSessionSummary) => {
+          if (typeof window !== 'undefined') {
+            const confirmed = window.confirm(`Delete chat "${target.title}"? This cannot be undone.`);
+            if (!confirmed) return;
+          }
+          deleteSessionMutation.mutate(target.sessionId);
+        }}
+        pendingDeleteSessionId={
+          deleteSessionMutation.isPending ? (deleteSessionMutation.variables ?? null) : null
+        }
         onQuickAction={(messageText) => startChatWithMessageMutation.mutate(messageText)}
         onLogout={() => {
           clearCurrentUser();
@@ -362,16 +409,26 @@ export function ChatWorkspacePage() {
 
       <section className="flex min-w-0 flex-1 flex-col gap-3">
         <header className="brand-panel flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-          <div>
+          <div className="min-w-0">
             <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-brand-red">Session</p>
-            <h2 className="mt-1 text-lg font-semibold text-brand-black">
-              {activeSession?.title ?? 'Conversation workspace'}
-            </h2>
+            <div className="mt-1">
+              {activeSession ? (
+                <SessionTitleEditor
+                  title={activeSession.title}
+                  busy={renameSessionMutation.isPending}
+                  onRename={(next) =>
+                    renameSessionMutation.mutateAsync({ id: activeSession.sessionId, title: next })
+                  }
+                />
+              ) : (
+                <h2 className="text-lg font-semibold text-brand-black">Conversation workspace</h2>
+              )}
+            </div>
           </div>
 
           {activeSession ? (
             <div className="flex flex-wrap items-center gap-2">
-              <StatusBadge value={activeSession.status} />
+              <ConversationStatusPill session={activeSession} />
             </div>
           ) : null}
         </header>
