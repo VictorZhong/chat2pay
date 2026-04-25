@@ -3,7 +3,7 @@ package com.chat2pay.app.application.profile;
 import com.chat2pay.app.api.dto.ProfileDtos.CurrentUserContext;
 import com.chat2pay.app.api.dto.ProfileDtos.ProfileLoginRequest;
 import com.chat2pay.app.api.dto.ProfileDtos.ProfileSummary;
-import com.chat2pay.app.persistence.memory.InMemoryProfileStore;
+import com.chat2pay.app.persistence.jdbc.JdbcProfileStore;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
@@ -17,9 +17,9 @@ import java.util.NoSuchElementException;
 @Service
 public class ProfileService {
 
-    private final InMemoryProfileStore profileStore;
+    private final JdbcProfileStore profileStore;
 
-    public ProfileService(InMemoryProfileStore profileStore) {
+    public ProfileService(JdbcProfileStore profileStore) {
         this.profileStore = profileStore;
     }
 
@@ -30,7 +30,7 @@ public class ProfileService {
     public CurrentUserContext login(ProfileLoginRequest request) {
         ProfileSummary profile = profileStore.findById(request.profileId())
                 .orElseThrow(() -> new NoSuchElementException("Profile not found: " + request.profileId()));
-        if (!InMemoryProfileStore.SHARED_PASSWORD.equals(request.password())) {
+        if (!JdbcProfileStore.SHARED_PASSWORD.equals(request.password())) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid shared password");
         }
         return new CurrentUserContext(

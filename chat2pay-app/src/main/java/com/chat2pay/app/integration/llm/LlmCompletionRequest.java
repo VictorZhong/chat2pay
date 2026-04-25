@@ -3,8 +3,8 @@ package com.chat2pay.app.integration.llm;
 import java.util.List;
 
 /**
- * Provider-agnostic chat completion request. V1 uses plain-text turns only;
- * tool calling and structured output stay inside the deterministic orchestrator.
+ * Provider-agnostic chat completion request used by the intent/tool decision
+ * parser and future full tool-calling providers.
  */
 public record LlmCompletionRequest(
         List<Message> messages,

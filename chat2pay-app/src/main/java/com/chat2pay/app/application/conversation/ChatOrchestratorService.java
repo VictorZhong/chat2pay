@@ -10,16 +10,19 @@ import com.chat2pay.app.api.dto.ChatDtos.UiEventRequest;
 import com.chat2pay.app.api.dto.ContentBlock;
 import com.chat2pay.app.api.dto.ContentBlock.DisplayField;
 import com.chat2pay.app.api.dto.ContentBlock.SelectableItem;
+import com.chat2pay.app.application.conversation.intent.IntentAnalysis;
+import com.chat2pay.app.application.conversation.intent.IntentInterpreter;
+import com.chat2pay.app.application.conversation.intent.IntentType;
 import com.chat2pay.app.domain.conversation.ChatSessionStatus;
 import com.chat2pay.app.domain.conversation.ConversationState;
 import com.chat2pay.app.domain.conversation.MessageKind;
 import com.chat2pay.app.domain.conversation.MessageRole;
 import com.chat2pay.app.domain.payment.PaymentDraftStatus;
 import com.chat2pay.app.domain.payment.PaymentType;
-import com.chat2pay.app.persistence.memory.InMemoryPayeeStore;
-import com.chat2pay.app.persistence.memory.InMemoryPayeeStore.RegisteredPayee;
-import com.chat2pay.app.persistence.memory.InMemorySessionStore;
-import com.chat2pay.app.persistence.memory.InMemorySessionStore.SessionRecord;
+import com.chat2pay.app.persistence.jdbc.JdbcPayeeStore;
+import com.chat2pay.app.persistence.jdbc.JdbcPayeeStore.RegisteredPayee;
+import com.chat2pay.app.persistence.jdbc.JdbcSessionStore;
+import com.chat2pay.app.persistence.jdbc.JdbcSessionStore.SessionRecord;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -29,34 +32,22 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 @Service
 public class ChatOrchestratorService {
 
     private static final String DEFAULT_CURRENCY = "HKD";
 
-    private static final Pattern AMOUNT = Pattern.compile("(?:hkd\\s*)?(\\d+(?:\\.\\d{1,2})?)", Pattern.CASE_INSENSITIVE);
-    private static final Pattern PAYMENT_INTENT = Pattern.compile("\\b(pay|send|transfer)\\b", Pattern.CASE_INSENSITIVE);
-    private static final Pattern LOOKUP_INTENT = Pattern.compile("\\b(payee|payees|registered|lookup|look up|find|show|list)\\b", Pattern.CASE_INSENSITIVE);
-    private static final Pattern INTERNATIONAL_INTENT = Pattern.compile("\\b(international|overseas|swift|wire)\\b", Pattern.CASE_INSENSITIVE);
-    private static final Pattern DO_I_HAVE = Pattern.compile("do i have", Pattern.CASE_INSENSITIVE);
-    private static final Pattern POSITIVE_CONFIRM = Pattern.compile("\\b(confirm|confirmed|yes|okay|ok|go ahead|proceed|send it)\\b", Pattern.CASE_INSENSITIVE);
-    private static final Pattern CANCEL = Pattern.compile("\\b(cancel|stop|never mind|don'?t|do not)\\b", Pattern.CASE_INSENSITIVE);
+    private final JdbcSessionStore sessions;
+    private final JdbcPayeeStore payees;
+    private final IntentInterpreter intentInterpreter;
 
-    private static final List<Pattern> PAYEE_QUERY_PATTERNS = List.of(
-            Pattern.compile("(?:pay|send|transfer)(?:\\s+to)?\\s+(.+?)(?=\\s+\\d|\\s+hkd|\\s+today|\\s+tomorrow|\\s+later|$)", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("(?:find|lookup|look up|check|show|list)(?:\\s+my)?(?:\\s+registered)?(?:\\s+payees?|\\s+payee)?(?:\\s+for)?\\s+(.+)", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("do i have\\s+(.+?)\\s+(?:registered|as a payee)", Pattern.CASE_INSENSITIVE)
-    );
-
-    private final InMemorySessionStore sessions;
-    private final InMemoryPayeeStore payees;
-
-    public ChatOrchestratorService(InMemorySessionStore sessions, InMemoryPayeeStore payees) {
+    public ChatOrchestratorService(JdbcSessionStore sessions,
+                                   JdbcPayeeStore payees,
+                                   IntentInterpreter intentInterpreter) {
         this.sessions = sessions;
         this.payees = payees;
+        this.intentInterpreter = intentInterpreter;
     }
 
     public ChatMessage welcomeMessage(String sessionId) {
@@ -105,10 +96,11 @@ public class ChatOrchestratorService {
 
     private ChatMessage handleTextTurn(SessionRecord record, String text) {
         ConversationState state = record.session().state();
+        IntentAnalysis intent = intentInterpreter.analyze(record.session(), text);
 
         if (state == ConversationState.AWAITING_CONFIRMATION) {
-            if (POSITIVE_CONFIRM.matcher(text).find()) return executePayment(record);
-            if (CANCEL.matcher(text).find()) return cancelPayment(record);
+            if (intent.intent() == IntentType.CONFIRM_PAYMENT) return executePayment(record);
+            if (intent.intent() == IntentType.CANCEL_PAYMENT) return cancelPayment(record);
         }
 
         if (state == ConversationState.AWAITING_PAYEE_SELECTION && record.session().activeDraft() != null) {
@@ -118,7 +110,7 @@ public class ChatOrchestratorService {
             ));
         }
 
-        if (INTERNATIONAL_INTENT.matcher(text).find()) {
+        if (intent.intent() == IntentType.INTERNATIONAL_PAYMENT) {
             transition(record, ConversationState.IDLE, ChatSessionStatus.ACTIVE);
             return assistantMessage(record.session().sessionId(), List.of(
                     infoBlock("Not supported in V1",
@@ -126,9 +118,9 @@ public class ChatOrchestratorService {
             ));
         }
 
-        if (PAYMENT_INTENT.matcher(text).find()) return continueDomesticPayment(record, text);
-        if (LOOKUP_INTENT.matcher(text).find() || DO_I_HAVE.matcher(text).find()) {
-            return handlePayeeLookup(record, text);
+        if (intent.intent() == IntentType.DOMESTIC_PAYMENT) return continueDomesticPayment(record, intent);
+        if (intent.intent() == IntentType.PAYEE_LOOKUP) {
+            return handlePayeeLookup(record, intent);
         }
 
         return assistantMessage(record.session().sessionId(), List.of(
@@ -137,8 +129,8 @@ public class ChatOrchestratorService {
         ));
     }
 
-    private ChatMessage handlePayeeLookup(SessionRecord record, String text) {
-        String query = extractPayeeQuery(text);
+    private ChatMessage handlePayeeLookup(SessionRecord record, IntentAnalysis intent) {
+        String query = intent.payeeQuery();
         List<RegisteredPayee> matches = query != null ? payees.findByQuery(query) : payees.all();
 
         transition(record, ConversationState.IDLE, ChatSessionStatus.ACTIVE);
@@ -173,12 +165,12 @@ public class ChatOrchestratorService {
         ));
     }
 
-    private ChatMessage continueDomesticPayment(SessionRecord record, String text) {
+    private ChatMessage continueDomesticPayment(SessionRecord record, IntentAnalysis intent) {
         PaymentDraft draft = ensureDraft(record);
 
-        String payeeQuery = extractPayeeQuery(text);
-        Double amount = extractAmount(text);
-        LocalDate date = extractPaymentDate(text);
+        String payeeQuery = intent.payeeQuery();
+        Double amount = intent.amount();
+        LocalDate date = intent.paymentDate();
 
         draft = updateDraft(draft,
                 payeeQuery != null ? payeeQuery : draft.payeeQueryText(),
@@ -292,7 +284,14 @@ public class ChatOrchestratorService {
                 payeeQuery != null ? null : draft.selectedPayee(),
                 amount, date, draft.status(), null);
         record.setSession(withDraft(record.session(), draft));
-        return continueDomesticPayment(record, "");
+        return continueDomesticPayment(record, new IntentAnalysis(
+                IntentType.DOMESTIC_PAYMENT,
+                IntentAnalysis.toolNameFor(IntentType.DOMESTIC_PAYMENT),
+                null,
+                null,
+                null,
+                "UI_EVENT"
+        ));
     }
 
     // ---- state transitions ----------------------------------------------------
@@ -452,44 +451,6 @@ public class ChatOrchestratorService {
             if (first instanceof ContentBlock.SelectableListBlock s) return s.title();
         }
         return "";
-    }
-
-    // ---- parsing --------------------------------------------------------------
-
-    private Double extractAmount(String text) {
-        Matcher m = AMOUNT.matcher(text.replace(",", ""));
-        if (!m.find()) return null;
-        try {
-            double v = Double.parseDouble(m.group(1));
-            return v > 0 ? v : null;
-        } catch (NumberFormatException e) { return null; }
-    }
-
-    private LocalDate extractPaymentDate(String text) {
-        String n = text.toLowerCase(Locale.ROOT);
-        if (n.contains("tomorrow") || n.contains("later")) return LocalDate.now().plusDays(1);
-        if (n.contains("today") || n.contains("now")) return LocalDate.now();
-        return null;
-    }
-
-    private String extractPayeeQuery(String text) {
-        String alias = payees.findAliasInText(text);
-        if (alias != null) return alias;
-        for (Pattern p : PAYEE_QUERY_PATTERNS) {
-            Matcher m = p.matcher(text);
-            if (m.find() && m.group(1) != null) {
-                String sanitized = sanitize(m.group(1));
-                if (!sanitized.isBlank()) return sanitized;
-            }
-        }
-        return null;
-    }
-
-    private String sanitize(String raw) {
-        return raw.toLowerCase(Locale.ROOT)
-                .replaceAll("[^a-z0-9\\s]", " ")
-                .replaceAll("\\b(hkd|today|tomorrow|now|later|please|thanks|registered|payee|payees|accounts?|my)\\b", " ")
-                .replaceAll("\\s+", " ").trim();
     }
 
     private String titleCase(String s) {
