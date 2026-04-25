@@ -10,11 +10,13 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -31,9 +33,6 @@ import java.util.UUID;
 public class HttpDomesticPaymentClient implements DomesticPaymentClient {
 
     private static final Logger log = LoggerFactory.getLogger(HttpDomesticPaymentClient.class);
-
-    private static final String DEFAULT_CONFIRM_URL =
-            "https://dcc-hk-hbap-mvmny-domestic-payments-papi-3.zzzz-dsvc-papi-hk01-hbap-cert.svc.default.shp.ape1.pre-prod.aws.cloud.zzzz/confirm-domestic-payments";
 
     private final Chat2PayProperties properties;
     private final DownstreamAuthService auth;
@@ -61,7 +60,7 @@ public class HttpDomesticPaymentClient implements DomesticPaymentClient {
     public PaymentConfirmationResult confirm(DomesticPaymentRequest request) {
         validate(request);
         if (properties.downstreamMockEnabled()) {
-            log.debug("Mock domestic payment confirm: profileId={} payeeId={} amount={} date={}",
+            log.debug("Downstream domestic confirm skipped because mock mode is enabled: profileId={} payeeId={} amount={} date={}",
                     request.profileId(), request.payeeIdIndex(), request.amount(), request.paymentDate());
             String reference = "DOM-" + LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE)
                     + "-" + UUID.randomUUID().toString().replace("-", "").substring(0, 6).toUpperCase();
@@ -79,24 +78,38 @@ public class HttpDomesticPaymentClient implements DomesticPaymentClient {
                 .orElseThrow(() -> new IllegalArgumentException("payee_id_index is not recognized."));
         String samlToken = auth.login(request.profileId());
         Map<String, Object> payload = buildPayload(request, payee, profile);
-        log.debug("Downstream domestic confirm request: profileId={} url={} payeeId={} payeeName={} amount={} date={} currency={}",
+        String url = confirmUrl();
+        HttpHeaders headers = auth.authenticatedHeaders(request.profileId(), samlToken);
+        log.debug("Downstream domestic confirm request summary: profileId={} url={} payeeId={} payeeName={} amount={} date={} currency={}",
                 request.profileId(),
-                confirmUrl(),
+                url,
                 request.payeeIdIndex(),
                 firstNonBlank(request.payeeName(), payee.name()),
                 request.amount(),
                 request.paymentDate(),
                 profile.paymentCurrencyOrDefault(properties.defaultCurrencyOrHkd()));
-        log.debug("Downstream domestic confirm payload: profileId={} payload={}", request.profileId(), payload);
-        ResponseEntity<String> response = http.post()
-                .uri(confirmUrl())
-                .headers(h -> h.addAll(auth.authenticatedHeaders(request.profileId(), samlToken)))
-                .body(payload)
-                .retrieve()
-                .toEntity(String.class);
+        log.debug("Downstream domestic confirm HTTP request: profileId={} method=POST url={} headers={} body={}",
+                request.profileId(), url, headers, payload);
+        ResponseEntity<String> response;
+        try {
+            response = http.post()
+                    .uri(url)
+                    .headers(h -> h.addAll(headers))
+                    .body(payload)
+                    .retrieve()
+                    .toEntity(String.class);
+        } catch (RestClientResponseException ex) {
+            log.debug("Downstream domestic confirm HTTP error response: profileId={} method=POST url={} status={} headers={} body={}",
+                    request.profileId(), url, ex.getStatusCode().value(), ex.getResponseHeaders(),
+                    ex.getResponseBodyAsString());
+            throw new RestClientException("Payment confirmation failed with HTTP "
+                    + ex.getStatusCode().value() + ": " + ex.getResponseBodyAsString(), ex);
+        }
+        log.debug("Downstream domestic confirm HTTP response: profileId={} method=POST url={} status={} headers={} body={}",
+                request.profileId(), url, response.getStatusCode().value(), response.getHeaders(), response.getBody());
 
         Map<String, Object> responseBody = parseResponse(response.getBody());
-        log.debug("Downstream domestic confirm response: profileId={} status={} responseKeys={} body={}",
+        log.debug("Downstream domestic confirm parsed response: profileId={} status={} responseKeys={} body={}",
                 request.profileId(), response.getStatusCode().value(), responseBody.keySet(), responseBody);
         String reference = findReference(responseBody)
                 .orElse("DOM-" + LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE)
@@ -179,7 +192,7 @@ public class HttpDomesticPaymentClient implements DomesticPaymentClient {
     private String confirmUrl() {
         Chat2PayProperties.DownstreamProperties downstream = properties.downstream();
         if (downstream == null || downstream.confirmUrl() == null || downstream.confirmUrl().isBlank()) {
-            return DEFAULT_CONFIRM_URL;
+            throw new IllegalStateException("chat2pay.downstream.confirm-url must be configured in yaml or environment.");
         }
         return downstream.confirmUrl();
     }

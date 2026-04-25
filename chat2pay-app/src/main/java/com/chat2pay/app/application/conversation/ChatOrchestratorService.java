@@ -36,12 +36,14 @@ import com.chat2pay.app.persistence.repository.PayeeStore.RegisteredPayee;
 import com.chat2pay.app.persistence.repository.ProfileStore;
 import com.chat2pay.app.persistence.repository.SessionStore;
 import com.chat2pay.app.persistence.repository.SessionStore.SessionRecord;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -110,14 +112,17 @@ public class ChatOrchestratorService {
     }
 
     public ChatTurnResponse handleUserMessage(String profileId, String sessionId, SendMessageRequest request) {
+        long startedNanos = System.nanoTime();
         SessionRecord record = sessions.get(profileId, sessionId);
         String text = request.messageText().trim();
         ChatMessage userMessage = userTextMessage(sessionId, text);
         record.messages().add(userMessage);
 
-        ChatMessage assistant = handleTextTurn(record, text);
+        ChatMessage assistant = withProcessingMetadata(handleTextTurn(record, text), startedNanos);
         record.messages().add(assistant);
         touchPreview(record, assistant);
+        log.debug("Chat text turn processed: profileId={} sessionId={} userMessageId={} assistantMessageId={} processingMs={}",
+                profileId, sessionId, userMessage.messageId(), assistant.messageId(), processingMs(assistant));
 
         return new ChatTurnResponse(
                 record.session(), userMessage, assistant,
@@ -126,6 +131,7 @@ public class ChatOrchestratorService {
     }
 
     public ChatTurnResponse handleUiEvent(String profileId, String sessionId, UiEventRequest request) {
+        long startedNanos = System.nanoTime();
         SessionRecord record = sessions.get(profileId, sessionId);
         String userText = describeEvent(request);
         ChatMessage userMessage = new ChatMessage(
@@ -134,9 +140,12 @@ public class ChatOrchestratorService {
         );
         record.messages().add(userMessage);
 
-        ChatMessage assistant = handleUiTurn(record, request);
+        ChatMessage assistant = withProcessingMetadata(handleUiTurn(record, request), startedNanos);
         record.messages().add(assistant);
         touchPreview(record, assistant);
+        log.debug("Chat UI turn processed: profileId={} sessionId={} eventType={} userMessageId={} assistantMessageId={} processingMs={}",
+                profileId, sessionId, request.eventType(), userMessage.messageId(), assistant.messageId(),
+                processingMs(assistant));
 
         return new ChatTurnResponse(
                 record.session(), userMessage, assistant,
@@ -199,6 +208,7 @@ public class ChatOrchestratorService {
             return runLlmToolLoop(provider.get(), record, text);
         } catch (RuntimeException ex) {
             log.warn("LLM tool loop failed; falling back to deterministic orchestrator: {}", ex.getMessage());
+            log.debug("LLM tool loop failure details", ex);
             return Optional.empty();
         }
     }
@@ -217,6 +227,8 @@ public class ChatOrchestratorService {
             );
             LlmCompletionResponse response = provider.complete(request);
             List<ToolCall> toolCalls = normalizeToolCalls(response.toolCalls());
+            log.debug("LLM tool loop response: sessionId={} iteration={} provider={} content={} toolCalls={}",
+                    record.session().sessionId(), iteration, response.provider(), response.content(), toolCalls);
 
             if (toolCalls.isEmpty()) {
                 String content = trim(response.content());
@@ -231,7 +243,13 @@ public class ChatOrchestratorService {
                     .map(tc -> new LlmCompletionRequest.ToolCall(tc.id(), tc.name(), tc.arguments()))
                     .toList()));
 
-            ToolExecution execution = executeLlmToolCall(record, toolCalls.get(0), latestUserText);
+            ToolCall selected = toolCalls.get(0);
+            log.debug("LLM tool loop executing tool: sessionId={} iteration={} toolName={} toolCallId={} arguments={}",
+                    record.session().sessionId(), iteration, selected.name(), selected.id(), selected.arguments());
+            ToolExecution execution = executeLlmToolCall(record, selected, latestUserText);
+            log.debug("LLM tool loop tool result: sessionId={} iteration={} toolName={} toolCallId={} result={} terminalMessage={} renderBlocks={}",
+                    record.session().sessionId(), iteration, execution.toolName(), execution.toolCallId(),
+                    toJson(execution.result()), execution.terminalMessage() != null, execution.renderBlocks());
             messages.add(Message.toolResult(
                     execution.toolCallId(),
                     execution.toolName(),
@@ -326,7 +344,15 @@ public class ChatOrchestratorService {
     }
 
     private ToolExecution executePayeeLookupTool(SessionRecord record, ToolCall toolCall, String query) {
-        PayeeLookupView view = buildPayeeLookupView(record, query);
+        PayeeLookupView view;
+        try {
+            view = buildPayeeLookupView(record, query);
+        } catch (RuntimeException ex) {
+            return terminalTool(toolCall,
+                    Map.of("ok", false, "error", "registered_payee_lookup_failed",
+                            "message", downstreamMessage(ex)),
+                    payeeLookupFailed(record, ex));
+        }
         Map<String, Object> result = new HashMap<>();
         result.put("ok", true);
         if (query != null) result.put("query", query);
@@ -407,8 +433,12 @@ public class ChatOrchestratorService {
     }
 
     private ChatMessage handlePayeeLookup(SessionRecord record, IntentAnalysis intent) {
-        PayeeLookupView view = buildPayeeLookupView(record, intent.payeeQuery());
-        return assistantMessage(record.session().sessionId(), view.blocks());
+        try {
+            PayeeLookupView view = buildPayeeLookupView(record, intent.payeeQuery());
+            return assistantMessage(record.session().sessionId(), view.blocks());
+        } catch (RuntimeException ex) {
+            return payeeLookupFailed(record, ex);
+        }
     }
 
     private PayeeLookupView buildPayeeLookupView(SessionRecord record, String query) {
@@ -465,7 +495,12 @@ public class ChatOrchestratorService {
 
         if (draft.payeeQueryText() == null) return askForMissingDetails(record, draft);
 
-        List<RegisteredPayee> matches = payees.findByQuery(record.profileId(), draft.payeeQueryText());
+        List<RegisteredPayee> matches;
+        try {
+            matches = payees.findByQuery(record.profileId(), draft.payeeQueryText());
+        } catch (RuntimeException ex) {
+            return payeeLookupFailed(record, ex);
+        }
         if (matches.isEmpty()) {
             transition(record, ConversationState.COLLECTING_DETAILS, ChatSessionStatus.ACTIVE);
             titleFromDraft(record, draft);
@@ -649,6 +684,9 @@ public class ChatOrchestratorService {
                         ? "Domestic payment confirmation was rejected." : result.message());
             }
         } catch (RuntimeException ex) {
+            log.warn("Downstream domestic payment confirmation failed: profileId={} sessionId={} draftId={} message={}",
+                    record.profileId(), record.session().sessionId(), draft.draftId(), ex.getMessage());
+            log.debug("Downstream domestic payment confirmation failure details", ex);
             Map<String, Object> context = withContext(draft.context(), Map.of(
                     "downstreamError", ex.getMessage() == null ? "Unknown downstream error" : ex.getMessage()
             ));
@@ -764,6 +802,29 @@ public class ChatOrchestratorService {
         } catch (Exception ex) {
             return result.toString();
         }
+    }
+
+    private String toJson(Object value) {
+        try {
+            return mapper.writeValueAsString(value);
+        } catch (JsonProcessingException ex) {
+            return String.valueOf(value);
+        }
+    }
+
+    private ChatMessage payeeLookupFailed(SessionRecord record, RuntimeException ex) {
+        log.warn("Registered payee lookup failed: profileId={} sessionId={} message={}",
+                record.profileId(), record.session().sessionId(), ex.getMessage());
+        log.debug("Registered payee lookup failure details", ex);
+        transition(record, ConversationState.IDLE, ChatSessionStatus.ACTIVE);
+        return assistantMessage(record.session().sessionId(), List.of(
+                errorBlock("Registered payee lookup failed",
+                        "I could not retrieve registered payees right now. Please try again after downstream access is restored.")
+        ));
+    }
+
+    private static String downstreamMessage(RuntimeException ex) {
+        return ex.getMessage() == null ? "Unknown downstream error" : ex.getMessage();
     }
 
     private String messageContent(ChatMessage message) {
@@ -979,6 +1040,28 @@ public class ChatOrchestratorService {
         return new ChatMessage(newMessageId(), sessionId, MessageRole.ASSISTANT,
                 blocks.isEmpty() ? MessageKind.TEXT : MessageKind.BLOCKS,
                 null, blocks.isEmpty() ? null : blocks, null, Instant.now());
+    }
+
+    private ChatMessage withProcessingMetadata(ChatMessage message, long startedNanos) {
+        long elapsedMs = Math.max(0, Duration.ofNanos(System.nanoTime() - startedNanos).toMillis());
+        Map<String, Object> metadata = new HashMap<>();
+        if (message.metadata() != null) metadata.putAll(message.metadata());
+        metadata.put("processingMs", elapsedMs);
+        metadata.put("processingCompletedAt", Instant.now().toString());
+        return new ChatMessage(
+                message.messageId(),
+                message.sessionId(),
+                message.role(),
+                message.kind(),
+                message.text(),
+                message.contentBlocks(),
+                metadata,
+                message.createdAt()
+        );
+    }
+
+    private static Object processingMs(ChatMessage message) {
+        return message.metadata() == null ? null : message.metadata().get("processingMs");
     }
 
     private ChatMessage userTextMessage(String sessionId, String text) {

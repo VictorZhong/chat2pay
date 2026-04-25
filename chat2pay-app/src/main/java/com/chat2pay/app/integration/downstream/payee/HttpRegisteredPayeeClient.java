@@ -2,14 +2,19 @@ package com.chat2pay.app.integration.downstream.payee;
 
 import com.chat2pay.app.config.Chat2PayProperties;
 import com.chat2pay.app.integration.downstream.auth.DownstreamAuthService;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -22,9 +27,6 @@ import java.util.Map;
 public class HttpRegisteredPayeeClient implements RegisteredPayeeClient {
 
     private static final Logger log = LoggerFactory.getLogger(HttpRegisteredPayeeClient.class);
-
-    private static final String DEFAULT_PAYEE_URL =
-            "https://mmf-payee-management--hk-hbap-banking-1.zzzz-dsvc-papi-hk01-hbap-cert.svc.default.shp.ape1.pre-prod.aws.cloud.zzzz/payees";
 
     private final Chat2PayProperties properties;
     private final DownstreamAuthService auth;
@@ -46,7 +48,10 @@ public class HttpRegisteredPayeeClient implements RegisteredPayeeClient {
 
     @Override
     public List<DownstreamPayee> loadPayees(String profileId) {
-        if (properties.downstreamMockEnabled()) return List.of();
+        if (properties.downstreamMockEnabled()) {
+            log.debug("Downstream payee request skipped because mock mode is enabled: profileId={}", profileId);
+            return List.of();
+        }
         synchronized (cachedPayeesByProfile) {
             CachedPayees cached = cachedPayeesByProfile.get(profileId);
             if (cached != null && isCacheValid(cached)) {
@@ -56,12 +61,26 @@ public class HttpRegisteredPayeeClient implements RegisteredPayeeClient {
         }
 
         String samlToken = auth.login(profileId);
-        log.debug("Downstream payee request: profileId={} url={}", profileId, payeeUrl());
-        JsonNode body = http.get()
-                .uri(payeeUrl())
-                .headers(h -> h.addAll(auth.authenticatedHeaders(profileId, samlToken)))
-                .retrieve()
-                .body(JsonNode.class);
+        String url = payeeUrl();
+        HttpHeaders headers = auth.authenticatedHeaders(profileId, samlToken);
+        log.debug("Downstream payee HTTP request: profileId={} method=GET url={} headers={} body=<none>",
+                profileId, url, headers);
+        ResponseEntity<String> response;
+        try {
+            response = http.get()
+                    .uri(url)
+                    .headers(h -> h.addAll(headers))
+                    .retrieve()
+                    .toEntity(String.class);
+        } catch (RestClientResponseException ex) {
+            log.debug("Downstream payee HTTP error response: profileId={} method=GET url={} status={} headers={} body={}",
+                    profileId, url, ex.getStatusCode().value(), ex.getResponseHeaders(), ex.getResponseBodyAsString());
+            throw new RestClientException("Payment payee lookup failed with HTTP "
+                    + ex.getStatusCode().value() + ": " + ex.getResponseBodyAsString(), ex);
+        }
+        log.debug("Downstream payee HTTP response: profileId={} method=GET url={} status={} headers={} body={}",
+                profileId, url, response.getStatusCode().value(), response.getHeaders(), response.getBody());
+        JsonNode body = readJson(response.getBody());
         log.debug("Downstream payee raw response summary: profileId={} topLevelFields={}",
                 profileId, topLevelFields(body));
         List<DownstreamPayee> parsed = parsePayees(body);
@@ -83,9 +102,18 @@ public class HttpRegisteredPayeeClient implements RegisteredPayeeClient {
     private String payeeUrl() {
         Chat2PayProperties.DownstreamProperties downstream = properties.downstream();
         if (downstream == null || downstream.payeeUrl() == null || downstream.payeeUrl().isBlank()) {
-            return DEFAULT_PAYEE_URL;
+            throw new IllegalStateException("chat2pay.downstream.payee-url must be configured in yaml or environment.");
         }
         return downstream.payeeUrl();
+    }
+
+    private JsonNode readJson(String body) {
+        if (body == null || body.isBlank()) return null;
+        try {
+            return mapper.readTree(body);
+        } catch (JsonProcessingException ex) {
+            throw new RestClientException("Payment payee response was not valid JSON.", ex);
+        }
     }
 
     private static List<String> topLevelFields(JsonNode body) {

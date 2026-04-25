@@ -4,6 +4,17 @@ import { StructuredBlock } from '@/features/ui-events/StructuredBlocks';
 import { formatDateTime } from '@/shared/lib/format';
 import { cn } from '@/shared/lib/cn';
 
+function processingMs(message: ChatMessage) {
+  const raw = message.metadata?.processingMs;
+  const value = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw) : null;
+  return value !== null && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function formatProcessingTime(ms: number) {
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  return `${(ms / 1000).toFixed(ms < 10_000 ? 2 : 1)} s`;
+}
+
 export function MessageRenderer({
   message,
   assistantName,
@@ -18,6 +29,7 @@ export function MessageRenderer({
   entryIndex?: number;
 }) {
   const isUser = message.role === 'USER';
+  const elapsedMs = processingMs(message);
 
   return (
     <div
@@ -29,6 +41,11 @@ export function MessageRenderer({
         <div className={cn('flex items-center gap-3', isUser && 'justify-end')}>
           <p className="text-sm font-semibold text-brand-black">{isUser ? 'You' : assistantName}</p>
           <p className="text-[11px] uppercase tracking-[0.12em] text-brand-gray">{formatDateTime(message.createdAt)}</p>
+          {elapsedMs !== null ? (
+            <p className="text-[11px] uppercase tracking-[0.12em] text-brand-gray">
+              Processed in {formatProcessingTime(elapsedMs)}
+            </p>
+          ) : null}
         </div>
 
         {message.text && (!message.contentBlocks || message.contentBlocks.length === 0) ? (

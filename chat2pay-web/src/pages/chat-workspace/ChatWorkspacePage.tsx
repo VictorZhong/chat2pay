@@ -16,6 +16,7 @@ import { BrandLoadingPanel } from '@/shared/ui/BrandLoadingPanel';
 import { StatusBadge } from '@/shared/ui/StatusBadge';
 import { INTERACTION_DELAY_MS } from '@/shared/config/env';
 import { wait } from '@/shared/lib/time';
+import { createId } from '@/shared/lib/id';
 
 function actionLabelFromSummaryBlock(block: ContentBlock | undefined, actionId: string) {
   if (!block || block.type !== 'SUMMARY_CARD') {
@@ -103,6 +104,43 @@ function pendingInteraction(messages: ChatMessage[]) {
   }
 
   return null;
+}
+
+function turnErrorMessage(sessionId: string, evt: Extract<TurnStreamEvent, { type: 'turn-error' }>): ChatMessage {
+  const messageId = createId('msg_error');
+  return {
+    messageId,
+    sessionId,
+    role: 'ASSISTANT',
+    kind: 'BLOCKS',
+    text: null,
+    contentBlocks: [
+      {
+        blockId: createId('blk_error'),
+        type: 'ERROR_CARD',
+        title: 'Request failed',
+        text: evt.message || 'The request could not be completed.',
+      },
+    ],
+    metadata: {
+      errorCode: evt.code,
+      ...(typeof evt.processingMs === 'number' ? { processingMs: evt.processingMs } : {}),
+    },
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function errorText(error: unknown) {
+  return error instanceof Error ? error.message : 'The request could not be completed.';
+}
+
+function wasDisplayedInChat(error: unknown) {
+  return Boolean(error && typeof error === 'object' && 'displayedInChat' in error);
+}
+
+function markDisplayedInChat(error: Error) {
+  (error as Error & { displayedInChat: true }).displayedInChat = true;
+  return error;
 }
 
 export function ChatWorkspacePage() {
@@ -206,9 +244,28 @@ export function ChatWorkspacePage() {
         );
         queryClient.setQueryData(queryKeys.session(currentUser.profileId, nextSessionId), evt.session);
       } else if (evt.type === 'turn-error') {
-        throw new Error(`${evt.code}: ${evt.message}`);
+        const errorMessage = turnErrorMessage(nextSessionId, evt);
+        queryClient.setQueryData<ChatMessage[]>(messagesKey, (prev = []) => {
+          if (pendingMessageId) {
+            return prev.map((m) => (m.messageId === pendingMessageId ? errorMessage : m));
+          }
+          return [...prev, errorMessage];
+        });
+        throw markDisplayedInChat(new Error(`${evt.code}: ${evt.message}`));
       }
     }
+  }
+
+  function appendRequestError(nextSessionId: string, error: unknown) {
+    const messagesKey = queryKeys.messages(currentUser.profileId, nextSessionId);
+    queryClient.setQueryData<ChatMessage[]>(messagesKey, (prev = []) => [
+      ...prev,
+      turnErrorMessage(nextSessionId, {
+        type: 'turn-error',
+        code: 'REQUEST_FAILED',
+        message: errorText(error),
+      }),
+    ]);
   }
 
   const sendMessageMutation = useMutation({
@@ -228,6 +285,11 @@ export function ChatWorkspacePage() {
         await refreshCurrentSession(sessionId);
       }
     },
+    onError: (error) => {
+      if (sessionId && !wasDisplayedInChat(error)) {
+        appendRequestError(sessionId, error);
+      }
+    },
   });
 
   const submitUiEventMutation = useMutation({
@@ -244,6 +306,11 @@ export function ChatWorkspacePage() {
     onSuccess: async () => {
       if (sessionId) {
         await refreshCurrentSession(sessionId);
+      }
+    },
+    onError: (error) => {
+      if (sessionId && !wasDisplayedInChat(error)) {
+        appendRequestError(sessionId, error);
       }
     },
   });

@@ -5,10 +5,13 @@ import com.chat2pay.app.api.dto.ChatDtos.ChatTurnResponse;
 import com.chat2pay.app.api.dto.ChatDtos.SendMessageRequest;
 import com.chat2pay.app.api.dto.ChatDtos.UiEventRequest;
 import com.chat2pay.app.api.dto.ContentBlock;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.Executor;
@@ -22,6 +25,8 @@ import java.util.concurrent.Executors;
  */
 @Service
 public class ChatStreamService {
+
+    private static final Logger log = LoggerFactory.getLogger(ChatStreamService.class);
 
     private static final long TIMEOUT_MS = 60_000L;
     private static final int CHUNK_SIZE = 32;
@@ -49,6 +54,7 @@ public class ChatStreamService {
     private SseEmitter run(java.util.function.Supplier<ChatTurnResponse> work) {
         SseEmitter emitter = new SseEmitter(TIMEOUT_MS);
         executor.execute(() -> {
+            long startedNanos = System.nanoTime();
             try {
                 ChatTurnResponse turn = work.get();
                 emit(emitter, "user-message", Map.of("message", turn.userMessage()));
@@ -94,13 +100,20 @@ public class ChatStreamService {
                 ));
                 emitter.complete();
             } catch (Throwable ex) {
+                long elapsedMs = Math.max(0, Duration.ofNanos(System.nanoTime() - startedNanos).toMillis());
+                log.warn("Chat SSE turn failed after {} ms: {}", elapsedMs, ex.getMessage());
+                log.debug("Chat SSE turn failure details", ex);
                 try {
                     emit(emitter, "turn-error", Map.of(
                             "code", ex.getClass().getSimpleName(),
-                            "message", ex.getMessage() != null ? ex.getMessage() : "Unhandled error"
+                            "message", ex.getMessage() != null ? ex.getMessage() : "Unhandled error",
+                            "processingMs", elapsedMs
                     ));
-                } catch (IOException ignored) { }
-                emitter.completeWithError(ex);
+                    emitter.complete();
+                } catch (IOException ioEx) {
+                    log.debug("Chat SSE turn-error event could not be written", ioEx);
+                    emitter.complete();
+                }
             }
         });
         return emitter;

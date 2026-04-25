@@ -217,8 +217,10 @@ For each user message or UI event:
    reaches a terminal UI state, or the hard iteration limit is reached
 6. validate the selected backend action and required fields before any side
    effect
-7. persist the resulting assistant message and updated draft
-8. stream or return structured blocks to the frontend
+7. attach turn timing metadata to the final assistant message
+   (`metadata.processingMs`)
+8. persist the resulting assistant message and updated draft
+9. stream or return structured blocks to the frontend
 
 The current V1 Java implementation runs a real provider-agnostic LLM tool loop
 for text turns when a provider is available. Personal-subscription Copilot and
@@ -235,6 +237,9 @@ The backend, not the model, enforces these rules:
 - opaque fields such as `payeeIdIndex` are never shown to the user
 - downstream response errors are normalized before returning to the frontend
 - the loop has a hard iteration limit
+- SSE turn errors are emitted as `turn-error` events and the stream is then
+  completed normally, so global JSON exception handling does not try to write
+  into an existing `text/event-stream` response
 
 ### 7.3 Current Interfaces
 
@@ -260,6 +265,8 @@ Responsibilities:
 - hide provider-specific request details from the rest of the application
 - support chat-completions tool calls and tool-result messages for the unified
   conversation loop
+- read provider endpoint URLs from yaml/environment configuration and fail fast
+  when required URLs are missing
 - honor the configured corporate proxy for `https://api.github.com` token
   exchange
 
@@ -363,7 +370,8 @@ Expected stream events:
 - `turn-error`
 
 The frontend reads the response stream from the Java backend. It never connects
-to the LLM directly.
+to the LLM directly. On `turn-error`, the frontend renders a temporary assistant
+error card and includes the backend-provided processing time when available.
 
 ## 11. Session and Draft State
 

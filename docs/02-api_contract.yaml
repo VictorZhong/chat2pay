@@ -481,6 +481,7 @@ components:
         metadata:
           type: object
           nullable: true
+          description: Optional diagnostics such as assistant `processingMs`.
           additionalProperties: true
         createdAt:
           type: string

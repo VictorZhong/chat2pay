@@ -31,12 +31,12 @@ management:
 
 logging:
   level:
-    #root: DEBUG
+    root: INFO
     com.chat2pay: DEBUG
-    org.springframework.web.client: DEBUG
+    org.springframework.web.client: INFO
     org.springframework.web.servlet.mvc.method.annotation.SseEmitter: DEBUG
-    #org.hibernate.SQL: DEBUG
-    #org.hibernate.orm.jdbc.bind: TRACE
+    org.hibernate.SQL: INFO
+    org.hibernate.orm.jdbc.bind: INFO
 
 chat2pay:
   primary-provider: COPILOT_PERSONAL
@@ -50,9 +50,8 @@ chat2pay:
     bootstrap-session-token: ${COPILOT_SESSION_TOKEN:}
     model: ${LLM_MODEL:gpt-5.4}
     max-completion-tokens: ${LLM_MAX_OUTPUT_TOKENS:${LLM_MAX_COMPLETION_TOKENS:2048}}
-    account-type: ${GITHUB_COPILOT_ACCOUNT_TYPE:individual}
     editor-version: ${COPILOT_EDITOR_VERSION:1.114.0}
-    base-url: ${LLM_BASE_URL:}
+    base-url: ${LLM_BASE_URL:https://api.githubcopilot.com}
     token-url: ${COPILOT_TOKEN_URL:https://api.github.com/copilot_internal/v2/token}
     # Full proxy URL for GitHub Copilot personal traffic, for example
     # http://username:password@proxy-host:80. Leave blank to disable.
@@ -75,7 +74,7 @@ chat2pay:
     # Keep true for local POC/test runs. Set PAYMENT_MOCK_ENABLED=false when
     # the sandbox login, payee lookup, and confirm endpoints are reachable.
     mock-enabled: ${PAYMENT_MOCK_ENABLED:true}
-    login-url-template: ${PAYMENT_LOGIN_URL:https://testdataservices.apps.cf.wgdc-dn-03.cloud.uk.zzzz/dsp/entity/HK/{}/SAML3/30}
+    login-url-template: ${PAYMENT_LOGIN_URL:https://testdataservices.apps.cf.wgdc-drn-03.cloud.uk.zzzz/dsp/entity/HK/{}/SAML3/30}
     payee-url: ${PAYMENT_PAYEE_URL:https://mmf-payee-management--hk-hbap-banking-1.zzzz-dsvc-papi-hk01-hbap-cert.svc.default.shp.ape1.pre-prod.aws.cloud.zzzz/payees}
     confirm-url: ${PAYMENT_CONFIRM_URL:https://dcc-hk-hbap-mvmny-domestic-payments-papi-3.zzzz-dsvc-papi-hk01-hbap-cert.svc.default.shp.ape1.pre-prod.aws.cloud.zzzz/confirm-domestic-payments}
     request-timeout-ms: ${PAYMENT_REQUEST_TIMEOUT_MS:30000}

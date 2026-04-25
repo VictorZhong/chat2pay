@@ -3,6 +3,7 @@ package com.chat2pay.app.api;
 import com.chat2pay.app.api.dto.ChatDtos.ErrorResponse;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingRequestHeaderException;
@@ -59,6 +60,7 @@ public class GlobalExceptionHandler {
     private static ResponseEntity<ErrorResponse> body(HttpStatus status, String code,
                                                        String message, List<String> details) {
         return ResponseEntity.status(status)
+                .contentType(MediaType.APPLICATION_JSON)
                 .body(new ErrorResponse(code, message, details, Instant.now()));
     }
 }

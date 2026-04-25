@@ -113,6 +113,8 @@ insert into ctp_llm_credential (
 
 The backend exchanges that key at `https://api.github.com/copilot_internal/v2/token`, caches the short-lived session token in the same row, and refreshes it when it expires. It also clears and refreshes the cached session token when a Copilot chat-completion call returns `401`. To force a refresh manually, set `session_token` and `session_token_expires_at` to `null`; no restart is required.
 
+Copilot `base-url` and `token-url` are read from `application.yml` via `LLM_BASE_URL` and `COPILOT_TOKEN_URL`. The Java adapter does not keep endpoint fallback URLs; if those yaml values are blank, the provider fails fast with a configuration error.
+
 Optional bootstrap env vars exist only for first startup when the DB row is missing:
 
 ```bash
@@ -179,7 +181,9 @@ export PAYMENT_CONFIRM_URL='https://.../confirm-domestic-payments'
 
 The login username/password, debit account number, product category, and payment currency are read from `ctp_profile` for the active profile. Optional downstream headers and defaults are configured through `PAYMENT_CHANNEL_ID`, `PAYMENT_COUNTRY_CODE`, `PAYMENT_GROUP_MEMBER`, `PAYMENT_LOCALE`, `PAYMENT_SOURCE_SYSTEM_ID`, `PAYMENT_DEVICE_ID`, and `PAYMENT_USER_AGENT`; `perm_net_id` is used as the source system id when present.
 
-Backend logging defaults to DEBUG for the POC, including SQL binding and downstream/Copilot call summaries. CORS is open for `/api/**` so the same build can run behind changing k8s ingress domains.
+Backend logging defaults to DEBUG for `com.chat2pay` in the POC. It logs full LLM request/response bodies, tool-loop tool calls/results, and downstream URL/header/body/status details; Hibernate SQL/bind logging is kept at INFO to reduce DB noise. These logs include sensitive tokens and downstream credentials, so keep DEBUG logging scoped to local/sandbox troubleshooting. CORS is open for `/api/**` so the same build can run behind changing k8s ingress domains.
+
+Assistant messages include `metadata.processingMs`, persisted in `ctp_chat_message.metadata_json`. The frontend displays this as "Processed in ..." in each assistant chat entry, including temporary SSE error messages.
 
 ## Run the Backend
 

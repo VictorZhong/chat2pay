@@ -10,6 +10,8 @@ import com.chat2pay.app.persistence.repository.LlmCredentialStore;
 import com.chat2pay.app.persistence.repository.LlmCredentialStore.Credential;
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import org.apache.hc.client5.http.auth.AuthScope;
 import org.apache.hc.client5.http.auth.StandardAuthScheme;
@@ -31,6 +33,7 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 
 import java.net.URI;
 import java.net.URLDecoder;
@@ -45,9 +48,9 @@ import java.util.Map;
  * GitHub Copilot Personal LLM provider. Mirrors the Python reference at
  * docs/99-ref.md:
  *   1. Read api_key (and any cached session_token) from ctp_llm_credential.
- *   2. If session_token is missing/expired, exchange api_key against
- *      https://api.github.com/copilot_internal/v2/token (this call is what
- *      requires the corporate proxy in production).
+ *   2. If session_token is missing/expired, exchange api_key against the
+ *      configured token URL (this call is what requires the corporate proxy
+ *      in production).
  *   3. POST /chat/completions with the Copilot-specific headers.
  * Operators rotate the api_key via plain SQL.
  */
@@ -67,36 +70,35 @@ public class CopilotPersonalLlmProvider implements LlmProvider {
     private final String bootstrapSessionToken;
     private final String configuredModel;
     private final int maxCompletionTokens;
-    private final String accountType;
     private final String editorVersion;
     private final String configuredBaseUrl;
     private final String tokenUrl;
 
     private final ProxyConfig proxy;
 
+    private final ObjectMapper mapper;
     private final RestClient http;
 
     public CopilotPersonalLlmProvider(
             LlmCredentialStore credentials,
+            ObjectMapper mapper,
             @Value("${chat2pay.copilot.bootstrap-api-key:}") String bootstrapApiKey,
             @Value("${chat2pay.copilot.bootstrap-session-token:}") String bootstrapSessionToken,
             @Value("${chat2pay.copilot.model:gpt-5.4}") String configuredModel,
             @Value("${chat2pay.copilot.max-completion-tokens:2048}") int maxCompletionTokens,
-            @Value("${chat2pay.copilot.account-type:individual}") String accountType,
             @Value("${chat2pay.copilot.editor-version:1.114.0}") String editorVersion,
             @Value("${chat2pay.copilot.base-url:}") String configuredBaseUrl,
-            @Value("${chat2pay.copilot.token-url:https://api.github.com/copilot_internal/v2/token}") String tokenUrl,
+            @Value("${chat2pay.copilot.token-url:}") String tokenUrl,
             @Value("${chat2pay.copilot.proxy-url:}") String proxyUrl) {
         this.credentials = credentials;
+        this.mapper = mapper;
         this.bootstrapApiKey = nullIfBlank(bootstrapApiKey);
         this.bootstrapSessionToken = nullIfBlank(bootstrapSessionToken);
         this.configuredModel = nullIfBlank(configuredModel);
         this.maxCompletionTokens = maxCompletionTokens;
-        this.accountType = accountType;
         this.editorVersion = editorVersion;
-        this.configuredBaseUrl = nullIfBlank(configuredBaseUrl);
-        this.tokenUrl = nullIfBlank(tokenUrl) == null
-                ? "https://api.github.com/copilot_internal/v2/token" : tokenUrl;
+        this.configuredBaseUrl = trimTrailingSlash(nullIfBlank(configuredBaseUrl));
+        this.tokenUrl = requireConfiguredUrl("chat2pay.copilot.token-url", tokenUrl);
         this.proxy = resolveProxyConfig(proxyUrl);
 
         this.http = RestClient.builder()
@@ -159,12 +161,6 @@ public class CopilotPersonalLlmProvider implements LlmProvider {
     }
 
     private LlmCompletionResponse sendCompletion(LlmCompletionRequest request, String token, String model) {
-        log.debug("Copilot completion request: model={} messages={} tools={} toolChoice={} baseUrl={}",
-                model,
-                request.messages() == null ? 0 : request.messages().size(),
-                request.tools() == null ? 0 : request.tools().size(),
-                request.toolChoice(),
-                baseUrl());
         Map<String, Object> body = new HashMap<>();
         body.put("model", model);
         body.put("stream", false);
@@ -178,13 +174,27 @@ public class CopilotPersonalLlmProvider implements LlmProvider {
             body.put("tool_choice", request.toolChoice());
         }
 
-        ChatCompletionResponse resp = http.post()
-                .uri(baseUrl() + "/chat/completions")
-                .headers(h -> copilotHeaders(h, token))
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(body)
-                .retrieve()
-                .body(ChatCompletionResponse.class);
+        String url = baseUrl() + "/chat/completions";
+        log.debug("LLM Copilot request: url={} provider={} model={} body={}",
+                url, providerType(), model, toJson(body));
+        String rawResponse;
+        try {
+            rawResponse = http.post()
+                    .uri(url)
+                    .headers(h -> copilotHeaders(h, token))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(body)
+                    .retrieve()
+                    .body(String.class);
+        } catch (RestClientResponseException ex) {
+            log.debug("LLM Copilot error response: url={} provider={} model={} status={} headers={} body={}",
+                    url, providerType(), model, ex.getStatusCode().value(),
+                    ex.getResponseHeaders(), ex.getResponseBodyAsString());
+            throw ex;
+        }
+        log.debug("LLM Copilot response: url={} provider={} model={} body={}",
+                url, providerType(), model, rawResponse);
+        ChatCompletionResponse resp = readJson(rawResponse, ChatCompletionResponse.class);
 
         Object rawContent = resp != null && resp.choices() != null && !resp.choices().isEmpty()
                 && resp.choices().get(0).message() != null
@@ -198,8 +208,8 @@ public class CopilotPersonalLlmProvider implements LlmProvider {
                     .toList()
                 : List.of();
         String content = extractText(rawContent);
-        log.debug("Copilot completion response: model={} contentChars={} toolCalls={}",
-                model, content == null ? 0 : content.length(), toolCalls.size());
+        log.debug("LLM Copilot parsed response: model={} contentChars={} toolCalls={} toolCallDetails={}",
+                model, content == null ? 0 : content.length(), toolCalls.size(), toolCalls);
         return new LlmCompletionResponse(LlmProviderType.COPILOT_PERSONAL, model, content, toolCalls);
     }
 
@@ -215,16 +225,20 @@ public class CopilotPersonalLlmProvider implements LlmProvider {
             throw new IllegalStateException(
                     "Cannot refresh Copilot session token: ctp_llm_credential.api_key is empty.");
         }
-        log.debug("Refreshing Copilot session token: url={} proxyEnabled={} proxyAuth={}",
+        log.debug("LLM Copilot token request: url={} proxyEnabled={} proxyAuth={}",
                 tokenUrl, proxy.enabled(), proxy.hasCredentials());
         TokenResponse token;
         try {
-            token = http.get()
+            String rawResponse = http.get()
                     .uri(tokenUrl)
                     .headers(h -> githubHeaders(h, c.apiKey()))
                     .retrieve()
-                    .body(TokenResponse.class);
+                    .body(String.class);
+            log.debug("LLM Copilot token response: url={} body={}", tokenUrl, rawResponse);
+            token = readJson(rawResponse, TokenResponse.class);
         } catch (HttpClientErrorException ex) {
+            log.debug("LLM Copilot token error response: url={} status={} headers={} body={}",
+                    tokenUrl, ex.getStatusCode().value(), ex.getResponseHeaders(), ex.getResponseBodyAsString());
             if (ex.getStatusCode().value() == 401) {
                 throw new RestClientException(
                         "Copilot token refresh failed with 401 Unauthorized. "
@@ -255,7 +269,8 @@ public class CopilotPersonalLlmProvider implements LlmProvider {
                 ? Instant.ofEpochSecond(token.expiresAt())
                 : Instant.now().plus(ASSUMED_SESSION_TTL);
         credentials.upsertSessionToken(LlmProviderType.COPILOT_PERSONAL, token.token(), expiresAt);
-        log.debug("Copilot session token refreshed; expiresAt={}", expiresAt);
+        log.debug("LLM Copilot session token refreshed; expiresAt={} tokenChars={}",
+                expiresAt, token.token().length());
         return token.token();
     }
 
@@ -323,10 +338,7 @@ public class CopilotPersonalLlmProvider implements LlmProvider {
     }
 
     private String baseUrl() {
-        if (configuredBaseUrl != null) return configuredBaseUrl;
-        return "individual".equalsIgnoreCase(accountType)
-                ? "https://api.githubcopilot.com"
-                : "https://api." + accountType + ".githubcopilot.com";
+        return requireConfiguredUrl("chat2pay.copilot.base-url", configuredBaseUrl);
     }
 
     private ProxyConfig resolveProxyConfig(String proxyUrl) {
@@ -362,6 +374,40 @@ public class CopilotPersonalLlmProvider implements LlmProvider {
 
     private static String nullIfBlank(String s) {
         return s == null || s.isBlank() ? null : s;
+    }
+
+    private static String trimTrailingSlash(String value) {
+        if (value == null) return null;
+        String result = value;
+        while (result.endsWith("/")) {
+            result = result.substring(0, result.length() - 1);
+        }
+        return result;
+    }
+
+    private static String requireConfiguredUrl(String propertyName, String value) {
+        String configured = nullIfBlank(value);
+        if (configured == null) {
+            throw new IllegalStateException(propertyName + " must be configured in yaml or environment.");
+        }
+        return configured;
+    }
+
+    private <T> T readJson(String raw, Class<T> type) {
+        if (raw == null || raw.isBlank()) return null;
+        try {
+            return mapper.readValue(raw, type);
+        } catch (JsonProcessingException ex) {
+            throw new RestClientException("Failed to parse LLM response as " + type.getSimpleName(), ex);
+        }
+    }
+
+    private String toJson(Object value) {
+        try {
+            return mapper.writeValueAsString(value);
+        } catch (JsonProcessingException ex) {
+            return String.valueOf(value);
+        }
     }
 
     private static boolean isAuthenticationRetryFailure(Throwable ex) {

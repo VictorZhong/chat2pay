@@ -226,13 +226,14 @@ Stores the visible conversation plus important structured payloads.
 | `kind` | `varchar(24)` | `TEXT`, `BLOCKS`, `UI_EVENT`, `SYSTEM` |
 | `content_text` | `text` | Plain assistant or user text |
 | `content_blocks_json` | `jsonb` | Renderable frontend blocks |
-| `metadata_json` | `jsonb` | Stream metadata, tool summaries, provider info |
+| `metadata_json` | `jsonb` | Stream metadata, processing timing, tool summaries, provider info |
 | `created_at` | `timestamptz` | Creation time |
 
 ### Notes
 
 - assistant deltas do not need separate rows
 - persist the final assembled assistant message
+- store assistant turn duration in `metadata_json.processingMs`
 - if needed, store a short tool summary in `metadata_json`
 
 ## 4.4 `ctp_payment_draft`

@@ -608,12 +608,19 @@ function maybeUpdateTitleFromLookup(record: MockSessionRecord, query: string | n
 }
 
 function respond(record: MockSessionRecord, assistantMessage: ChatMessage, userMessage?: ChatMessage | null): ChatTurnResponse {
-  appendMessage(record, assistantMessage);
+  const completedAssistant: ChatMessage = {
+    ...assistantMessage,
+    metadata: {
+      ...(assistantMessage.metadata ?? {}),
+      processingMs: 150 + Math.floor(Math.random() * 450),
+    },
+  };
+  appendMessage(record, completedAssistant);
 
   return {
     session: clone(record.session),
     userMessage: userMessage ? clone(userMessage) : null,
-    assistantMessage: clone(assistantMessage),
+    assistantMessage: clone(completedAssistant),
     activeDraft: clone(record.session.activeDraft ?? null),
     serverTimestamp: nowIso(),
   };
