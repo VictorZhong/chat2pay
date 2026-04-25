@@ -11,24 +11,29 @@ import com.chat2pay.app.persistence.repository.LlmCredentialStore.Credential;
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.annotation.PostConstruct;
+import org.apache.hc.client5.http.auth.AuthScope;
+import org.apache.hc.client5.http.auth.StandardAuthScheme;
+import org.apache.hc.client5.http.auth.UsernamePasswordCredentials;
+import org.apache.hc.client5.http.config.RequestConfig;
+import org.apache.hc.client5.http.impl.auth.BasicCredentialsProvider;
+import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
+import org.apache.hc.client5.http.impl.classic.HttpClients;
+import org.apache.hc.core5.http.HttpHost;
+import org.apache.hc.core5.util.Timeout;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
-import org.springframework.http.client.JdkClientHttpRequestFactory;
+import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
-import java.net.Authenticator;
-import java.net.InetSocketAddress;
-import java.net.PasswordAuthentication;
-import java.net.ProxySelector;
 import java.net.URI;
 import java.net.URLDecoder;
-import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
@@ -100,7 +105,7 @@ public class CopilotPersonalLlmProvider implements LlmProvider {
         this.proxy = resolveProxyConfig(proxyUrl, proxyHost, proxyPort, proxyUsername, proxyPasswordBase64);
 
         this.http = RestClient.builder()
-                .requestFactory(new JdkClientHttpRequestFactory(buildHttpClient()))
+                .requestFactory(buildRequestFactory())
                 .build();
     }
 
@@ -121,8 +126,8 @@ public class CopilotPersonalLlmProvider implements LlmProvider {
             log.info("Copilot Personal: credentials loaded from ctp_llm_credential.");
         }
         if (proxy.enabled()) {
-            log.info("Copilot Personal: outbound proxy configured at {}:{} auth={}",
-                    proxy.host(), proxy.port(), proxy.hasCredentials());
+            log.info("Copilot Personal: outbound proxy configured at {}://{}:{} auth={}",
+                    proxy.scheme(), proxy.host(), proxy.port(), proxy.hasCredentials());
         }
     }
 
@@ -225,11 +230,26 @@ public class CopilotPersonalLlmProvider implements LlmProvider {
                     .retrieve()
                     .body(TokenResponse.class);
         } catch (HttpClientErrorException ex) {
+            if (ex.getStatusCode().value() == 401) {
+                throw new RestClientException(
+                        "Copilot token refresh failed with 401 Unauthorized. "
+                                + "Check ctp_llm_credential.api_key; Copilot session tokens are refreshed "
+                                + "automatically, but the stored api_key must still be valid.", ex);
+            }
             if (ex.getStatusCode().value() == 407) {
                 throw new RestClientException(
                         "Copilot token refresh failed with 407 Proxy Authentication Required. "
                                 + "Check LLM_PROXY_URL or LLM_PROXY_HOST/LLM_PROXY_PORT/"
                                 + "LLM_PROXY_USERNAME/LLM_PROXY_PASSWORD_B64.", ex);
+            }
+            throw ex;
+        } catch (ResourceAccessException ex) {
+            if (isAuthenticationRetryFailure(ex)) {
+                throw new RestClientException(
+                        "Copilot token refresh failed because HTTP authentication was rejected repeatedly. "
+                                + "This usually means the proxy credentials are wrong, the proxy URL/user/password "
+                                + "is not URL-encoded correctly, or the GitHub api_key in ctp_llm_credential "
+                                + "is invalid.", ex);
             }
             throw ex;
         }
@@ -257,7 +277,6 @@ public class CopilotPersonalLlmProvider implements LlmProvider {
         h.set("x-github-api-version", API_VERSION);
         h.set("x-vscode-user-agent-library-version", "electron-fetch");
         h.set("x-initiator", "agent");
-        addProxyAuthorizationHeader(h);
     }
 
     private void githubHeaders(HttpHeaders h, String apiKey) {
@@ -268,54 +287,44 @@ public class CopilotPersonalLlmProvider implements LlmProvider {
         h.set(HttpHeaders.USER_AGENT, USER_AGENT);
         h.set("x-github-api-version", API_VERSION);
         h.set("x-vscode-user-agent-library-version", "electron-fetch");
-        addProxyAuthorizationHeader(h);
-    }
-
-    private void addProxyAuthorizationHeader(HttpHeaders h) {
-        String value = proxyAuthorizationHeader();
-        if (value != null) {
-            h.set("Proxy-Authorization", value);
-        }
     }
 
     // ---- HTTP client construction (with optional corporate proxy) -------------
 
-    private HttpClient buildHttpClient() {
-        enableBasicProxyAuthenticationForJdk();
-        HttpClient.Builder builder = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10));
+    private HttpComponentsClientHttpRequestFactory buildRequestFactory() {
+        CloseableHttpClient client = buildHttpClient();
+        HttpComponentsClientHttpRequestFactory factory = new HttpComponentsClientHttpRequestFactory(client);
+        factory.setConnectTimeout(Duration.ofSeconds(10));
+        factory.setConnectionRequestTimeout(Duration.ofSeconds(10));
+        factory.setReadTimeout(Duration.ofSeconds(60));
+        return factory;
+    }
+
+    private CloseableHttpClient buildHttpClient() {
+        RequestConfig requestConfig = RequestConfig.custom()
+                .setConnectTimeout(Timeout.ofSeconds(10))
+                .setConnectionRequestTimeout(Timeout.ofSeconds(10))
+                .setResponseTimeout(Timeout.ofSeconds(60))
+                .setProxyPreferredAuthSchemes(List.of(StandardAuthScheme.BASIC))
+                .build();
+
+        var builder = HttpClients.custom()
+                .setDefaultRequestConfig(requestConfig)
+                .disableAutomaticRetries();
+
         if (!proxy.enabled()) return builder.build();
 
-        InetSocketAddress proxyAddress = new InetSocketAddress(proxy.host(), proxy.port());
-        builder.proxy(ProxySelector.of(proxyAddress));
-
+        HttpHost proxyHost = new HttpHost(proxy.scheme(), proxy.host(), proxy.port());
+        builder.setProxy(proxyHost);
         if (proxy.hasCredentials()) {
-            // Authenticator handles 407 challenges from the proxy. The
-            // Proxy-Authorization request header above is a preemptive fallback
-            // for proxies that do not retry CONNECT cleanly.
-            builder.authenticator(new ProxyOnlyAuthenticator(proxy.username(), proxy.password().toCharArray()));
+            BasicCredentialsProvider credentialsProvider = new BasicCredentialsProvider();
+            credentialsProvider.setCredentials(
+                    new AuthScope(proxyHost),
+                    new UsernamePasswordCredentials(proxy.username(), proxy.password().toCharArray())
+            );
+            builder.setDefaultCredentialsProvider(credentialsProvider);
         }
         return builder.build();
-    }
-
-    private static void enableBasicProxyAuthenticationForJdk() {
-        System.setProperty("jdk.http.auth.tunneling.disabledSchemes", "");
-        System.setProperty("jdk.http.auth.proxying.disabledSchemes", "");
-    }
-
-    private static class ProxyOnlyAuthenticator extends Authenticator {
-        private final String username;
-        private final char[] password;
-        ProxyOnlyAuthenticator(String username, char[] password) {
-            this.username = username;
-            this.password = password;
-        }
-        @Override
-        protected PasswordAuthentication getPasswordAuthentication() {
-            if (getRequestorType() == RequestorType.PROXY) {
-                return new PasswordAuthentication(username, password);
-            }
-            return null;
-        }
     }
 
     private String baseUrl() {
@@ -325,18 +334,13 @@ public class CopilotPersonalLlmProvider implements LlmProvider {
                 : "https://api." + accountType + ".githubcopilot.com";
     }
 
-    private String proxyAuthorizationHeader() {
-        if (!proxy.hasCredentials()) return null;
-        String value = proxy.username() + ":" + proxy.password();
-        return "Basic " + Base64.getEncoder().encodeToString(value.getBytes(StandardCharsets.UTF_8));
-    }
-
     private ProxyConfig resolveProxyConfig(String proxyUrl,
                                            String proxyHost,
                                            int proxyPort,
                                            String proxyUsername,
                                            String proxyPasswordBase64) {
         String url = nullIfBlank(proxyUrl);
+        String scheme = "http";
         String host = nullIfBlank(proxyHost);
         int port = proxyPort;
         String username = nullIfBlank(proxyUsername);
@@ -344,6 +348,7 @@ public class CopilotPersonalLlmProvider implements LlmProvider {
 
         if (url != null) {
             URI uri = URI.create(url);
+            scheme = nullIfBlank(uri.getScheme()) == null ? "http" : uri.getScheme();
             host = uri.getHost();
             port = uri.getPort();
             if (uri.getUserInfo() != null && !uri.getUserInfo().isBlank()) {
@@ -354,9 +359,9 @@ public class CopilotPersonalLlmProvider implements LlmProvider {
         }
 
         if (host == null || port <= 0) {
-            return new ProxyConfig(null, 0, null, null);
+            return new ProxyConfig("http", null, 0, null, null);
         }
-        return new ProxyConfig(host, port, username, password);
+        return new ProxyConfig(scheme, host, port, username, password);
     }
 
     private static String decodeBase64Password(String raw) {
@@ -371,6 +376,18 @@ public class CopilotPersonalLlmProvider implements LlmProvider {
 
     private static String nullIfBlank(String s) {
         return s == null || s.isBlank() ? null : s;
+    }
+
+    private static boolean isAuthenticationRetryFailure(Throwable ex) {
+        Throwable current = ex;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null && message.toLowerCase().contains("too many authentication attempts")) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     private static String extractText(Object content) {
@@ -408,7 +425,7 @@ public class CopilotPersonalLlmProvider implements LlmProvider {
     @JsonIgnoreProperties(ignoreUnknown = true)
     record RawFunction(String name, String arguments) {}
 
-    record ProxyConfig(String host, int port, String username, String password) {
+    record ProxyConfig(String scheme, String host, int port, String username, String password) {
         boolean enabled() {
             return host != null && !host.isBlank() && port > 0;
         }

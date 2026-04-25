@@ -111,7 +111,7 @@ insert into ctp_llm_credential (
   updated_at = now();
 ```
 
-The backend exchanges that key at `https://api.github.com/copilot_internal/v2/token`, caches the short-lived session token in the same row, and refreshes it when it expires.
+The backend exchanges that key at `https://api.github.com/copilot_internal/v2/token`, caches the short-lived session token in the same row, and refreshes it when it expires. It also clears and refreshes the cached session token when a Copilot chat-completion call returns `401`. To force a refresh manually, set `session_token` and `session_token_expires_at` to `null`; no restart is required.
 
 Optional bootstrap env vars exist only for first startup when the DB row is missing:
 
@@ -135,7 +135,7 @@ export LLM_PROXY_USERNAME=<proxy-user>
 export LLM_PROXY_PASSWORD_B64=$(node -e "console.log(Buffer.from(process.argv[1]).toString('base64'))" '<plain-password>')
 ```
 
-If token refresh fails with `407 Proxy Authentication Required`, check that `LLM_PROXY_URL` contains URL-encoded credentials or that `LLM_PROXY_PASSWORD_B64` is the base64 of the plaintext password. The app enables JDK Basic proxy authentication and sends proxy auth preemptively for the Copilot token and completion calls.
+If token refresh fails with `407 Proxy Authentication Required` or `too many authentication attempts`, check that `LLM_PROXY_URL` contains URL-encoded credentials or that `LLM_PROXY_PASSWORD_B64` is the base64 of the plaintext password. Copilot traffic uses Apache HttpClient with per-client Basic proxy credentials, so proxy credentials are not sent as normal GitHub request headers.
 
 ## LLM Provider Selection
 
