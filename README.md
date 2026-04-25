@@ -120,22 +120,15 @@ export LLM_API_KEY=<github-token>
 export COPILOT_SESSION_TOKEN=<short-lived-token-if-you-already-have-one>
 ```
 
-Corporate proxy for Copilot/GitHub traffic. Prefer the single URL form, which matches the refresh-token script in `docs/99-ref.md`:
+Corporate proxy for Copilot/GitHub traffic:
 
 ```bash
-export LLM_PROXY_URL='http://<url-encoded-user>:<url-encoded-password>@<proxy-host>:<proxy-port>'
+export LLM_PROXY_URL='http://<username>:<password>@<proxy-host>:80'
 ```
 
-The split settings are also supported:
+Only this full proxy URL form is supported. If username or password contains URL-reserved characters, percent-encode those characters before putting them in `LLM_PROXY_URL`. Common examples: `@` -> `%40`, `:` -> `%3A`, `/` -> `%2F`, `?` -> `%3F`, `#` -> `%23`, `%` -> `%25`, space -> `%20`. A literal `+` may be left as `+`, but encoding it as `%2B` is also fine.
 
-```bash
-export LLM_PROXY_HOST=<proxy-host>
-export LLM_PROXY_PORT=<proxy-port>
-export LLM_PROXY_USERNAME=<proxy-user>
-export LLM_PROXY_PASSWORD_B64=$(node -e "console.log(Buffer.from(process.argv[1]).toString('base64'))" '<plain-password>')
-```
-
-If token refresh fails with `407 Proxy Authentication Required` or `too many authentication attempts`, check that `LLM_PROXY_URL` contains URL-encoded credentials or that `LLM_PROXY_PASSWORD_B64` is the base64 of the plaintext password. Copilot traffic uses Apache HttpClient with per-client Basic proxy credentials, so proxy credentials are not sent as normal GitHub request headers.
+If token refresh fails with `407 Proxy Authentication Required` or `too many authentication attempts`, check the credentials inside `LLM_PROXY_URL` and make sure any special characters are encoded. Copilot traffic uses Apache HttpClient with per-client Basic proxy credentials, so proxy credentials are not sent as normal GitHub request headers.
 
 ## LLM Provider Selection
 

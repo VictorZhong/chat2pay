@@ -13,3 +13,14 @@ Implemented backend responsibilities:
 - downstream registered-payee lookup and domestic-payment confirmation
 
 See the repository [README.md](../README.md) for DB setup, profile SQL, Copilot token rotation, proxy settings, and mock/real environment switching.
+
+
+## 密码替换
+@ -> %40
+: -> %3A
+/ -> %2F
+? -> %3F
+# -> %23
+% -> %25
+空格 -> %20
++ -> %2B

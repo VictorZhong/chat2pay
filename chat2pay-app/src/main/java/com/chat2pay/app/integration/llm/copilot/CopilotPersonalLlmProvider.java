@@ -37,7 +37,6 @@ import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -87,11 +86,7 @@ public class CopilotPersonalLlmProvider implements LlmProvider {
             @Value("${chat2pay.copilot.editor-version:1.114.0}") String editorVersion,
             @Value("${chat2pay.copilot.base-url:}") String configuredBaseUrl,
             @Value("${chat2pay.copilot.token-url:https://api.github.com/copilot_internal/v2/token}") String tokenUrl,
-            @Value("${chat2pay.copilot.proxy.url:}") String proxyUrl,
-            @Value("${chat2pay.copilot.proxy.host:}") String proxyHost,
-            @Value("${chat2pay.copilot.proxy.port:0}") int proxyPort,
-            @Value("${chat2pay.copilot.proxy.username:}") String proxyUsername,
-            @Value("${chat2pay.copilot.proxy.password-base64:}") String proxyPasswordBase64) {
+            @Value("${chat2pay.copilot.proxy-url:}") String proxyUrl) {
         this.credentials = credentials;
         this.bootstrapApiKey = nullIfBlank(bootstrapApiKey);
         this.bootstrapSessionToken = nullIfBlank(bootstrapSessionToken);
@@ -102,7 +97,7 @@ public class CopilotPersonalLlmProvider implements LlmProvider {
         this.configuredBaseUrl = nullIfBlank(configuredBaseUrl);
         this.tokenUrl = nullIfBlank(tokenUrl) == null
                 ? "https://api.github.com/copilot_internal/v2/token" : tokenUrl;
-        this.proxy = resolveProxyConfig(proxyUrl, proxyHost, proxyPort, proxyUsername, proxyPasswordBase64);
+        this.proxy = resolveProxyConfig(proxyUrl);
 
         this.http = RestClient.builder()
                 .requestFactory(buildRequestFactory())
@@ -239,8 +234,8 @@ public class CopilotPersonalLlmProvider implements LlmProvider {
             if (ex.getStatusCode().value() == 407) {
                 throw new RestClientException(
                         "Copilot token refresh failed with 407 Proxy Authentication Required. "
-                                + "Check LLM_PROXY_URL or LLM_PROXY_HOST/LLM_PROXY_PORT/"
-                                + "LLM_PROXY_USERNAME/LLM_PROXY_PASSWORD_B64.", ex);
+                                + "Check LLM_PROXY_URL. It must include proxy credentials as "
+                                + "http://username:password@host:port, with special characters percent-encoded.", ex);
             }
             throw ex;
         } catch (ResourceAccessException ex) {
@@ -334,44 +329,35 @@ public class CopilotPersonalLlmProvider implements LlmProvider {
                 : "https://api." + accountType + ".githubcopilot.com";
     }
 
-    private ProxyConfig resolveProxyConfig(String proxyUrl,
-                                           String proxyHost,
-                                           int proxyPort,
-                                           String proxyUsername,
-                                           String proxyPasswordBase64) {
+    private ProxyConfig resolveProxyConfig(String proxyUrl) {
         String url = nullIfBlank(proxyUrl);
-        String scheme = "http";
-        String host = nullIfBlank(proxyHost);
-        int port = proxyPort;
-        String username = nullIfBlank(proxyUsername);
-        String password = decodeBase64Password(proxyPasswordBase64);
+        if (url == null) return new ProxyConfig("http", null, 0, null, null);
 
-        if (url != null) {
-            URI uri = URI.create(url);
-            scheme = nullIfBlank(uri.getScheme()) == null ? "http" : uri.getScheme();
-            host = uri.getHost();
-            port = uri.getPort();
-            if (uri.getUserInfo() != null && !uri.getUserInfo().isBlank()) {
-                String[] parts = uri.getUserInfo().split(":", 2);
-                username = urlDecode(parts[0]);
-                password = parts.length > 1 ? urlDecode(parts[1]) : "";
-            }
-        }
-
+        URI uri = URI.create(url);
+        String scheme = nullIfBlank(uri.getScheme()) == null ? "http" : uri.getScheme();
+        String host = uri.getHost();
+        int port = uri.getPort() > 0 ? uri.getPort() : defaultProxyPort(scheme);
         if (host == null || port <= 0) {
-            return new ProxyConfig("http", null, 0, null, null);
+            throw new IllegalArgumentException(
+                    "Invalid LLM_PROXY_URL. Expected http://username:password@host:port.");
+        }
+        String username = null;
+        String password = null;
+        String rawUserInfo = uri.getRawUserInfo();
+        if (rawUserInfo != null && !rawUserInfo.isBlank()) {
+            String[] parts = rawUserInfo.split(":", 2);
+            username = percentDecode(parts[0]);
+            password = parts.length > 1 ? percentDecode(parts[1]) : "";
         }
         return new ProxyConfig(scheme, host, port, username, password);
     }
 
-    private static String decodeBase64Password(String raw) {
-        String value = nullIfBlank(raw);
-        if (value == null) return null;
-        return new String(Base64.getDecoder().decode(value), StandardCharsets.UTF_8);
+    private static int defaultProxyPort(String scheme) {
+        return "https".equalsIgnoreCase(scheme) ? 443 : 80;
     }
 
-    private static String urlDecode(String raw) {
-        return URLDecoder.decode(raw, StandardCharsets.UTF_8);
+    private static String percentDecode(String raw) {
+        return URLDecoder.decode(raw.replace("+", "%2B"), StandardCharsets.UTF_8);
     }
 
     private static String nullIfBlank(String s) {

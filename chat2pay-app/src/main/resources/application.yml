@@ -31,12 +31,12 @@ management:
 
 logging:
   level:
-    root: DEBUG
+    #root: DEBUG
     com.chat2pay: DEBUG
     org.springframework.web.client: DEBUG
     org.springframework.web.servlet.mvc.method.annotation.SseEmitter: DEBUG
-    org.hibernate.SQL: DEBUG
-    org.hibernate.orm.jdbc.bind: TRACE
+    #org.hibernate.SQL: DEBUG
+    #org.hibernate.orm.jdbc.bind: TRACE
 
 chat2pay:
   primary-provider: COPILOT_PERSONAL
@@ -54,15 +54,9 @@ chat2pay:
     editor-version: ${COPILOT_EDITOR_VERSION:1.114.0}
     base-url: ${LLM_BASE_URL:}
     token-url: ${COPILOT_TOKEN_URL:https://api.github.com/copilot_internal/v2/token}
-    # GitHub Copilot personal traffic must go through this corporate proxy in
-    # production. Leave host blank to disable. Password is the base64 of the
-    # original plaintext password (btoa).
-    proxy:
-      url: ${LLM_PROXY_URL:}
-      host: ${LLM_PROXY_HOST:}
-      port: ${LLM_PROXY_PORT:0}
-      username: ${LLM_PROXY_USERNAME:}
-      password-base64: ${LLM_PROXY_PASSWORD_B64:}
+    # Full proxy URL for GitHub Copilot personal traffic, for example
+    # http://username:password@proxy-host:80. Leave blank to disable.
+    proxy-url: ${LLM_PROXY_URL:}
   remote:
     # Optional OpenAI-compatible Chat Completions provider for V2. When these
     # values are present and primary/fallback routing selects REMOTE_API, the
