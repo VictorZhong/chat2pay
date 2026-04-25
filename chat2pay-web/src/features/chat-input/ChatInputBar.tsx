@@ -4,10 +4,14 @@ import { BrandButton } from '@/shared/ui/BrandButton';
 export function ChatInputBar({
   disabled,
   busy,
+  disabledReason,
+  onEnableTextInput,
   onSend,
 }: {
   disabled: boolean;
   busy: boolean;
+  disabledReason?: string;
+  onEnableTextInput?: () => void;
   onSend: (messageText: string) => Promise<void> | void;
 }) {
   const [value, setValue] = useState('');
@@ -25,10 +29,24 @@ export function ChatInputBar({
 
   return (
     <div className="border-t border-brand-line bg-brand-fog px-3 py-2.5">
+      {disabled && disabledReason ? (
+        <div className="mb-2 flex flex-col gap-2 border border-brand-line bg-white px-3 py-2 text-xs text-brand-gray sm:flex-row sm:items-center sm:justify-between">
+          <span>{disabledReason}</span>
+          {onEnableTextInput ? (
+            <button
+              className="text-left font-semibold text-brand-red hover:underline sm:text-right"
+              type="button"
+              onClick={onEnableTextInput}
+            >
+              Use text instead
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       <div className="flex items-center gap-2">
         <textarea
           className="brand-textarea brand-composer-textarea min-w-0 flex-1"
-          placeholder="Type a transfer instruction, for example: Pay Tom 5000 HKD."
+          placeholder={disabled && disabledReason ? "Use the controls above to continue." : "Type a transfer instruction, for example: Pay Tom 5000 HKD."}
           value={value}
           onChange={(event) => setValue(event.target.value)}
           onKeyDown={(event) => {

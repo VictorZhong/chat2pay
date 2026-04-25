@@ -1,6 +1,27 @@
 spring:
   application:
     name: chat2pay-app
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/chat2pay}
+    username: ${DB_USER:chat2pay}
+    password: ${DB_PASSWORD:chat2pay}
+    hikari:
+      maximum-pool-size: 8
+      minimum-idle: 2
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    table: ctp_flyway_schema_history
+    baseline-on-migrate: false
+  jpa:
+    hibernate:
+      # Schema is owned by Flyway. JPA only validates that entities match.
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc.time_zone: UTC
+        format_sql: false
 
 management:
   endpoints:
@@ -13,12 +34,56 @@ chat2pay:
   fallback-provider: REMOTE_API
   default-currency: HKD
   copilot:
-    # Provide one of these via env (LLM_API_KEY does the GitHub token exchange;
-    # COPILOT_SESSION_TOKEN bypasses it). Leaving both blank disables the provider —
-    # the deterministic orchestrator still serves the chat flow.
-    api-key: ${LLM_API_KEY:}
-    session-token: ${COPILOT_SESSION_TOKEN:}
-    model: ${LLM_MODEL:gpt-4o}
+    # API key is now read from ctp_llm_credential at runtime so the operator can
+    # rotate it via SQL without redeploying. Env vars below are last-resort
+    # bootstrap values used only when the DB row is missing.
+    bootstrap-api-key: ${LLM_API_KEY:}
+    bootstrap-session-token: ${COPILOT_SESSION_TOKEN:}
+    model: ${LLM_MODEL:gpt-5.4}
+    max-completion-tokens: ${LLM_MAX_OUTPUT_TOKENS:${LLM_MAX_COMPLETION_TOKENS:2048}}
     account-type: ${GITHUB_COPILOT_ACCOUNT_TYPE:individual}
     editor-version: ${COPILOT_EDITOR_VERSION:1.114.0}
     base-url: ${LLM_BASE_URL:}
+    # GitHub Copilot personal traffic must go through this corporate proxy in
+    # production. Leave host blank to disable. Password is the base64 of the
+    # original plaintext password (btoa).
+    proxy:
+      host: ${LLM_PROXY_HOST:}
+      port: ${LLM_PROXY_PORT:0}
+      username: ${LLM_PROXY_USERNAME:}
+      password-base64: ${LLM_PROXY_PASSWORD_B64:}
+  remote:
+    # Optional OpenAI-compatible Chat Completions provider for V2. When these
+    # values are present and primary/fallback routing selects REMOTE_API, the
+    # same backend tool loop is used as Copilot Personal.
+    base-url: ${REMOTE_LLM_BASE_URL:}
+    api-key: ${REMOTE_LLM_API_KEY:}
+    model: ${REMOTE_LLM_MODEL:gpt-5.4}
+    max-completion-tokens: ${REMOTE_LLM_MAX_COMPLETION_TOKENS:2048}
+  intent:
+    # When true and an LLM provider is available, user intent + slot extraction
+    # is delegated to the LLM. Regex helpers still run as fallback hints.
+    use-llm: true
+    max-tokens: ${LLM_INTENT_MAX_TOKENS:350}
+    temperature: ${LLM_INTENT_TEMPERATURE:0}
+  downstream:
+    # Keep true for local POC/test runs. Set PAYMENT_MOCK_ENABLED=false when
+    # the sandbox login, payee lookup, and confirm endpoints are reachable.
+    mock-enabled: ${PAYMENT_MOCK_ENABLED:true}
+    login-username: ${PAYMENT_LOGIN_USERNAME:}
+    login-url-template: ${PAYMENT_LOGIN_URL:https://testdataservices.apps.cf.wgdc-dn-03.cloud.uk.zzzz/dsp/entity/HK/{}/SAML3/30}
+    login-password: ${PAYMENT_LOGIN_PASSWORD:}
+    payee-url: ${PAYMENT_PAYEE_URL:https://mmf-payee-management--hk-hbap-banking-1.zzzz-dsvc-papi-hk01-hbap-cert.svc.default.shp.ape1.pre-prod.aws.cloud.zzzz/payees}
+    confirm-url: ${PAYMENT_CONFIRM_URL:https://dcc-hk-hbap-mvmny-domestic-payments-papi-3.zzzz-dsvc-papi-hk01-hbap-cert.svc.default.shp.ape1.pre-prod.aws.cloud.zzzz/confirm-domestic-payments}
+    debit-account-number: ${PAYMENT_DEBIT_ACCOUNT_NUMBER:VEdTRlNCU0dTQlNHEpP3avL8TimV5LF2nbqGbba2fUVfkHsOGmwg9K1t43GQJgS5mnXu3_EvF0zwJmeFRslRn_min_CT9p_wuTR7nwoWHNdZuxAFiVO2GPQ=}
+    debit-product-category-code: ${PAYMENT_DEBIT_PRODUCT_CATEGORY_CODE:CUR}
+    currency: ${PAYMENT_CURRENCY:HKD}
+    request-timeout-ms: ${PAYMENT_REQUEST_TIMEOUT_MS:30000}
+    payee-cache-ttl-seconds: ${PAYEE_CACHE_TTL_SECONDS:60}
+    channel-id: ${PAYMENT_CHANNEL_ID:WEB}
+    country-code: ${PAYMENT_COUNTRY_CODE:HK}
+    group-member: ${PAYMENT_GROUP_MEMBER:HBAP}
+    locale: ${PAYMENT_LOCALE:en_HK}
+    source-system-id: ${PAYMENT_SOURCE_SYSTEM_ID:11114418_O88}
+    device-id: ${PAYMENT_DEVICE_ID:192.168.1.1, 192.168.1.2}
+    user-agent: ${PAYMENT_USER_AGENT:Mozilla/5.0 (iPad; U; CPU OS 3_2_1 like Mac OS X; en-us) AppleWebKit/531.21.10 (KHTML, like Gecko) Mobile/7B405}

@@ -10,8 +10,8 @@ import com.chat2pay.app.api.dto.ChatDtos.UiEventRequest;
 import com.chat2pay.app.api.dto.ContentBlock;
 import com.chat2pay.app.application.conversation.ChatOrchestratorService;
 import com.chat2pay.app.application.conversation.ChatStreamService;
-import com.chat2pay.app.persistence.memory.InMemorySessionStore;
-import com.chat2pay.app.persistence.memory.InMemorySessionStore.SessionRecord;
+import com.chat2pay.app.persistence.repository.SessionStore;
+import com.chat2pay.app.persistence.repository.SessionStore.SessionRecord;
 import jakarta.validation.Valid;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -33,11 +33,11 @@ public class ChatController {
 
     private static final String PROFILE_HEADER = "X-Profile-Id";
 
-    private final InMemorySessionStore sessions;
+    private final SessionStore sessions;
     private final ChatOrchestratorService orchestrator;
     private final ChatStreamService stream;
 
-    public ChatController(InMemorySessionStore sessions,
+    public ChatController(SessionStore sessions,
                           ChatOrchestratorService orchestrator,
                           ChatStreamService stream) {
         this.sessions = sessions;

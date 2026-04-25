@@ -1,15 +1,15 @@
 # chat2pay-app
 
-Spring Boot backend scaffold for chat2pay.
+Spring Boot backend for Chat2Pay.
 
-Current status:
+Implemented backend responsibilities:
 
-- base application bootstrapped
-- provider and downstream integration boundaries scaffolded
-- domain enums aligned with the V1 domestic-payment design
+- PostgreSQL persistence through JPA repositories
+- Flyway schema migrations with `ctp_` table prefix
+- profile, session, message, draft, payee, and LLM credential storage
+- provider-agnostic LLM tool loop
+- personal Copilot provider with DB-backed token/session refresh
+- optional OpenAI-compatible `REMOTE_API` provider
+- downstream registered-payee lookup and domestic-payment confirmation
 
-Next step:
-
-- add API controllers, DTOs, and PostgreSQL persistence
-- implement Copilot personal provider integration
-- wire registered payee lookup and domestic payment tools
+See the repository [README.md](../README.md) for DB setup, profile SQL, Copilot token rotation, proxy settings, and mock/real environment switching.

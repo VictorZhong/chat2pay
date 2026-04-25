@@ -91,16 +91,16 @@ Recommended direction:
 chat2pay-app/
 ├── pom.xml
 └── src/main/
-    ├── java/com/company/chat2pay/
+    ├── java/com/chat2pay/app/
     │   ├── api/
     │   ├── application/
     │   │   ├── conversation/
-    │   │   ├── profile/
-    │   │   └── rendering/
+    │   │   │   └── tool/
+    │   │   └── profile/
     │   ├── domain/
     │   │   ├── conversation/
     │   │   ├── payment/
-    │   │   └── tool/
+    │   │   └── profile/
     │   ├── integration/
     │   │   ├── llm/
     │   │   │   ├── copilot/
@@ -124,18 +124,17 @@ chat2pay-app/
 |---|---|
 | `api/` | REST endpoints and streaming endpoints exposed to the frontend |
 | `application/conversation/` | Turn orchestration, provider routing, guard checks |
+| `application/conversation/tool/` | Shared payment tool definitions and LLM tool-loop prompts |
 | `application/profile/` | Profile listing and shared-password login |
-| `application/rendering/` | Convert domain outcomes into frontend blocks |
 | `domain/conversation/` | Session, message, state, and streaming event models |
 | `domain/payment/` | Draft, payee, amount, confirmation, and result models |
-| `domain/tool/` | Tool definitions and execution contracts |
 | `integration/llm/copilot/` | Personal-subscription GitHub Copilot adapter |
-| `integration/llm/remote/` | Future real API provider adapter |
+| `integration/llm/remote/` | OpenAI-compatible remote API provider adapter |
 | `integration/downstream/auth/` | SAML acquisition and auth reuse rules |
 | `integration/downstream/payee/` | Registered payee client |
 | `integration/downstream/domestic/` | Domestic payment confirm client |
 | `integration/downstream/international/` | Reserved for V2 |
-| `persistence/` | JPA/MyBatis mappings, repositories, DB records |
+| `persistence/` | JPA entities, Spring Data repositories, repository-backed stores |
 
 ## 6. Design File Roles
 
@@ -166,9 +165,10 @@ Rules:
 For the next implementation step:
 
 - keep the existing frontend shell
-- implement backend orchestration in `chat2pay-app/`
-- build around provider routing plus tool execution
-- start with domestic payee lookup and domestic payment only
+- continue backend orchestration in `chat2pay-app/`
+- keep provider routing, the unified LLM tool loop, and backend-owned payment
+  execution together in the application layer
+- keep V1 limited to registered payee lookup and domestic payment
 - wire the frontend to backend APIs without introducing codegen or extra
   contract mirrors
 

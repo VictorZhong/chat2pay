@@ -9,12 +9,11 @@ import org.springframework.stereotype.Component;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Selects the primary LLM provider based on Chat2PayProperties, with a
- * configured fallback if the primary is unavailable. The deterministic
- * orchestrator currently does not call the router on the chat hot path —
- * V1 keeps assistant responses rule-driven for the structured-block contract.
+ * configured fallback if the primary is unavailable.
  */
 @Component
 public class LlmRouter {
@@ -32,15 +31,21 @@ public class LlmRouter {
     }
 
     public LlmProvider current() {
+        Optional<LlmProvider> available = currentIfAvailable();
+        if (available.isPresent()) return available.get();
+        log.warn("No LLM provider is available; returning primary {} (calls will fail until configured).", primary);
+        return providers.getOrDefault(primary, providers.values().stream().findFirst().orElseThrow());
+    }
+
+    public Optional<LlmProvider> currentIfAvailable() {
         LlmProvider p = providers.get(primary);
-        if (p != null && p.isAvailable()) return p;
+        if (p != null && p.isAvailable()) return Optional.of(p);
         LlmProvider f = providers.get(fallback);
         if (f != null && f.isAvailable()) {
             log.warn("Primary LLM provider {} unavailable, using fallback {}", primary, fallback);
-            return f;
+            return Optional.of(f);
         }
-        log.warn("No LLM provider is available; returning primary {} (calls will fail until configured).", primary);
-        return providers.getOrDefault(primary, providers.values().stream().findFirst().orElseThrow());
+        return Optional.empty();
     }
 
     private static LlmProviderType parse(String raw, LlmProviderType defaultValue) {

@@ -109,21 +109,23 @@ flowchart LR
         BE3["Conversation Orchestrator"]
         BE4["Provider Router"]
         BE5["Policy Guard"]
-        BE6["Tool Registry"]
+        BE6["Payment Tool Facade"]
         BE7["Response Renderer"]
         BE8["Session Service"]
         BE9["Copilot Personal Provider"]
         BE10["Future Remote API Provider"]
         BE11["Downstream Auth Service"]
-        BE12["Registered Payee Tool"]
-        BE13["Domestic Payment Tool"]
+        BE12["Registered Payee Client"]
+        BE13["Domestic Payment Client"]
     end
 
     subgraph DB["PostgreSQL"]
-        DB1[("poc_profile")]
-        DB2[("chat_session")]
-        DB3[("chat_message")]
-        DB4[("payment_draft")]
+        DB1[("ctp_profile")]
+        DB2[("ctp_chat_session")]
+        DB3[("ctp_chat_message")]
+        DB4[("ctp_payment_draft")]
+        DB5[("ctp_registered_payee / ctp_payee_alias")]
+        DB6[("ctp_llm_credential")]
     end
 
     subgraph LLM["LLM Providers"]
@@ -169,6 +171,8 @@ flowchart LR
     BE8 --> DB2
     BE8 --> DB3
     BE8 --> DB4
+    BE12 --> DB5
+    BE9 --> DB6
 ```
 
 ## 6. Capability Model
@@ -205,12 +209,22 @@ For each user message or UI event:
 
 1. load session history and the active draft from PostgreSQL
 2. choose the current LLM provider through the provider router
-3. send conversation context plus the allowed tool definitions
-4. if the LLM asks for a tool call, validate it in the backend
-5. execute the tool through the tool registry
-6. append tool results back into the loop if another LLM step is needed
+3. ask the selected LLM provider to either answer within scope or call one of
+   the backend-owned payment tools
+4. execute the selected tool inside the backend and append the tool result to
+   the provider-agnostic loop
+5. continue until the provider returns final assistant text, a backend tool
+   reaches a terminal UI state, or the hard iteration limit is reached
+6. validate the selected backend action and required fields before any side
+   effect
 7. persist the resulting assistant message and updated draft
 8. stream or return structured blocks to the frontend
+
+The current V1 Java implementation runs a real provider-agnostic LLM tool loop
+for text turns when a provider is available. Personal-subscription Copilot and
+the future OpenAI-compatible `REMOTE_API` provider share the same
+`LlmCompletionRequest`/tool-call contract. Regex parsing remains as a fallback
+and hint source only; it is not the sole intent mechanism.
 
 ### 7.2 Backend Guardrails
 
@@ -222,19 +236,14 @@ The backend, not the model, enforces these rules:
 - downstream response errors are normalized before returning to the frontend
 - the loop has a hard iteration limit
 
-### 7.3 Recommended Interfaces
+### 7.3 Current Interfaces
 
-```java
-public interface LlmProvider {
-    ProviderTurnResult runTurn(LlmTurnRequest request);
-    ProviderStreamResult streamTurn(LlmTurnRequest request);
-}
-
-public interface ConversationTool {
-    String name();
-    ToolExecutionResult execute(ToolExecutionContext context);
-}
-```
+The provider boundary is `LlmProvider.complete(LlmCompletionRequest)`.
+`LlmCompletionRequest` carries chat messages, tool definitions, tool choice,
+assistant tool calls, and tool-result messages. Payment tool definitions and
+prompts are centralized in `PaymentToolDefinitions`, while tool execution stays
+inside the backend orchestrator so payment state transitions and side effects
+remain backend-owned.
 
 This keeps the controller stable while V2 adds more providers and tools.
 
@@ -246,10 +255,13 @@ V1 uses a backend adapter around personal-subscription GitHub Copilot access.
 
 Responsibilities:
 
-- use configured personal credentials or session token
+- read personal credentials and cached session token from `ctp_llm_credential`
 - refresh or reacquire short-lived Copilot session tokens inside the backend
 - hide provider-specific request details from the rest of the application
-- support normal response mode and streaming mode
+- support chat-completions tool calls and tool-result messages for the unified
+  conversation loop
+- honor the configured corporate proxy for `https://api.github.com` token
+  exchange
 
 Suggested implementation name:
 
@@ -257,12 +269,13 @@ Suggested implementation name:
 
 ### 8.2 V2 Primary Provider
 
-V2 adds:
+V2 adds or promotes:
 
 - `RemoteApiLlmProvider`
 
-That provider becomes the primary path for production-like usage, while
-`CopilotPersonalLlmProvider` remains available as a fallback.
+That provider can become the primary path for production-like usage, while
+`CopilotPersonalLlmProvider` remains available as a fallback. It uses the same
+tool loop and backend guardrails as Copilot.
 
 ### 8.3 Provider Routing
 
@@ -281,15 +294,17 @@ Example:
 
 ### 9.1 Shared Authentication Pattern
 
-Every downstream business call uses the same sequence:
+Every real downstream business call uses the same sequence:
 
-1. read the current profile `username`
-2. treat it as downstream identity input
-3. call `LOGIN_URL`
+1. read the configured `PAYMENT_LOGIN_USERNAME` and `PAYMENT_LOGIN_PASSWORD`
+2. call `PAYMENT_LOGIN_URL`
 4. get the SAML token
 5. call the target business API with the required header
 
 This auth sequence belongs in a shared backend service, not inside each tool.
+Local POC runs may leave `PAYMENT_MOCK_ENABLED=true`; in that mode payee lookup
+uses the DB seed and domestic confirmation returns a mock reference without
+calling downstream.
 
 ### 9.2 V1 Tool Set
 
@@ -302,9 +317,9 @@ V1 tools:
 
 Recommended internal split:
 
-- `RegisteredPayeeTool`
-- `DomesticPaymentTool`
-- `DownstreamAuthService`
+- `HttpRegisteredPayeeClient`
+- `HttpDomesticPaymentClient`
+- `PaymentDownstreamAuthService`
 
 ### 9.3 Future Tool Growth
 
@@ -415,7 +430,7 @@ sequenceDiagram
     participant API as Chat API
     participant ORC as Conversation Orchestrator
     participant LLM as LLM Provider
-    participant TOOL as Registered Payee Tool
+    participant TOOL as Registered Payee Client
     participant AUTH as Downstream Auth Service
     participant PAYEE as PAYEE_URL
     participant DB as PostgreSQL
@@ -423,16 +438,14 @@ sequenceDiagram
     U->>FE: "Do I have Bob registered?"
     FE->>API: POST /api/chat/sessions/{id}/messages
     API->>ORC: handle turn
-    ORC->>LLM: conversation + available tools
-    LLM-->>ORC: call get_registered_payees(nameQuery=Bob)
+    ORC->>LLM: session context + intent/tool-decision prompt
+    LLM-->>ORC: PAYEE_LOOKUP + get_registered_payees(nameQuery=Bob)
     ORC->>TOOL: execute
     TOOL->>AUTH: acquire SAML token
     AUTH-->>TOOL: token
     TOOL->>PAYEE: fetch payees
     PAYEE-->>TOOL: payee data
     TOOL-->>ORC: normalized payee result
-    ORC->>LLM: tool result
-    LLM-->>ORC: final assistant answer
     ORC->>DB: persist messages
     ORC-->>FE: stream or return assistant blocks
 ```
@@ -447,8 +460,8 @@ sequenceDiagram
     participant ORC as Conversation Orchestrator
     participant LLM as LLM Provider
     participant GUARD as Policy Guard
-    participant PAYEE_TOOL as Registered Payee Tool
-    participant PAY_TOOL as Domestic Payment Tool
+    participant PAYEE_TOOL as Registered Payee Client
+    participant PAY_TOOL as Domestic Payment Client
     participant AUTH as Downstream Auth Service
     participant PAYEE as PAYEE_URL
     participant CONFIRM as CONFIRM_DOMESTIC_PAYMENT_URL
@@ -457,16 +470,14 @@ sequenceDiagram
     U->>FE: "Pay Bob 500 HKD today"
     FE->>API: POST /api/chat/sessions/{id}/messages
     API->>ORC: handle turn
-    ORC->>LLM: conversation + tools
-    LLM-->>ORC: get_registered_payees
+    ORC->>LLM: session context + intent/tool-decision prompt
+    LLM-->>ORC: DOMESTIC_PAYMENT + extracted slots
     ORC->>PAYEE_TOOL: execute
     PAYEE_TOOL->>AUTH: acquire SAML token
     AUTH-->>PAYEE_TOOL: token
     PAYEE_TOOL->>PAYEE: list payees
     PAYEE-->>PAYEE_TOOL: payees
     PAYEE_TOOL-->>ORC: normalized payee result
-    ORC->>LLM: tool result
-    LLM-->>ORC: ask for confirmation
     ORC->>DB: persist draft and assistant message
     ORC-->>FE: confirmation summary
 
