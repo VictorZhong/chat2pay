@@ -19,6 +19,19 @@ should leave the controller contract unchanged. V2 payment rails should arrive
 as new tool definitions plus focused handlers, not as frontend workflow
 branches.
 
+Domestic and cross-border payment should stay separate at the capability level.
+V1 domestic payment directly calls the domestic confirmation API after backend
+validation and explicit user confirmation. V2 cross-border payment should be
+modeled as ORTT-only for the POC, with a `proposeCrossBorderPayment` capability
+that persists a backend-owned proposal id/execution token before
+`confirmCrossBorderPayment` can run. Do not fold GD or other rails into the POC
+journey.
+
+Payee lookup should use the live downstream payee API in real mode. Local
+`ctp_registered_payee` / `ctp_payee_alias` rows are mock fixtures only; payee
+creation or update flows should call downstream APIs directly rather than
+writing chat2pay tables.
+
 ## Add a New Test Profile
 
 1. Insert a row into `ctp_profile` with status `ACTIVE`.
@@ -26,8 +39,9 @@ branches.
    `["REGISTERED_PAYEE_LOOKUP","DOMESTIC_PAYMENT"]` for V1.
 3. Set `payment_currency`, `debit_account_number`, and
    `debit_product_category_code` when real downstream mode is needed.
-4. For mock mode, seed profile-scoped registered payees in
-   `V2__seed_payees.sql` or add a follow-up migration.
+4. For mock mode only, seed profile-scoped registered payee fixtures in
+   `V2__seed_payees.sql` or add a follow-up migration. Do not use these tables
+   as production payee storage.
 5. For real downstream testing, set `PAYMENT_MOCK_ENABLED=false` and configure
    `PAYMENT_LOGIN_URL`, `PAYMENT_PAYEE_URL`, and `PAYMENT_CONFIRM_URL`.
 

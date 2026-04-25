@@ -10,7 +10,7 @@ The database should support:
 - chat session history
 - assistant message rendering
 - one active domestic payment draft per session
-- later extension to international payment and more tools
+- later extension to cross-border ORTT payment and more tools
 
 V1 uses PostgreSQL only. Redis is not part of the design.
 
@@ -40,14 +40,23 @@ V1 uses PostgreSQL only. Redis is not part of the design.
    `ctp_payment_draft.context_json`. Add a dedicated audit table only when there is
    a real need.
 
+7. **Do not make chat2pay the payee system of record.**
+   Real payee lookup, creation, and update flows belong to downstream APIs.
+   Local payee tables exist only as POC/mock fixtures while
+   `PAYMENT_MOCK_ENABLED=true`.
+
 ## 3. Logical ER Diagram
+
+`CTP_REGISTERED_PAYEE` and `CTP_PAYEE_ALIAS` are shown because the current
+schema still carries mock fixture tables. They are not target production
+business storage; real-mode payee data is fetched live from downstream APIs.
 
 ```mermaid
 erDiagram
     CTP_PROFILE ||--o{ CTP_CHAT_SESSION : owns
     CTP_CHAT_SESSION ||--o{ CTP_CHAT_MESSAGE : contains
     CTP_CHAT_SESSION ||--o| CTP_PAYMENT_DRAFT : has_active_draft
-    CTP_REGISTERED_PAYEE ||--o{ CTP_PAYEE_ALIAS : has
+    CTP_REGISTERED_PAYEE ||--o{ CTP_PAYEE_ALIAS : mock_has
 
     CTP_PROFILE {
         varchar(64) id PK
@@ -274,23 +283,28 @@ Stores the current or completed domestic payment draft for a session.
 ### Notes
 
 - payee query alone does not require a draft row
-- V2 can extend `context_json` or add targeted columns when international
-  payment becomes concrete
+- V2 cross-border ORTT can extend `context_json`, add targeted columns, or add
+  a dedicated proposal table when propose/confirm state becomes concrete
 
-## 4.5 `ctp_registered_payee`
+## 4.5 `ctp_registered_payee` (mock fixture only)
 
-Stores the local POC registered-payee directory used when
+Stores the local POC registered-payee fixture used when
 `PAYMENT_MOCK_ENABLED=true`.
 
 For real downstream mode (`PAYMENT_MOCK_ENABLED=false`), payees are fetched from
 `PAYMENT_PAYEE_URL`; selected downstream `payeeIdIndex` values are persisted in
 `ctp_payment_draft.selected_payee_id`.
 
+This table should not be treated as a product payee directory. Future payee
+create/update flows should call downstream payee APIs directly. If mock mode is
+kept long term, this fixture can be isolated behind test-only migrations or a
+separate mock-data module.
+
 ### Important Columns
 
 | Column | Type | Notes |
 |---|---|---|
-| `id` | `varchar(64)` | Local POC payee id |
+| `id` | `varchar(64)` | Local mock payee id |
 | `profile_id` | `varchar(64)` | POC profile that owns this seeded payee |
 | `name` | `varchar(160)` | User-facing payee name |
 | `payee_type` | `varchar(32)` | Domestic downstream payee type |
@@ -299,9 +313,11 @@ For real downstream mode (`PAYMENT_MOCK_ENABLED=false`), payees are fetched from
 | `account_number` | `varchar(64)` | Display-safe account identifier |
 | `display_label` | `varchar(160)` | Product/account label |
 
-## 4.6 `ctp_payee_alias`
+## 4.6 `ctp_payee_alias` (mock fixture only)
 
 Stores local alias hints for regex fallback and DB-seeded POC payee lookup.
+Aliases are not a production matching source; real payee matching should use
+the live downstream payee payload returned for the active user/profile.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -347,11 +363,11 @@ Stores LLM provider credentials and short-lived session tokens.
 - index on `status`
 - index on `profile_id, status`
 
-### `ctp_registered_payee`
+### `ctp_registered_payee` (mock fixture)
 
 - index on `profile_id, name, account_number`
 
-### `ctp_payee_alias`
+### `ctp_payee_alias` (mock fixture)
 
 - primary key on `payee_id, alias`
 - index on `alias`
@@ -363,9 +379,10 @@ The executable schema is version-controlled in Flyway migrations under
 `chat2pay-app/src/main/resources/db/migration/`.
 
 - `V1__init_schema.sql` creates `ctp_profile`, `ctp_chat_session`,
-  `ctp_payment_draft`, `ctp_chat_message`, `ctp_registered_payee`,
+  `ctp_payment_draft`, `ctp_chat_message`, mock-fixture `ctp_registered_payee`,
   `ctp_payee_alias`, and `ctp_llm_credential`.
-- `V2__seed_payees.sql` seeds the POC registered payee directory.
+- `V2__seed_payees.sql` seeds the POC registered payee fixture for local mock
+  mode only.
 - `V3__profile_scoped_runtime_config.sql` adds profile runtime credentials,
   profile-scoped payment config, and direct `profile_id` partition keys to
   messages, drafts, and seeded payees.
@@ -388,6 +405,8 @@ For V1:
 - keep profile display data lightweight
 - use `V2__seed_payees.sql` only for local POC/mock mode payee data; those seed
   rows are assigned to `profile_poc` by V3 unless the operator updates them
+- do not seed real customer payees into chat2pay; real payee lists must come
+  from the downstream payee API at request time
 
 ## 8. Operational Notes
 

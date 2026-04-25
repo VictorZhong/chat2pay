@@ -18,8 +18,7 @@ chat2pay/
 │   ├── 01-system_design.md
 │   ├── 02-api_contract.yaml
 │   ├── 03-db_design.md
-│   ├── 04-extending.md
-│   └── 99-ref.md
+│   └── 04-extending.md
 ├── chat2pay-app/
 └── chat2pay-web/
 ```
@@ -188,7 +187,9 @@ Both `COPILOT_PERSONAL` and `REMOTE_API` use the same backend LLM tool loop. Pay
 
 ## Backend Mock vs Real Downstream
 
-The backend always uses PostgreSQL for sessions, drafts, messages, profiles, credentials, and seeded mock payees.
+The backend always uses PostgreSQL for sessions, drafts, messages, profiles,
+and LLM credentials. Payee data is not owned by chat2pay in real downstream
+mode.
 
 Local/mock downstream mode is the default:
 
@@ -196,7 +197,11 @@ Local/mock downstream mode is the default:
 export PAYMENT_MOCK_ENABLED=true
 ```
 
-In this mode, payees come from `ctp_registered_payee` seeded by Flyway and domestic payment confirmation returns a mock reference.
+In this mode, payees can come from `ctp_registered_payee` / `ctp_payee_alias`
+seeded by Flyway and domestic payment confirmation returns a mock reference.
+Those rows are mock fixtures only. In real downstream mode, payees are fetched
+live from `PAYMENT_PAYEE_URL`, and payee create/update flows should call
+downstream APIs rather than writing local chat2pay tables.
 
 Real downstream mode:
 

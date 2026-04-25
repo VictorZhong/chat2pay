@@ -4,13 +4,13 @@
 
 This document defines the updated POC design for **chat2pay**.
 
-The goal of this revision is to absorb the useful behavior proven by
-[`99-ref.md`](99-ref.md):
+The goal is to keep chat2pay as a backend-orchestrated payment assistant: the
+frontend stays conversational, the backend owns payment policy and downstream
+API sequencing, and the model only sees safe semantic tools.
 
-- the backend can talk to a personal-subscription GitHub Copilot path
-- the assistant can distinguish payee lookup from payment execution
-- the backend can execute downstream tools and continue the conversation
-- the frontend remains a chat UI instead of a transfer wizard
+This document is also the source of truth for the current product boundary:
+V1 covers domestic registered-payee payment with direct confirmation; V2 grows
+into cross-border payment on the ORTT rail with a propose-then-confirm flow.
 
 The implementation stack stays the same:
 
@@ -25,16 +25,18 @@ APIs directly.
 
 ### 2.1 Version 1
 
-Version 1 must reproduce the useful capability already demonstrated by
-`99-ref.md`, but in the Java backend:
+Version 1 covers the domestic registered-payee payment journey in the Java
+backend:
 
 - support personal-subscription GitHub Copilot access from the backend
 - support registered payee lookup
 - support domestic payment to a registered payee
+- execute V1 domestic payment by calling confirmation directly after backend
+  validation and explicit user confirmation; there is no propose step in V1
 - support multi-turn clarification with the user
 - support exactly two business downstream APIs:
-  - `PAYEE_URL`
-  - `CONFIRM_DOMESTIC_PAYMENT_URL`
+  - `PAYEE_URL` for live registered-payee lookup
+  - `CONFIRM_DOMESTIC_PAYMENT_URL` for direct domestic confirmation
 - obtain downstream SAML token before each downstream business call
 - persist sessions, messages, and active draft in PostgreSQL
 - no Redis
@@ -43,7 +45,9 @@ Version 1 must reproduce the useful capability already demonstrated by
 
 Version 2 extends the same architecture:
 
-- add international payment
+- add cross-border payment on the ORTT rail
+- execute cross-border ORTT payment through separate propose and confirm APIs
+- defer GD and other non-ORTT rails outside the POC
 - add more downstream tools and APIs
 - use a real LLM API as the primary provider
 - keep GitHub Copilot personal-subscription access as a fallback option
@@ -57,8 +61,10 @@ Version 2 extends the same architecture:
 - no code generation from the API contract
 - no duplicate contract copy under a separate `api-contract/` directory
 - no complex frontend transfer wizard or "Transfer Flow" modal
-- no international payment execution in V1
-- no new payee creation in V1
+- no cross-border payment execution in V1
+- no GD rail support in the POC
+- no payee creation or update in V1; future create/update flows should call
+  downstream APIs directly, not write a local payee directory
 
 ## 4. Design Principles
 
@@ -76,18 +82,24 @@ Version 2 extends the same architecture:
 
 4. **Tool execution must be extensible.**
    V1 only needs two downstream business tools, but the backend should be built
-   as a tool registry so V2 can add international payment and more checks
+   as a tool registry so V2 can add cross-border ORTT payment and more checks
    without rewriting the chat controller.
 
 5. **Critical side effects stay guarded.**
    The LLM may infer intent and request tool calls, but the backend must enforce
-   confirmation and payload validation before payment execution.
+   confirmation and payload validation before payment execution. V1 domestic
+   payment directly confirms a complete draft; V2 cross-border ORTT payment
+   must confirm a backend-owned proposal or execution token.
 
 6. **PostgreSQL is the only shared state store in V1.**
    Session state, message history, and active payment draft live in PostgreSQL.
    Any in-memory cache is optional, local, and non-authoritative.
 
-7. **The UI should feel conversational, not workflow-heavy.**
+7. **Payee data is not owned by chat2pay.**
+   Real payee lookup, creation, and update flows use downstream APIs as the
+   source of truth. Any local payee rows are mock fixtures only.
+
+8. **The UI should feel conversational, not workflow-heavy.**
    The user interacts through chat messages, payee choices, and confirmation
    cards. We do not build a separate transfer wizard.
 
@@ -124,7 +136,7 @@ flowchart LR
         DB2[("ctp_chat_session")]
         DB3[("ctp_chat_message")]
         DB4[("ctp_payment_draft")]
-        DB5[("ctp_registered_payee / ctp_payee_alias")]
+        DB5[("mock ctp_registered_payee / ctp_payee_alias")]
         DB6[("ctp_llm_credential")]
     end
 
@@ -137,7 +149,7 @@ flowchart LR
         D1["LOGIN_URL"]
         D2["PAYEE_URL"]
         D3["CONFIRM_DOMESTIC_PAYMENT_URL"]
-        D4["Future International APIs"]
+        D4["Future Cross-Border ORTT APIs"]
     end
 
     FE1 --> BE1
@@ -171,7 +183,7 @@ flowchart LR
     BE8 --> DB2
     BE8 --> DB3
     BE8 --> DB4
-    BE12 --> DB5
+    BE12 -. mock only .-> DB5
     BE9 --> DB6
 ```
 
@@ -187,16 +199,91 @@ V1 exposes only two payment-related business capabilities:
 | `DOMESTIC_PAYMENT` | Pay a registered domestic payee | `confirm_domestic_payment` |
 
 `REGISTERED_PAYEE_LOOKUP` may be used on its own, or as part of the domestic
-payment journey.
+payment journey. V1 domestic payment goes directly to the confirmation API
+after the backend has a complete draft and the user explicitly confirms.
 
 ### 6.2 V2 Extension Direction
 
 V2 adds capabilities without changing the outer chat contract:
 
-- `INTERNATIONAL_PAYMENT`
+- `CROSS_BORDER_PAYMENT_ORTT`
 - extra downstream checks
 - more tool definitions
 - real API LLM provider as primary
+- no GD rail support in the POC
+
+### 6.3 V2 Capability Layering Direction
+
+V2 should not model every downstream REST endpoint as a separate LLM-visible
+tool. The mature REST APIs should stay behind strongly typed backend connectors,
+while the model sees a smaller set of semantic business capabilities.
+
+Target layering:
+
+```text
+Chat API / SSE
+  -> Conversation Orchestrator
+  -> Journey State Machine + Policy Guard
+  -> Semantic Capability Registry
+  -> Capability Services
+  -> REST API Connectors
+  -> Downstream Banking / Payment APIs
+```
+
+The capability layer should expose business operations such as:
+
+- `listAccounts`
+- `getAccountDetails`
+- `listPayees`
+- `getPayeeDetails`
+- `listTransactionHistory`
+- `getPaymentOptions`
+- `checkEligibility`
+- `checkLimit`
+- `confirmDomesticPayment`
+- `proposeCrossBorderPayment`
+- `confirmCrossBorderPayment`
+- `runFraudCheck`
+
+Those names are intentionally semantic. A capability may call one or more
+downstream APIs, normalize errors, apply policy, and return frontend-ready
+blocks or structured intermediate state. This keeps the model from having to
+understand endpoint sequencing, auth details, idempotency, or raw downstream
+payload quirks.
+
+High-risk side effects must use backend-owned state. V1
+`confirmDomesticPayment` can directly confirm a validated domestic draft after
+explicit user confirmation. V2 `confirmCrossBorderPayment` must confirm a
+backend-generated cross-border proposal or execution token returned by
+`proposeCrossBorderPayment`; it should not accept a model-reconstructed
+payee/account/amount payload as the source of truth.
+
+### 6.4 MCP Decision
+
+MCP is useful as a standardized AI integration protocol for tools, resources,
+and prompts. It can be useful later as an interoperability facade around
+chat2pay capabilities, especially if external agents or multiple AI clients
+need to discover and call the same banking capabilities. See the MCP
+architecture and tools documentation:
+
+- https://modelcontextprotocol.io/docs/concepts/architecture
+- https://modelcontextprotocol.io/docs/concepts/tools
+
+MCP should not be the core payment orchestration architecture for V2. Payment
+journeys need strict ordering, policy gates, explicit confirmation,
+idempotency, auditability, and downstream error handling. Those belong in the
+backend journey state machine and policy guard, not in protocol-level tool
+wrappers.
+
+Recommended stance:
+
+- do not add MCP to V2 core orchestration yet
+- design capabilities so an MCP server facade can be added later without
+  rewriting business logic
+- expose read-only capabilities through MCP first if needed
+- keep high-risk payment execution behind backend direct-confirm or
+  proposal/confirmation gates, depending on the rail
+- never expose raw mature REST APIs directly as model-controlled MCP tools
 
 ## 7. Conversation and Tool Orchestration
 
@@ -290,8 +377,10 @@ Backend guardrails fire outside the model decision:
 
 - confirmation is gated by explicit user confirmation text or UI action
 - domestic payment execution validates payee, amount, and payment date
-- payee identifiers are resolved and validated against registered payees
-- unsupported international-payment requests are stopped before downstream work
+- payee identifiers are resolved from the latest downstream payee lookup, or
+  from mock fixtures only when mock mode is enabled
+- unsupported cross-border payment and GD-rail requests are stopped before
+  downstream work
 - downstream failures are normalized into error blocks and failed draft state
 
 ## 8. LLM Provider Strategy
@@ -355,9 +444,13 @@ values such as login username/password, debit account number, debit product
 category, and payment currency live on `ctp_profile` and are cached by the
 backend for one day. This auth sequence belongs in a shared backend service,
 not inside each tool.
-Local POC runs may leave `PAYMENT_MOCK_ENABLED=true`; in that mode payee lookup
-uses the DB seed and domestic confirmation returns a mock reference without
-calling downstream.
+
+Real payee data is always owned by downstream payee APIs. Local POC runs may
+leave `PAYMENT_MOCK_ENABLED=true`; in that mode payee lookup can use seeded
+`ctp_registered_payee` / `ctp_payee_alias` rows as mock fixtures and domestic
+confirmation returns a mock reference. Those tables are not the target
+production payee store and should not be used for real payee create/update
+flows.
 
 ### 9.2 V1 Tool Set
 
@@ -366,7 +459,7 @@ V1 tools:
 | Tool | Purpose | Downstream dependency |
 |---|---|---|
 | `get_registered_payees` | Retrieve and optionally filter registered payees | `PAYEE_URL` |
-| `confirm_domestic_payment` | Execute confirmed domestic payment | `CONFIRM_DOMESTIC_PAYMENT_URL` |
+| `confirm_domestic_payment` | Directly execute confirmed domestic payment | `CONFIRM_DOMESTIC_PAYMENT_URL` |
 
 Recommended internal split:
 
@@ -376,8 +469,9 @@ Recommended internal split:
 
 ### 9.3 Future Tool Growth
 
-When V2 adds international payment, new downstream APIs should arrive as new
-tool classes, not as conditionals inside `DomesticPaymentTool`.
+When V2 adds cross-border payment, the ORTT propose and confirm APIs should
+arrive as new capability/tool classes, not as conditionals inside
+`DomesticPaymentTool`. GD and other non-ORTT rails stay outside the POC.
 
 ## 10. FE/BE Streaming Choice
 
@@ -451,6 +545,12 @@ Minimum V1 draft fields:
 - confirmation status
 - downstream result summary
 
+V2 cross-border ORTT should add proposal-specific state, either as targeted
+columns or a dedicated proposal table: selected source account, payment option,
+proposal id or execution token, eligibility/limit/fraud results, downstream
+correlation ids, and idempotency key. V1 domestic payment does not require a
+proposal record.
+
 ## 12. Core Sequences
 
 ### 12.1 Profile Login
@@ -504,7 +604,11 @@ sequenceDiagram
     ORC-->>FE: stream or return assistant blocks
 ```
 
-### 12.3 Domestic Payment
+### 12.3 Domestic Payment (Direct Confirm)
+
+Domestic payment in V1 does not call a propose API. Once the payee, amount,
+currency, payment date, and explicit user confirmation are present, the backend
+calls the domestic confirmation API directly.
 
 ```mermaid
 sequenceDiagram
@@ -550,6 +654,48 @@ sequenceDiagram
     ORC-->>FE: success or failure blocks
 ```
 
+### 12.4 Cross-Border ORTT Payment (V2)
+
+Cross-border payment is a V2 journey and should use the professional
+cross-border terminology in product, code, and docs. The POC only targets ORTT;
+GD and other rails are out of scope.
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant FE as Frontend
+    participant API as Chat API
+    participant ORC as Conversation Orchestrator
+    participant CAP as Capability Service
+    participant GUARD as Policy Guard
+    participant PAYEE as Payee API
+    participant PROPOSE as PROPOSE_CROSS_BORDER_PAYMENT_URL
+    participant CONFIRM as CONFIRM_CROSS_BORDER_PAYMENT_URL
+    participant DB as PostgreSQL
+
+    U->>FE: "Send EUR to Alice overseas"
+    FE->>API: POST /api/chat/sessions/{id}/messages
+    API->>ORC: handle turn
+    ORC->>CAP: collect account, payee, amount, option, and checks
+    CAP->>PAYEE: fetch live payee details
+    PAYEE-->>CAP: payee details
+    CAP->>PROPOSE: propose ORTT cross-border payment
+    PROPOSE-->>CAP: proposal id, fees, rates, warnings
+    CAP->>DB: persist proposal state and idempotency context
+    ORC-->>FE: proposal review summary
+
+    U->>FE: Confirm
+    FE->>API: POST /api/chat/sessions/{id}/events
+    API->>ORC: handle turn
+    ORC->>GUARD: validate explicit confirmation + proposal state
+    GUARD-->>ORC: allowed
+    ORC->>CAP: confirmCrossBorderPayment(proposalId)
+    CAP->>CONFIRM: confirm ORTT cross-border payment
+    CONFIRM-->>CAP: success, held, rejected, or failure
+    CAP->>DB: persist terminal state
+    ORC-->>FE: terminal result blocks
+```
+
 ## 13. Frontend Implications
 
 The frontend keeps the current shell, but should simplify behavior:
@@ -569,7 +715,8 @@ This design intentionally leaves room for V2:
 
 - more tools can be added without changing the controller contract
 - the provider router can switch from Copilot to a real API
-- international payment can be added as new tools plus new draft fields
+- cross-border ORTT payment can be added as new capabilities plus proposal
+  persistence
 - PostgreSQL remains sufficient for the current scale; Redis is not required
   for V1
 
@@ -582,4 +729,4 @@ The updated design is:
 - PostgreSQL-backed
 - SSE-streamed
 - GitHub Copilot personal-subscription compatible in V1
-- ready to grow into real API LLM + international payment in V2
+- ready to grow into real API LLM + cross-border ORTT payment in V2

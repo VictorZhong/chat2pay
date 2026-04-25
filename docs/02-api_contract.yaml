@@ -883,6 +883,11 @@ components:
 
     CapabilityType:
       type: string
+      description: >
+        Current contract values. INTERNATIONAL_PAYMENT is a legacy placeholder
+        for unsupported cross-border requests and should be renamed to a
+        cross-border/ORTT-specific capability when V2 contract and code are
+        updated together.
       enum:
         - REGISTERED_PAYEE_LOOKUP
         - DOMESTIC_PAYMENT
@@ -921,6 +926,9 @@ components:
 
     PaymentType:
       type: string
+      description: >
+        Current persisted payment type values. INTERNATIONAL_PAYMENT is a
+        legacy placeholder; V2 should model cross-border ORTT explicitly.
       enum:
         - DOMESTIC_PAYMENT
         - INTERNATIONAL_PAYMENT

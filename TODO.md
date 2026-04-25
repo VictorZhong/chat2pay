@@ -105,10 +105,87 @@ Legend: `[ ]` open · `[x]` done · `[~]` in progress · `[-]` won't do (POC)
         add a handler in the new `PaymentToolRegistry`, extend
         `IntentInterpreter.fromToolCall` if needed, add a unit test.
       - "Add a new test profile" — insert into `ctp_profile`, configure
-        capabilities + currency + debit account; how to seed payees in
-        `V2__seed_payees.sql` for mock mode; how to test against real
-        downstream by setting `PAYMENT_MOCK_ENABLED=false`.
+        capabilities + currency + debit account; how to seed mock payee
+        fixtures in `V2__seed_payees.sql`; how to test against real downstream
+        by setting `PAYMENT_MOCK_ENABLED=false`.
 - [x] Cross-link `TODO.md` from `README.md`.
+
+## V2 Architecture Readiness — Capability / Journey foundation
+
+### P0 — Do before adding many downstream APIs
+
+- [ ] **Define the semantic capability model.** Create a short design doc or
+      section listing V2 capabilities (`listAccounts`, `getAccountDetails`,
+      `listPayees`, `getPayeeDetails`, `listTransactionHistory`,
+      `getPaymentOptions`, `checkEligibility`, `checkLimit`,
+      `confirmDomesticPayment`, `proposeCrossBorderPayment`,
+      `confirmCrossBorderPayment`, `runFraudCheck`), their inputs, outputs,
+      risk level, required user confirmation, and whether each is read-only or
+      side-effecting. Payee capabilities must be live downstream reads in real
+      mode, not DB directory reads.
+- [ ] **Standardize V2 terminology and rail scope.** Use `cross-border payment`
+      in docs/product/code when touching V2, model the POC rail as ORTT only,
+      and leave GD/non-ORTT rails out of scope. Treat existing
+      `INTERNATIONAL_PAYMENT` names as legacy placeholders to rename when the
+      V2 contract/code is changed.
+- [ ] **Retire DB-backed payee directory assumptions.** Real-mode
+      `listPayees` / `getPayeeDetails` must call downstream APIs at request
+      time. Keep `ctp_registered_payee` / `ctp_payee_alias` only as local mock
+      fixtures or move them behind a test-only fixture module. Payee
+      create/update flows should call downstream APIs directly.
+- [ ] **Introduce a `CapabilityRegistry`.** Move from payment-tool-name routing
+      toward semantic capabilities with metadata: capability id, description,
+      input schema, output type, risk level, required state, and confirmation
+      policy. Keep LLM tool definitions generated from this registry where
+      practical.
+- [ ] **Extract a real payment journey state machine.** Model V2 states for
+      account selection, payee selection, payment-option selection,
+      eligibility/limit/fraud checks, domestic direct-confirm review,
+      cross-border proposal review, explicit confirmation, execution,
+      held/rejected/completed/failed/cancelled. State transitions should be
+      backend-owned and unit tested.
+- [ ] **Add cross-border ORTT proposal/confirm execution.** Domestic V1 remains
+      direct confirm after backend validation and explicit user confirmation.
+      Cross-border ORTT must introduce backend-owned `paymentProposalId` /
+      execution token semantics so `confirmCrossBorderPayment` confirms a
+      persisted proposal rather than trusting model-supplied raw
+      account/payee/amount fields.
+
+### P1 — Connector and policy hardening
+
+- [ ] **Create typed REST connector modules by domain.** Split downstream
+      clients into `accounts`, `payees`, `transactions`, `payment-options`,
+      `limits`, `eligibility`, `fraud`, and `payments`, with consistent auth,
+      timeout, retry, correlation-id, idempotency, and downstream error mapping.
+- [ ] **Add a policy guard layer.** Centralize rules for PII exposure,
+      capability authorization, confirmation requirements, side-effect gating,
+      idempotency keys, and audit metadata before any capability can call a
+      downstream mutating API.
+- [ ] **Normalize capability result envelopes.** Use a common result shape for
+      success, missing-details, user-choice-needed, blocked-by-policy,
+      downstream-error, and terminal execution states so the chat renderer does
+      not need capability-specific branching.
+- [ ] **Expand persistence for V2 journeys.** Add tables/columns for payment
+      proposals for cross-border ORTT, selected source account, payment option,
+      eligibility/limit/fraud results, audit correlation ids, and idempotency
+      keys. Avoid storing sensitive raw downstream payloads unless explicitly
+      needed, and do not store a durable real payee directory.
+
+### P2 — LLM integration and observability
+
+- [ ] **Generate LLM tool specs from capabilities.** Derive model-facing tool
+      schemas from the capability registry, but keep only the safe semantic
+      capabilities visible to the model. Do not expose raw REST endpoints.
+- [ ] **Add capability-level tests.** For each capability, cover happy path,
+      missing details, downstream failure, policy block, and side-effect gating.
+      Add journey tests for common payment scenarios across multiple turns.
+- [ ] **Add execution tracing.** Log capability id, journey state, proposal id,
+      downstream correlation ids, policy decisions, and timing. Keep sensitive
+      values redacted by default.
+- [ ] **Plan MCP as an optional facade only.** Do not add MCP to the V2 payment
+      core. Keep capability interfaces clean enough that a future MCP server can
+      expose selected read-only or low-risk capabilities without duplicating
+      business logic.
 
 ---
 
