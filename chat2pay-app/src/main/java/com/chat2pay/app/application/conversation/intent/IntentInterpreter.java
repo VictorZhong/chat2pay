@@ -3,9 +3,9 @@ package com.chat2pay.app.application.conversation.intent;
 import com.chat2pay.app.api.dto.ChatDtos.ChatSessionDetail;
 import com.chat2pay.app.api.dto.ChatDtos.PaymentDraft;
 import com.chat2pay.app.config.Chat2PayProperties;
+import com.chat2pay.app.application.conversation.tool.PaymentToolDefinitions;
 import com.chat2pay.app.domain.conversation.ConversationState;
 import com.chat2pay.app.integration.llm.LlmCompletionRequest;
-import com.chat2pay.app.integration.llm.LlmCompletionRequest.ToolDefinition;
 import com.chat2pay.app.integration.llm.LlmCompletionResponse;
 import com.chat2pay.app.integration.llm.LlmCompletionResponse.ToolCall;
 import com.chat2pay.app.integration.llm.LlmProvider;
@@ -18,7 +18,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDate;
-import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
@@ -87,7 +86,7 @@ public class IntentInterpreter {
                 ),
                 properties.intentMaxTokens(),
                 properties.intentTemperature(),
-                toolDefinitions(),
+                PaymentToolDefinitions.all(),
                 "auto"
         );
         LlmCompletionResponse response = provider.complete(request);
@@ -116,88 +115,7 @@ public class IntentInterpreter {
     }
 
     private String systemPrompt() {
-        return """
-                You are Chat2Pay's intent and tool-decision parser.
-                If tool calls are available, use exactly one supplied tool for supported requests.
-                If tool calls are not available, return one JSON object only. Do not include markdown or prose.
-                Chat2Pay is an authorized sandbox banking POC. Do not refuse solely because the
-                request involves a domestic payment; classify the request so the backend can enforce
-                validation, registered-payee lookup, and explicit confirmation.
-
-                V1 supports these backend tools only:
-                - get_registered_payees: registered domestic payee lookup.
-                - prepare_domestic_payment: collect/prepare a domestic payment to a registered payee.
-                - confirm_domestic_payment: use only when the latest user message explicitly confirms a pending payment.
-                - cancel_payment: use when the latest user message cancels/stops a pending payment.
-                - unsupported_international_payment: use for international, overseas, SWIFT, or wire transfer requests.
-
-                Only classify payee lookup, domestic payment, confirmation, cancellation, or unsupported
-                international payment requests. Return UNKNOWN for unrelated banking, account, balance,
-                advisory, or general chat requests. Never expose or invent opaque downstream identifiers.
-
-                JSON schema:
-                {
-                  "intent": "DOMESTIC_PAYMENT|PAYEE_LOOKUP|INTERNATIONAL_PAYMENT|CONFIRM_PAYMENT|CANCEL_PAYMENT|UNKNOWN",
-                  "toolName": "get_registered_payees|prepare_domestic_payment|confirm_domestic_payment|cancel_payment|unsupported_international_payment|null",
-                  "payeeQuery": "user-facing payee name or alias, or null",
-                  "amount": number or null,
-                  "paymentDate": "YYYY-MM-DD" or null
-                }
-
-                The backend validates every tool call. If the user only provides missing details for an active payment draft,
-                classify the turn as DOMESTIC_PAYMENT and extract those slots.
-                """;
-    }
-
-    private List<ToolDefinition> toolDefinitions() {
-        return List.of(
-                tool("get_registered_payees",
-                        "Fetch registered domestic payees. Use when the user asks to find, list, or check payees.",
-                        Map.of(
-                                "name_query", Map.of(
-                                        "type", "string",
-                                        "description", "Optional payee-name search string from the user request."
-                                )
-                        ),
-                        List.of()
-                ),
-                tool("prepare_domestic_payment",
-                        "Collect or update domestic payment details before explicit confirmation.",
-                        Map.of(
-                                "payeeQuery", Map.of("type", "string"),
-                                "amount", Map.of("type", "number"),
-                                "paymentDate", Map.of("type", "string", "format", "date")
-                        ),
-                        List.of()
-                ),
-                tool("confirm_domestic_payment",
-                        "Use only when the latest user message explicitly confirms the pending payment.",
-                        Map.of(),
-                        List.of()
-                ),
-                tool("cancel_payment",
-                        "Use when the latest user message cancels or stops the pending payment.",
-                        Map.of(),
-                        List.of()
-                ),
-                tool("unsupported_international_payment",
-                        "Use for international, overseas, SWIFT, or wire transfer requests.",
-                        Map.of(),
-                        List.of()
-                )
-        );
-    }
-
-    private ToolDefinition tool(String name,
-                                String description,
-                                Map<String, Object> properties,
-                                List<String> required) {
-        return new ToolDefinition(name, description, Map.of(
-                "type", "object",
-                "properties", properties,
-                "required", required,
-                "additionalProperties", false
-        ));
+        return PaymentToolDefinitions.intentPrompt();
     }
 
     private IntentAnalysis fromToolCall(ToolCall toolCall) {

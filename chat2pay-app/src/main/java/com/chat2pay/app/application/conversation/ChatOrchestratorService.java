@@ -11,9 +11,11 @@ import com.chat2pay.app.api.dto.ChatDtos.UiEventRequest;
 import com.chat2pay.app.api.dto.ContentBlock;
 import com.chat2pay.app.api.dto.ContentBlock.DisplayField;
 import com.chat2pay.app.api.dto.ContentBlock.SelectableItem;
+import com.chat2pay.app.application.conversation.tool.PaymentToolDefinitions;
 import com.chat2pay.app.application.conversation.intent.IntentAnalysis;
 import com.chat2pay.app.application.conversation.intent.IntentInterpreter;
 import com.chat2pay.app.application.conversation.intent.IntentType;
+import com.chat2pay.app.config.Chat2PayProperties;
 import com.chat2pay.app.domain.conversation.ChatSessionStatus;
 import com.chat2pay.app.domain.conversation.ConversationState;
 import com.chat2pay.app.domain.conversation.MessageKind;
@@ -23,10 +25,20 @@ import com.chat2pay.app.domain.payment.PaymentType;
 import com.chat2pay.app.integration.downstream.domestic.DomesticPaymentClient;
 import com.chat2pay.app.integration.downstream.domestic.DomesticPaymentClient.DomesticPaymentRequest;
 import com.chat2pay.app.integration.downstream.domestic.DomesticPaymentClient.PaymentConfirmationResult;
+import com.chat2pay.app.integration.llm.LlmCompletionRequest;
+import com.chat2pay.app.integration.llm.LlmCompletionRequest.Message;
+import com.chat2pay.app.integration.llm.LlmCompletionResponse;
+import com.chat2pay.app.integration.llm.LlmCompletionResponse.ToolCall;
+import com.chat2pay.app.integration.llm.LlmProvider;
+import com.chat2pay.app.integration.llm.LlmRouter;
 import com.chat2pay.app.persistence.repository.PayeeStore;
 import com.chat2pay.app.persistence.repository.PayeeStore.RegisteredPayee;
 import com.chat2pay.app.persistence.repository.SessionStore;
 import com.chat2pay.app.persistence.repository.SessionStore.SessionRecord;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -36,26 +48,45 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 @Service
 public class ChatOrchestratorService {
 
+    private static final Logger log = LoggerFactory.getLogger(ChatOrchestratorService.class);
     private static final String DEFAULT_CURRENCY = "HKD";
+    private static final int MAX_TOOL_LOOP_ITERATIONS = 4;
+    private static final Pattern EXPLICIT_CONFIRMATION = Pattern.compile(
+            "\\b(confirm|confirmed|yes|okay|ok|go ahead|proceed|send it|approve)\\b",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern PAYMENT_RELATED = Pattern.compile(
+            "\\b(pay|payment|send|transfer|payee|registered|lookup|find|show|list|confirm|cancel|swift|wire|international|overseas)\\b",
+            Pattern.CASE_INSENSITIVE);
 
     private final SessionStore sessions;
     private final PayeeStore payees;
     private final IntentInterpreter intentInterpreter;
     private final DomesticPaymentClient domesticPayments;
+    private final LlmRouter llmRouter;
+    private final Chat2PayProperties properties;
+    private final ObjectMapper mapper;
 
     public ChatOrchestratorService(SessionStore sessions,
                                    PayeeStore payees,
                                    IntentInterpreter intentInterpreter,
-                                   DomesticPaymentClient domesticPayments) {
+                                   DomesticPaymentClient domesticPayments,
+                                   LlmRouter llmRouter,
+                                   Chat2PayProperties properties,
+                                   ObjectMapper mapper) {
         this.sessions = sessions;
         this.payees = payees;
         this.intentInterpreter = intentInterpreter;
         this.domesticPayments = domesticPayments;
+        this.llmRouter = llmRouter;
+        this.properties = properties;
+        this.mapper = mapper;
     }
 
     public ChatMessage welcomeMessage(String sessionId) {
@@ -103,6 +134,12 @@ public class ChatOrchestratorService {
     // ---- text turn ------------------------------------------------------------
 
     private ChatMessage handleTextTurn(SessionRecord record, String text) {
+        Optional<ChatMessage> loopResponse = handleWithLlmToolLoop(record, text);
+        if (loopResponse.isPresent()) return loopResponse.get();
+        return handleTextTurnDeterministic(record, text);
+    }
+
+    private ChatMessage handleTextTurnDeterministic(SessionRecord record, String text) {
         ConversationState state = record.session().state();
         IntentAnalysis intent = intentInterpreter.analyze(record.session(), text);
 
@@ -111,7 +148,10 @@ public class ChatOrchestratorService {
             if (intent.intent() == IntentType.CANCEL_PAYMENT) return cancelPayment(record);
         }
 
-        if (state == ConversationState.AWAITING_PAYEE_SELECTION && record.session().activeDraft() != null) {
+        if (state == ConversationState.AWAITING_PAYEE_SELECTION
+                && record.session().activeDraft() != null
+                && intent.intent() != IntentType.DOMESTIC_PAYMENT
+                && intent.intent() != IntentType.PAYEE_LOOKUP) {
             return assistantMessage(record.session().sessionId(), List.of(
                     infoBlock("Select a payee",
                             "Please choose one of the registered payees from the selection list before I continue.")
@@ -137,8 +177,214 @@ public class ChatOrchestratorService {
         ));
     }
 
+    private Optional<ChatMessage> handleWithLlmToolLoop(SessionRecord record, String text) {
+        if (!properties.useLlmIntent()) return Optional.empty();
+        Optional<LlmProvider> provider = llmRouter.currentIfAvailable();
+        if (provider.isEmpty()) return Optional.empty();
+        try {
+            return runLlmToolLoop(provider.get(), record, text);
+        } catch (RuntimeException ex) {
+            log.warn("LLM tool loop failed; falling back to deterministic orchestrator: {}", ex.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    private Optional<ChatMessage> runLlmToolLoop(LlmProvider provider, SessionRecord record, String latestUserText) {
+        List<Message> messages = buildToolLoopMessages(record);
+        List<ContentBlock> pendingBlocks = List.of();
+
+        for (int iteration = 0; iteration < MAX_TOOL_LOOP_ITERATIONS; iteration++) {
+            LlmCompletionRequest request = new LlmCompletionRequest(
+                    messages,
+                    properties.intentMaxTokens(),
+                    properties.intentTemperature(),
+                    PaymentToolDefinitions.all(),
+                    "auto"
+            );
+            LlmCompletionResponse response = provider.complete(request);
+            List<ToolCall> toolCalls = normalizeToolCalls(response.toolCalls());
+
+            if (toolCalls.isEmpty()) {
+                String content = trim(response.content());
+                if (pendingBlocks.isEmpty() && shouldFallbackWhenNoTool(record, latestUserText)) {
+                    return Optional.empty();
+                }
+                if (content == null && pendingBlocks.isEmpty()) return Optional.empty();
+                return Optional.of(renderLoopAnswer(record.session().sessionId(), content, pendingBlocks));
+            }
+
+            messages.add(Message.assistantToolCalls(toolCalls.stream()
+                    .map(tc -> new LlmCompletionRequest.ToolCall(tc.id(), tc.name(), tc.arguments()))
+                    .toList()));
+
+            ToolExecution execution = executeLlmToolCall(record, toolCalls.get(0), latestUserText);
+            messages.add(Message.toolResult(
+                    execution.toolCallId(),
+                    execution.toolName(),
+                    serializeToolResult(execution.result())
+            ));
+
+            if (execution.terminalMessage() != null) {
+                return Optional.of(execution.terminalMessage());
+            }
+            pendingBlocks = execution.renderBlocks();
+        }
+
+        if (!pendingBlocks.isEmpty()) {
+            return Optional.of(assistantMessage(record.session().sessionId(), pendingBlocks));
+        }
+        return Optional.empty();
+    }
+
+    private boolean shouldFallbackWhenNoTool(SessionRecord record, String latestUserText) {
+        if (record.session().state() == ConversationState.AWAITING_CONFIRMATION
+                && EXPLICIT_CONFIRMATION.matcher(latestUserText).find()) {
+            return true;
+        }
+        return PAYMENT_RELATED.matcher(latestUserText).find();
+    }
+
+    private List<Message> buildToolLoopMessages(SessionRecord record) {
+        List<Message> messages = new ArrayList<>();
+        messages.add(new Message(LlmCompletionRequest.Role.SYSTEM,
+                PaymentToolDefinitions.paymentAssistantPrompt()
+                        + "\nCurrent date: " + LocalDate.now()
+                        + "\nCurrent session state: " + record.session().state()
+                        + "\nActive draft: " + draftSummary(record.session().activeDraft())));
+
+        List<ChatMessage> history = record.messages();
+        int start = Math.max(0, history.size() - 12);
+        for (int i = start; i < history.size(); i++) {
+            ChatMessage message = history.get(i);
+            String content = trim(messageContent(message));
+            if (content == null) continue;
+            LlmCompletionRequest.Role role = message.role() == MessageRole.ASSISTANT
+                    ? LlmCompletionRequest.Role.ASSISTANT
+                    : LlmCompletionRequest.Role.USER;
+            messages.add(new Message(role, content));
+        }
+        return messages;
+    }
+
+    private ChatMessage renderLoopAnswer(String sessionId, String content, List<ContentBlock> pendingBlocks) {
+        List<ContentBlock> blocks = new ArrayList<>();
+        if (content != null) {
+            blocks.add(textBlock(pendingBlocks.isEmpty() ? "Chat2Pay" : "Registered payees", content));
+        }
+        if (content != null && !pendingBlocks.isEmpty() && pendingBlocks.get(0) instanceof ContentBlock.TextBlock) {
+            blocks.addAll(pendingBlocks.subList(1, pendingBlocks.size()));
+        } else {
+            blocks.addAll(pendingBlocks);
+        }
+        return assistantMessage(sessionId, blocks);
+    }
+
+    private ToolExecution executeLlmToolCall(SessionRecord record, ToolCall toolCall, String latestUserText) {
+        Map<String, Object> args = parseToolArguments(toolCall.arguments());
+        return switch (toolCall.name()) {
+            case "get_registered_payees" -> executePayeeLookupTool(record, toolCall,
+                    firstString(args, "name_query", "payeeQuery", "payee_name", "payeeName"));
+            case "prepare_domestic_payment" -> executePrepareDomesticPaymentTool(record, toolCall, args);
+            case "confirm_domestic_payment" -> executeConfirmPaymentTool(record, toolCall, latestUserText);
+            case "cancel_payment" -> terminalTool(toolCall, Map.of("ok", true, "action", "cancel_payment"),
+                    cancelPayment(record));
+            case "unsupported_international_payment" -> executeUnsupportedInternationalTool(record, toolCall);
+            default -> terminalTool(toolCall,
+                    Map.of("ok", false, "error", "Unsupported tool: " + toolCall.name()),
+                    assistantMessage(record.session().sessionId(), List.of(
+                            infoBlock("Try a supported request",
+                                    "Chat2Pay currently supports registered domestic payee lookup and domestic payments only.")
+                    )));
+        };
+    }
+
+    private ToolExecution executePayeeLookupTool(SessionRecord record, ToolCall toolCall, String query) {
+        PayeeLookupView view = buildPayeeLookupView(record, query);
+        Map<String, Object> result = new HashMap<>();
+        result.put("ok", true);
+        if (query != null) result.put("query", query);
+        result.put("match_count", view.matches().size());
+        result.put("payees", view.matches().stream()
+                .map(p -> Map.of(
+                        "name", p.summary().name(),
+                        "bank_code", p.summary().bankCode(),
+                        "bank_name", p.summary().bankName(),
+                        "account_number", p.summary().accountNumber(),
+                        "display_label", p.summary().displayLabel()
+                ))
+                .toList());
+        return new ToolExecution(toolCall.id(), toolCall.name(), result, null, view.blocks());
+    }
+
+    private ToolExecution executePrepareDomesticPaymentTool(SessionRecord record,
+                                                            ToolCall toolCall,
+                                                            Map<String, Object> args) {
+        ChatMessage response = continueDomesticPayment(record, new IntentAnalysis(
+                IntentType.DOMESTIC_PAYMENT,
+                IntentAnalysis.toolNameFor(IntentType.DOMESTIC_PAYMENT),
+                firstString(args, "payeeQuery", "name_query", "payee_name", "payeeName"),
+                numberArg(args, "amount"),
+                dateArg(args, "paymentDate", "payment_date"),
+                "LLM_TOOL_LOOP"
+        ));
+        return terminalTool(toolCall, draftToolResult(record, "prepare_domestic_payment"), response);
+    }
+
+    private ToolExecution executeConfirmPaymentTool(SessionRecord record, ToolCall toolCall, String latestUserText) {
+        if (record.session().state() != ConversationState.AWAITING_CONFIRMATION
+                || !EXPLICIT_CONFIRMATION.matcher(latestUserText).find()) {
+            PaymentDraft draft = record.session().activeDraft();
+            List<ContentBlock> blocks = new ArrayList<>();
+            blocks.add(infoBlock("Explicit confirmation required",
+                    "Please review the domestic payment summary and explicitly confirm before I submit it."));
+            if (draft != null) blocks.add(summaryBlock("Current draft", draftFields(draft), null));
+            return terminalTool(toolCall,
+                    Map.of("ok", false, "error", "explicit_confirmation_required"),
+                    assistantMessage(record.session().sessionId(), blocks));
+        }
+        ChatMessage response = executePayment(record);
+        return terminalTool(toolCall, draftToolResult(record, "confirm_domestic_payment"), response);
+    }
+
+    private ToolExecution executeUnsupportedInternationalTool(SessionRecord record, ToolCall toolCall) {
+        transition(record, ConversationState.IDLE, ChatSessionStatus.ACTIVE);
+        ChatMessage response = assistantMessage(record.session().sessionId(), List.of(
+                infoBlock("Not supported in V1",
+                        "This POC currently supports registered payee lookup and domestic payment to a registered payee only.")
+        ));
+        return terminalTool(toolCall,
+                Map.of("ok", false, "error", "international_payment_not_supported"),
+                response);
+    }
+
+    private ToolExecution terminalTool(ToolCall toolCall, Map<String, Object> result, ChatMessage message) {
+        return new ToolExecution(toolCall.id(), toolCall.name(), result, message, List.of());
+    }
+
+    private Map<String, Object> draftToolResult(SessionRecord record, String toolName) {
+        PaymentDraft draft = record.session().activeDraft();
+        Map<String, Object> result = new HashMap<>();
+        result.put("ok", true);
+        result.put("tool_name", toolName);
+        result.put("session_state", record.session().state().name());
+        if (draft != null) {
+            result.put("draft_status", draft.status().name());
+            result.put("payee", draft.selectedPayee() == null
+                    ? draft.payeeQueryText()
+                    : draft.selectedPayee().name());
+            if (draft.amount() != null) result.put("amount", draft.amount());
+            if (draft.paymentDate() != null) result.put("payment_date", draft.paymentDate().toString());
+            if (draft.downstreamReference() != null) result.put("downstream_reference", draft.downstreamReference());
+        }
+        return result;
+    }
+
     private ChatMessage handlePayeeLookup(SessionRecord record, IntentAnalysis intent) {
-        String query = intent.payeeQuery();
+        PayeeLookupView view = buildPayeeLookupView(record, intent.payeeQuery());
+        return assistantMessage(record.session().sessionId(), view.blocks());
+    }
+
+    private PayeeLookupView buildPayeeLookupView(SessionRecord record, String query) {
         List<RegisteredPayee> matches = query != null ? payees.findByQuery(query) : payees.all();
 
         transition(record, ConversationState.IDLE, ChatSessionStatus.ACTIVE);
@@ -146,7 +392,7 @@ public class ChatOrchestratorService {
         else setTitle(record, "Registered payees");
 
         if (matches.isEmpty()) {
-            return assistantMessage(record.session().sessionId(), List.of(
+            return new PayeeLookupView(matches, List.of(
                     infoBlock("No registered payees found",
                             query != null
                                     ? "I could not find a registered payee matching \"" + query + "\"."
@@ -167,7 +413,7 @@ public class ChatOrchestratorService {
                   + " matching \"" + query + "\"."
                 : "I found " + matches.size() + " registered payees for this profile.";
 
-        return assistantMessage(record.session().sessionId(), List.of(
+        return new PayeeLookupView(matches, List.of(
                 textBlock("Registered payees", headline),
                 summaryBlock(matches.size() == 1 ? "Registered payee" : "Registered payee results", fields, null)
         ));
@@ -432,6 +678,135 @@ public class ChatOrchestratorService {
     }
 
     // ---- helpers --------------------------------------------------------------
+
+    private record ToolExecution(
+            String toolCallId,
+            String toolName,
+            Map<String, Object> result,
+            ChatMessage terminalMessage,
+            List<ContentBlock> renderBlocks
+    ) {}
+
+    private record PayeeLookupView(List<RegisteredPayee> matches, List<ContentBlock> blocks) {}
+
+    private String draftSummary(PaymentDraft draft) {
+        if (draft == null) return "none";
+        return "payeeQuery=%s, selectedPayee=%s, amount=%s, currency=%s, paymentDate=%s, status=%s"
+                .formatted(
+                        draft.payeeQueryText(),
+                        draft.selectedPayee() == null ? null : draft.selectedPayee().name(),
+                        draft.amount(),
+                        draft.currency(),
+                        draft.paymentDate(),
+                        draft.status()
+                );
+    }
+
+    private List<ToolCall> normalizeToolCalls(List<ToolCall> toolCalls) {
+        if (toolCalls == null || toolCalls.isEmpty()) return List.of();
+        List<ToolCall> normalized = new ArrayList<>();
+        for (int i = 0; i < toolCalls.size(); i++) {
+            ToolCall toolCall = toolCalls.get(i);
+            String name = trim(toolCall.name());
+            if (name == null) continue;
+            String id = trim(toolCall.id());
+            normalized.add(new ToolCall(
+                    id == null ? "call_" + (i + 1) : id,
+                    name,
+                    trim(toolCall.arguments()) == null ? "{}" : toolCall.arguments()
+            ));
+        }
+        return normalized;
+    }
+
+    private Map<String, Object> parseToolArguments(String raw) {
+        if (raw == null || raw.isBlank()) return Map.of();
+        try {
+            return mapper.readValue(raw, new TypeReference<Map<String, Object>>() {});
+        } catch (Exception ex) {
+            throw new IllegalArgumentException("LLM tool arguments were not valid JSON", ex);
+        }
+    }
+
+    private String serializeToolResult(Map<String, Object> result) {
+        try {
+            return mapper.writeValueAsString(result);
+        } catch (Exception ex) {
+            return result.toString();
+        }
+    }
+
+    private String messageContent(ChatMessage message) {
+        if (message.text() != null && !message.text().isBlank()) return message.text();
+        if (message.contentBlocks() == null || message.contentBlocks().isEmpty()) return null;
+        List<String> parts = new ArrayList<>();
+        for (ContentBlock block : message.contentBlocks()) {
+            String text = blockContent(block);
+            if (text != null) parts.add(text);
+        }
+        return String.join("\n", parts);
+    }
+
+    private String blockContent(ContentBlock block) {
+        if (block instanceof ContentBlock.TextBlock t) return t.title() + ": " + t.text();
+        if (block instanceof ContentBlock.InfoCardBlock i) return i.title() + ": " + i.text();
+        if (block instanceof ContentBlock.ErrorCardBlock e) return e.title() + ": " + e.text();
+        if (block instanceof ContentBlock.SummaryCardBlock s) {
+            StringBuilder b = new StringBuilder(s.title());
+            for (DisplayField f : s.fields()) {
+                b.append("\n").append(f.label()).append(": ").append(f.value());
+            }
+            return b.toString();
+        }
+        if (block instanceof ContentBlock.SelectableListBlock s) {
+            StringBuilder b = new StringBuilder(s.title());
+            for (SelectableItem item : s.items()) {
+                b.append("\n").append(item.label());
+                if (item.description() != null && !item.description().isBlank()) {
+                    b.append(": ").append(item.description());
+                }
+            }
+            return b.toString();
+        }
+        return null;
+    }
+
+    private String firstString(Map<String, Object> args, String... keys) {
+        for (String key : keys) {
+            String value = trim(args.get(key) == null ? null : args.get(key).toString());
+            if (value != null) return value;
+        }
+        return null;
+    }
+
+    private Double numberArg(Map<String, Object> args, String key) {
+        Object raw = args.get(key);
+        if (raw instanceof Number n) {
+            double value = n.doubleValue();
+            return value > 0 ? value : null;
+        }
+        String value = trim(raw == null ? null : raw.toString());
+        if (value == null) return null;
+        try {
+            double parsed = Double.parseDouble(value.replace(",", "").replaceAll("(?i)hkd", "").trim());
+            return parsed > 0 ? parsed : null;
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
+    private LocalDate dateArg(Map<String, Object> args, String... keys) {
+        String value = firstString(args, keys);
+        if (value == null) return null;
+        String normalized = value.toLowerCase(Locale.ROOT);
+        if (normalized.contains("tomorrow") || normalized.contains("later")) return LocalDate.now().plusDays(1);
+        if (normalized.contains("today") || normalized.contains("now")) return LocalDate.now();
+        try {
+            return LocalDate.parse(value);
+        } catch (RuntimeException ex) {
+            return null;
+        }
+    }
 
     private PaymentDraft ensureDraft(SessionRecord record) {
         PaymentDraft existing = record.session().activeDraft();

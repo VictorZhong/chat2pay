@@ -1,6 +1,7 @@
 package com.chat2pay.app.integration.llm.copilot;
 
 import com.chat2pay.app.domain.conversation.LlmProviderType;
+import com.chat2pay.app.integration.llm.ChatCompletionPayloads;
 import com.chat2pay.app.integration.llm.LlmCompletionRequest;
 import com.chat2pay.app.integration.llm.LlmCompletionResponse;
 import com.chat2pay.app.integration.llm.LlmCompletionResponse.ToolCall;
@@ -32,7 +33,6 @@ import java.time.Instant;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -163,20 +163,9 @@ public class CopilotPersonalLlmProvider implements LlmProvider {
         body.put("stream", false);
         body.put("max_completion_tokens", request.maxTokens() == null ? maxCompletionTokens : request.maxTokens());
         if (request.temperature() != null) body.put("temperature", request.temperature());
-        body.put("messages", request.messages().stream()
-                .map(m -> Map.of("role", m.role().name().toLowerCase(Locale.ROOT), "content", m.content()))
-                .toList());
+        body.put("messages", ChatCompletionPayloads.messages(request.messages()));
         if (request.tools() != null && !request.tools().isEmpty()) {
-            body.put("tools", request.tools().stream()
-                    .map(tool -> Map.of(
-                            "type", "function",
-                            "function", Map.of(
-                                    "name", tool.name(),
-                                    "description", tool.description(),
-                                    "parameters", tool.parameters()
-                            )
-                    ))
-                    .toList());
+            body.put("tools", ChatCompletionPayloads.tools(request.tools()));
         }
         if (request.toolChoice() != null && !request.toolChoice().isBlank()) {
             body.put("tool_choice", request.toolChoice());

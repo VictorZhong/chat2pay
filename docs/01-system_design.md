@@ -209,18 +209,22 @@ For each user message or UI event:
 
 1. load session history and the active draft from PostgreSQL
 2. choose the current LLM provider through the provider router
-3. ask the LLM for a constrained intent/tool decision JSON object
-4. merge any missing slots from regex helpers as fallback hints
-5. validate the selected backend action and required fields
-6. execute payee lookup or domestic confirmation through backend-owned clients
+3. ask the selected LLM provider to either answer within scope or call one of
+   the backend-owned payment tools
+4. execute the selected tool inside the backend and append the tool result to
+   the provider-agnostic loop
+5. continue until the provider returns final assistant text, a backend tool
+   reaches a terminal UI state, or the hard iteration limit is reached
+6. validate the selected backend action and required fields before any side
+   effect
 7. persist the resulting assistant message and updated draft
 8. stream or return structured blocks to the frontend
 
-The current V1 Java implementation uses this constrained one-step LLM decision
-parser (`IntentInterpreter`) rather than a fully iterative tool-calling loop.
-Regex parsing remains only a fallback and hint source; it is not the sole intent
-mechanism. V2 can grow this into a multi-step provider tool loop without
-changing the frontend contract.
+The current V1 Java implementation runs a real provider-agnostic LLM tool loop
+for text turns when a provider is available. Personal-subscription Copilot and
+the future OpenAI-compatible `REMOTE_API` provider share the same
+`LlmCompletionRequest`/tool-call contract. Regex parsing remains as a fallback
+and hint source only; it is not the sole intent mechanism.
 
 ### 7.2 Backend Guardrails
 
@@ -232,19 +236,14 @@ The backend, not the model, enforces these rules:
 - downstream response errors are normalized before returning to the frontend
 - the loop has a hard iteration limit
 
-### 7.3 Recommended Interfaces
+### 7.3 Current Interfaces
 
-```java
-public interface LlmProvider {
-    ProviderTurnResult runTurn(LlmTurnRequest request);
-    ProviderStreamResult streamTurn(LlmTurnRequest request);
-}
-
-public interface ConversationTool {
-    String name();
-    ToolExecutionResult execute(ToolExecutionContext context);
-}
-```
+The provider boundary is `LlmProvider.complete(LlmCompletionRequest)`.
+`LlmCompletionRequest` carries chat messages, tool definitions, tool choice,
+assistant tool calls, and tool-result messages. Payment tool definitions and
+prompts are centralized in `PaymentToolDefinitions`, while tool execution stays
+inside the backend orchestrator so payment state transitions and side effects
+remain backend-owned.
 
 This keeps the controller stable while V2 adds more providers and tools.
 
@@ -259,7 +258,8 @@ Responsibilities:
 - read personal credentials and cached session token from `ctp_llm_credential`
 - refresh or reacquire short-lived Copilot session tokens inside the backend
 - hide provider-specific request details from the rest of the application
-- support normal completion mode for intent and tool-decision parsing
+- support chat-completions tool calls and tool-result messages for the unified
+  conversation loop
 - honor the configured corporate proxy for `https://api.github.com` token
   exchange
 
@@ -269,12 +269,13 @@ Suggested implementation name:
 
 ### 8.2 V2 Primary Provider
 
-V2 adds:
+V2 adds or promotes:
 
 - `RemoteApiLlmProvider`
 
-That provider becomes the primary path for production-like usage, while
-`CopilotPersonalLlmProvider` remains available as a fallback.
+That provider can become the primary path for production-like usage, while
+`CopilotPersonalLlmProvider` remains available as a fallback. It uses the same
+tool loop and backend guardrails as Copilot.
 
 ### 8.3 Provider Routing
 

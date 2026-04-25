@@ -52,6 +52,14 @@ chat2pay:
       port: ${LLM_PROXY_PORT:0}
       username: ${LLM_PROXY_USERNAME:}
       password-base64: ${LLM_PROXY_PASSWORD_B64:}
+  remote:
+    # Optional OpenAI-compatible Chat Completions provider for V2. When these
+    # values are present and primary/fallback routing selects REMOTE_API, the
+    # same backend tool loop is used as Copilot Personal.
+    base-url: ${REMOTE_LLM_BASE_URL:}
+    api-key: ${REMOTE_LLM_API_KEY:}
+    model: ${REMOTE_LLM_MODEL:gpt-5.4}
+    max-completion-tokens: ${REMOTE_LLM_MAX_COMPLETION_TOKENS:2048}
   intent:
     # When true and an LLM provider is available, user intent + slot extraction
     # is delegated to the LLM. Regex helpers still run as fallback hints.
