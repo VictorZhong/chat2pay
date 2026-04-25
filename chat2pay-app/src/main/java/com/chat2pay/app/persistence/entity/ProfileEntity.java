@@ -30,8 +30,17 @@ public class ProfileEntity {
     @Column(name = "profile_code", length = 64, nullable = false, unique = true)
     private String profileCode;
 
+    @Column(length = 64, unique = true)
+    private String guid;
+
+    @Column(name = "perm_net_id", length = 128, unique = true)
+    private String permNetId;
+
     @Column(length = 128, nullable = false, unique = true)
     private String username;
+
+    @Column(columnDefinition = "text")
+    private String password;
 
     @Column(name = "display_name", length = 128, nullable = false)
     private String displayName;
@@ -49,6 +58,15 @@ public class ProfileEntity {
     @Enumerated(EnumType.STRING)
     @Column(length = 16, nullable = false)
     private ProfileStatus status;
+
+    @Column(name = "debit_account_number", columnDefinition = "text")
+    private String debitAccountNumber;
+
+    @Column(name = "debit_product_category_code", length = 16)
+    private String debitProductCategoryCode;
+
+    @Column(name = "payment_currency", length = 3)
+    private String paymentCurrency;
 
     @Column(name = "created_at", nullable = false)
     private Instant createdAt = Instant.now();

@@ -11,6 +11,7 @@ public interface DomesticPaymentClient {
     PaymentConfirmationResult confirm(DomesticPaymentRequest request);
 
     record DomesticPaymentRequest(
+            String profileId,
             String payeeIdIndex,
             String payeeName,
             Double amount,

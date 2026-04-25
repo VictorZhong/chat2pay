@@ -33,6 +33,7 @@ import com.chat2pay.app.integration.llm.LlmProvider;
 import com.chat2pay.app.integration.llm.LlmRouter;
 import com.chat2pay.app.persistence.repository.PayeeStore;
 import com.chat2pay.app.persistence.repository.PayeeStore.RegisteredPayee;
+import com.chat2pay.app.persistence.repository.ProfileStore;
 import com.chat2pay.app.persistence.repository.SessionStore;
 import com.chat2pay.app.persistence.repository.SessionStore.SessionRecord;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -80,6 +81,7 @@ public class ChatOrchestratorService {
     private final DomesticPaymentClient domesticPayments;
     private final LlmRouter llmRouter;
     private final Chat2PayProperties properties;
+    private final ProfileStore profiles;
     private final ObjectMapper mapper;
 
     public ChatOrchestratorService(SessionStore sessions,
@@ -88,6 +90,7 @@ public class ChatOrchestratorService {
                                    DomesticPaymentClient domesticPayments,
                                    LlmRouter llmRouter,
                                    Chat2PayProperties properties,
+                                   ProfileStore profiles,
                                    ObjectMapper mapper) {
         this.sessions = sessions;
         this.payees = payees;
@@ -95,6 +98,7 @@ public class ChatOrchestratorService {
         this.domesticPayments = domesticPayments;
         this.llmRouter = llmRouter;
         this.properties = properties;
+        this.profiles = profiles;
         this.mapper = mapper;
     }
 
@@ -151,7 +155,7 @@ public class ChatOrchestratorService {
 
     private ChatMessage handleTextTurnDeterministic(SessionRecord record, String text) {
         ConversationState state = record.session().state();
-        IntentAnalysis intent = intentInterpreter.analyze(record.session(), text);
+        IntentAnalysis intent = intentInterpreter.analyze(record.session(), text, record.profileId());
 
         if (state == ConversationState.AWAITING_CONFIRMATION) {
             if (intent.intent() == IntentType.CONFIRM_PAYMENT) return executePayment(record);
@@ -408,7 +412,9 @@ public class ChatOrchestratorService {
     }
 
     private PayeeLookupView buildPayeeLookupView(SessionRecord record, String query) {
-        List<RegisteredPayee> matches = query != null ? payees.findByQuery(query) : payees.all();
+        List<RegisteredPayee> matches = query != null
+                ? payees.findByQuery(record.profileId(), query)
+                : payees.all(record.profileId());
 
         transition(record, ConversationState.IDLE, ChatSessionStatus.ACTIVE);
         if (query != null) setTitle(record, "Find " + titleCase(query));
@@ -459,7 +465,7 @@ public class ChatOrchestratorService {
 
         if (draft.payeeQueryText() == null) return askForMissingDetails(record, draft);
 
-        List<RegisteredPayee> matches = payees.findByQuery(draft.payeeQueryText());
+        List<RegisteredPayee> matches = payees.findByQuery(record.profileId(), draft.payeeQueryText());
         if (matches.isEmpty()) {
             transition(record, ConversationState.COLLECTING_DETAILS, ChatSessionStatus.ACTIVE);
             titleFromDraft(record, draft);
@@ -511,7 +517,7 @@ public class ChatOrchestratorService {
             return assistantMessage(record.session().sessionId(), List.of(
                     errorBlock("Invalid selection", "No item was selected.")));
         }
-        var payee = payees.findById(selectedId).orElse(null);
+        var payee = payees.findById(record.profileId(), selectedId).orElse(null);
         PaymentDraft draft = record.session().activeDraft();
         if (payee == null || draft == null) {
             return assistantMessage(record.session().sessionId(), List.of(
@@ -632,6 +638,7 @@ public class ChatOrchestratorService {
         PaymentConfirmationResult result;
         try {
             result = domesticPayments.confirm(new DomesticPaymentRequest(
+                    record.profileId(),
                     draft.selectedPayee().payeeId(),
                     draft.selectedPayee().name(),
                     draft.amount(),
@@ -831,13 +838,17 @@ public class ChatOrchestratorService {
         }
     }
 
+    private String profileCurrency(String profileId) {
+        return profiles.runtimeProfile(profileId).paymentCurrencyOrDefault(properties.defaultCurrencyOrHkd());
+    }
+
     private PaymentDraft ensureDraft(SessionRecord record) {
         PaymentDraft existing = record.session().activeDraft();
         if (existing != null) return existing;
         PaymentDraft draft = new PaymentDraft(
                 "draft_" + UUID.randomUUID().toString().replace("-", "").substring(0, 10),
                 record.session().sessionId(), PaymentType.DOMESTIC_PAYMENT, PaymentDraftStatus.DRAFT,
-                null, null, null, DEFAULT_CURRENCY, null, null, null, null, Instant.now()
+                null, null, null, profileCurrency(record.profileId()), null, null, null, null, Instant.now()
         );
         record.setSession(withDraft(record.session(), draft));
         return draft;

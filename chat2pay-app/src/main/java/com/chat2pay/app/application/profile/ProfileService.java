@@ -30,8 +30,8 @@ public class ProfileService {
     public CurrentUserContext login(ProfileLoginRequest request) {
         ProfileSummary profile = profileStore.findById(request.profileId())
                 .orElseThrow(() -> new NoSuchElementException("Profile not found: " + request.profileId()));
-        if (!ProfileStore.SHARED_PASSWORD.equals(request.password())) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid shared password");
+        if (!profileStore.passwordMatches(request.profileId(), request.password())) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid profile password");
         }
         return new CurrentUserContext(
                 profile.id(),

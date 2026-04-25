@@ -4,6 +4,8 @@ import com.chat2pay.app.config.Chat2PayProperties;
 import com.chat2pay.app.integration.downstream.auth.DownstreamAuthService;
 import com.chat2pay.app.integration.downstream.payee.RegisteredPayeeClient;
 import com.chat2pay.app.integration.downstream.payee.RegisteredPayeeClient.DownstreamPayee;
+import com.chat2pay.app.persistence.repository.ProfileStore;
+import com.chat2pay.app.persistence.repository.ProfileStore.RuntimeProfile;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.ResponseEntity;
@@ -32,16 +34,19 @@ public class HttpDomesticPaymentClient implements DomesticPaymentClient {
     private final Chat2PayProperties properties;
     private final DownstreamAuthService auth;
     private final RegisteredPayeeClient payees;
+    private final ProfileStore profiles;
     private final ObjectMapper mapper;
     private final RestClient http;
 
     public HttpDomesticPaymentClient(Chat2PayProperties properties,
                                      DownstreamAuthService auth,
                                      RegisteredPayeeClient payees,
+                                     ProfileStore profiles,
                                      ObjectMapper mapper) {
         this.properties = properties;
         this.auth = auth;
         this.payees = payees;
+        this.profiles = profiles;
         this.mapper = mapper;
         this.http = RestClient.builder()
                 .requestFactory(requestFactory(properties.downstreamRequestTimeoutMs()))
@@ -58,18 +63,19 @@ public class HttpDomesticPaymentClient implements DomesticPaymentClient {
                     true,
                     reference,
                     200,
-                    Map.of("mock", true, "payeeIdIndex", request.payeeIdIndex()),
+                    Map.of("mock", true, "profileId", request.profileId(), "payeeIdIndex", request.payeeIdIndex()),
                     "Mock domestic payment confirmed for " + request.payeeName() + "."
             );
         }
 
-        DownstreamPayee payee = payees.findByPayeeIdIndex(request.payeeIdIndex())
+        RuntimeProfile profile = profiles.runtimeProfile(request.profileId());
+        DownstreamPayee payee = payees.findByPayeeIdIndex(request.profileId(), request.payeeIdIndex())
                 .orElseThrow(() -> new IllegalArgumentException("payee_id_index is not recognized."));
-        String samlToken = auth.login();
-        Map<String, Object> payload = buildPayload(request, payee);
+        String samlToken = auth.login(request.profileId());
+        Map<String, Object> payload = buildPayload(request, payee, profile);
         ResponseEntity<String> response = http.post()
                 .uri(confirmUrl())
-                .headers(h -> h.addAll(auth.authenticatedHeaders(samlToken)))
+                .headers(h -> h.addAll(auth.authenticatedHeaders(request.profileId(), samlToken)))
                 .body(payload)
                 .retrieve()
                 .toEntity(String.class);
@@ -84,26 +90,23 @@ public class HttpDomesticPaymentClient implements DomesticPaymentClient {
                 response.getStatusCode().value(),
                 responseBody,
                 "Payment confirmed for " + firstNonBlank(request.payeeName(), payee.name())
-                        + " (" + request.amount() + " " + properties.downstreamCurrency() + ")."
+                        + " (" + request.amount() + " "
+                        + profile.paymentCurrencyOrDefault(properties.defaultCurrencyOrHkd()) + ")."
         );
     }
 
-    private Map<String, Object> buildPayload(DomesticPaymentRequest request, DownstreamPayee payee) {
-        Chat2PayProperties.DownstreamProperties downstream = properties.downstream();
-        String accountNumber = downstream == null ? null : downstream.debitAccountNumber();
-        if (accountNumber == null || accountNumber.isBlank()) {
-            throw new IllegalStateException("PAYMENT_DEBIT_ACCOUNT_NUMBER is required for real payment confirmation.");
-        }
+    private Map<String, Object> buildPayload(DomesticPaymentRequest request,
+                                             DownstreamPayee payee,
+                                             RuntimeProfile profile) {
+        String currency = profile.paymentCurrencyOrDefault(properties.defaultCurrencyOrHkd());
 
         Map<String, Object> debitAccountIdentifier = Map.of(
-                "accountNumber", accountNumber,
-                "productCategoryCode", firstNonBlank(
-                        downstream == null ? null : downstream.debitProductCategoryCode(),
-                        "CUR")
+                "accountNumber", profile.requiredDebitAccountNumber(),
+                "productCategoryCode", profile.debitProductCategoryCodeOrDefault()
         );
         Map<String, Object> debitAccount = Map.of(
                 "debitAccountIdentifier", debitAccountIdentifier,
-                "currency", properties.downstreamCurrency()
+                "currency", currency
         );
         LocalDate scheduleDate = request.paymentDate() == null ? LocalDate.now() : request.paymentDate();
         BigDecimal amount = BigDecimal.valueOf(request.amount()).setScale(2, RoundingMode.HALF_UP);
@@ -112,7 +115,7 @@ public class HttpDomesticPaymentClient implements DomesticPaymentClient {
         payload.put("debitAccount", debitAccount);
         payload.put("transactionAmount", Map.of(
                 "amount", amount,
-                "currencyCode", properties.downstreamCurrency()
+                "currencyCode", currency
         ));
         payload.put("transactionSchedule", Map.of(
                 "scheduleType", "NOW",
@@ -122,7 +125,7 @@ public class HttpDomesticPaymentClient implements DomesticPaymentClient {
         payload.put("payeeType", payee.payeeType());
         payload.put("pyeeIdIndex", payee.payeeIdIndex());
         payload.put("payeeSuspiciousIndicator", false);
-        payload.put("creditAmount", Map.of("currencyCode", properties.downstreamCurrency()));
+        payload.put("creditAmount", Map.of("currencyCode", currency));
         return payload;
     }
 
@@ -166,6 +169,9 @@ public class HttpDomesticPaymentClient implements DomesticPaymentClient {
 
     private static void validate(DomesticPaymentRequest request) {
         if (request == null) throw new IllegalArgumentException("Domestic payment request is required.");
+        if (request.profileId() == null || request.profileId().isBlank()) {
+            throw new IllegalArgumentException("profile_id is required.");
+        }
         if (request.payeeIdIndex() == null || request.payeeIdIndex().isBlank()) {
             throw new IllegalArgumentException("payee_id_index is required.");
         }

@@ -80,7 +80,7 @@ describe('mockServer domestic payment flow', () => {
     expect(turn.assistantMessage.contentBlocks?.some((block) => block.type === 'SUMMARY_CARD')).toBe(true);
   });
 
-  it('rejects profile login when the shared password is incorrect', async () => {
+  it('rejects profile login when the profile password is incorrect', async () => {
     await expect(
       profileLogin({
         profileId: 'profile_victor',

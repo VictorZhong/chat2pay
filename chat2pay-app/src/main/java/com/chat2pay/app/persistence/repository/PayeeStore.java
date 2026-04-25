@@ -31,28 +31,28 @@ public class PayeeStore {
         this.properties = properties;
     }
 
-    public List<RegisteredPayee> all() {
+    public List<RegisteredPayee> all(String profileId) {
         if (!properties.downstreamMockEnabled()) {
-            return downstreamPayees.loadPayees().stream()
+            return downstreamPayees.loadPayees(profileId).stream()
                     .map(this::map)
                     .toList();
         }
-        return payees.findAllByOrderByNameAscAccountNumberAsc().stream()
+        return payees.findByProfileIdOrderByNameAscAccountNumberAsc(profileId).stream()
                 .map(this::map)
                 .toList();
     }
 
-    public Optional<RegisteredPayee> findById(String payeeId) {
+    public Optional<RegisteredPayee> findById(String profileId, String payeeId) {
         if (!properties.downstreamMockEnabled()) {
-            return downstreamPayees.findByPayeeIdIndex(payeeId).map(this::map);
+            return downstreamPayees.findByPayeeIdIndex(profileId, payeeId).map(this::map);
         }
-        return payees.findById(payeeId).map(this::map);
+        return payees.findByProfileIdAndId(profileId, payeeId).map(this::map);
     }
 
-    public List<RegisteredPayee> findByQuery(String query) {
+    public List<RegisteredPayee> findByQuery(String profileId, String query) {
         if (query == null || query.isBlank()) return List.of();
         String normalized = query.toLowerCase(Locale.ROOT).trim();
-        return all().stream()
+        return all(profileId).stream()
                 .filter(p -> p.summary().name().toLowerCase(Locale.ROOT).contains(normalized)
                         || p.aliases().stream().anyMatch(a -> {
                             String alias = a.toLowerCase(Locale.ROOT);
@@ -61,20 +61,20 @@ public class PayeeStore {
                 .toList();
     }
 
-    public String findAliasInText(String text) {
+    public String findAliasInText(String profileId, String text) {
         if (text == null) return null;
         if (!properties.downstreamMockEnabled()) return null;
         String normalized = text.toLowerCase(Locale.ROOT);
-        return knownAliases().stream()
+        return knownAliases(profileId).stream()
                 .sorted((a, b) -> b.length() - a.length())
                 .filter(normalized::contains)
                 .findFirst()
                 .orElse(null);
     }
 
-    public List<String> knownAliases() {
+    public List<String> knownAliases(String profileId) {
         if (!properties.downstreamMockEnabled()) return List.of();
-        return all().stream()
+        return all(profileId).stream()
                 .flatMap(p -> p.aliases().stream())
                 .map(a -> a.toLowerCase(Locale.ROOT))
                 .distinct()

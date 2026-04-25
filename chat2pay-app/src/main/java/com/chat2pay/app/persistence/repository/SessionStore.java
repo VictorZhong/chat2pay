@@ -53,18 +53,22 @@ public class SessionStore {
     }
 
     public class SessionRecord {
+        private final String profileId;
         private ChatSessionDetail snapshot;
         private final WriteThroughMessages writeThroughMessages;
 
-        SessionRecord(ChatSessionDetail snapshot, List<ChatMessage> seed) {
+        SessionRecord(String profileId, ChatSessionDetail snapshot, List<ChatMessage> seed) {
+            this.profileId = profileId;
             this.snapshot = snapshot;
-            this.writeThroughMessages = new WriteThroughMessages(snapshot.sessionId(), seed);
+            this.writeThroughMessages = new WriteThroughMessages(profileId, snapshot.sessionId(), seed);
         }
+
+        public String profileId() { return profileId; }
 
         public ChatSessionDetail session() { return snapshot; }
 
         public void setSession(ChatSessionDetail updated) {
-            persistSessionAndDraft(updated);
+            persistSessionAndDraft(profileId, updated);
             this.snapshot = updated;
         }
 
@@ -72,10 +76,12 @@ public class SessionStore {
     }
 
     private class WriteThroughMessages extends AbstractList<ChatMessage> {
+        private final String profileId;
         private final String sessionId;
         private final List<ChatMessage> cache;
 
-        WriteThroughMessages(String sessionId, List<ChatMessage> seed) {
+        WriteThroughMessages(String profileId, String sessionId, List<ChatMessage> seed) {
+            this.profileId = profileId;
             this.sessionId = sessionId;
             this.cache = new ArrayList<>(seed);
         }
@@ -87,7 +93,7 @@ public class SessionStore {
         @Override
         public boolean add(ChatMessage message) {
             int sequenceNo = cache.size() + 1;
-            insertMessage(sessionId, sequenceNo, message);
+            insertMessage(profileId, sessionId, sequenceNo, message);
             return cache.add(message);
         }
     }
@@ -122,7 +128,7 @@ public class SessionStore {
         List<ChatMessage> seed = messages.findBySessionIdOrderBySequenceNoAsc(sessionId).stream()
                 .map(this::mapMessage)
                 .toList();
-        return new SessionRecord(mapSession(entity, draft), seed);
+        return new SessionRecord(profileId, mapSession(entity, draft), seed);
     }
 
     public List<ChatSessionDetail> listByProfile(String profileId) {
@@ -131,11 +137,11 @@ public class SessionStore {
                 .toList();
     }
 
-    private void persistSessionAndDraft(ChatSessionDetail detail) {
+    private void persistSessionAndDraft(String profileId, ChatSessionDetail detail) {
         transactions.executeWithoutResult(status -> {
             Instant now = Instant.now();
             PaymentDraft draft = detail.activeDraft();
-            if (draft != null) saveDraft(draft, detail.sessionId(), now);
+            if (draft != null) saveDraft(profileId, draft, detail.sessionId(), now);
 
             ChatSessionEntity entity = sessions.findById(detail.sessionId())
                     .orElseThrow(() -> new NoSuchElementException("Session no longer exists: " + detail.sessionId()));
@@ -149,10 +155,11 @@ public class SessionStore {
         });
     }
 
-    private void insertMessage(String sessionId, int sequenceNo, ChatMessage message) {
+    private void insertMessage(String profileId, String sessionId, int sequenceNo, ChatMessage message) {
         transactions.executeWithoutResult(status -> {
             ChatMessageEntity entity = new ChatMessageEntity();
             entity.setId(message.messageId());
+            entity.setProfileId(profileId);
             entity.setSessionId(sessionId);
             entity.setSequenceNo(sequenceNo);
             entity.setRole(message.role());
@@ -172,7 +179,7 @@ public class SessionStore {
         });
     }
 
-    private void saveDraft(PaymentDraft d, String sessionId, Instant now) {
+    private void saveDraft(String profileId, PaymentDraft d, String sessionId, Instant now) {
         PaymentDraftEntity entity = drafts.findById(d.draftId()).orElseGet(() -> {
             PaymentDraftEntity created = new PaymentDraftEntity();
             created.setId(d.draftId());
@@ -181,6 +188,7 @@ public class SessionStore {
         });
 
         PayeeSummary p = d.selectedPayee();
+        entity.setProfileId(profileId);
         entity.setSessionId(sessionId);
         entity.setPaymentType(d.paymentType());
         entity.setStatus(d.status());

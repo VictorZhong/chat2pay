@@ -32,6 +32,9 @@ public class PaymentDraftEntity {
     @Column(name = "session_id", length = 64, nullable = false, unique = true)
     private String sessionId;
 
+    @Column(name = "profile_id", length = 64, nullable = false)
+    private String profileId;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "payment_type", length = 32, nullable = false)
     private PaymentType paymentType;

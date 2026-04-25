@@ -1,6 +1,8 @@
 package com.chat2pay.app.integration.downstream.auth;
 
 import com.chat2pay.app.config.Chat2PayProperties;
+import com.chat2pay.app.persistence.repository.ProfileStore;
+import com.chat2pay.app.persistence.repository.ProfileStore.RuntimeProfile;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
@@ -20,28 +22,26 @@ public class PaymentDownstreamAuthService implements DownstreamAuthService {
             "https://testdataservices.apps.cf.wgdc-dn-03.cloud.uk.zzzz/dsp/entity/HK/{}/SAML3/30";
 
     private final Chat2PayProperties properties;
+    private final ProfileStore profiles;
     private final RestClient http;
 
-    public PaymentDownstreamAuthService(Chat2PayProperties properties) {
+    public PaymentDownstreamAuthService(Chat2PayProperties properties, ProfileStore profiles) {
         this.properties = properties;
+        this.profiles = profiles;
         this.http = RestClient.builder()
                 .requestFactory(requestFactory(properties.downstreamRequestTimeoutMs()))
                 .build();
     }
 
     @Override
-    public String login() {
+    public String login(String profileId) {
         if (properties.downstreamMockEnabled()) return "mock-saml-token";
+        RuntimeProfile profile = profiles.runtimeProfile(profileId);
 
-        String password = value(downstream().loginPassword(), null);
-        if (password == null) {
-            throw new IllegalStateException("PAYMENT_LOGIN_PASSWORD is required for downstream payment login.");
-        }
-
-        String url = resolveLoginUrl();
+        String url = resolveLoginUrl(profile.requiredUsername());
         String body = http.get()
                 .uri(UriComponentsBuilder.fromUriString(url)
-                        .queryParam("password", password)
+                        .queryParam("password", profile.requiredPassword())
                         .build()
                         .encode()
                         .toUri())
@@ -54,7 +54,8 @@ public class PaymentDownstreamAuthService implements DownstreamAuthService {
     }
 
     @Override
-    public HttpHeaders authenticatedHeaders(String samlToken) {
+    public HttpHeaders authenticatedHeaders(String profileId, String samlToken) {
+        RuntimeProfile profile = profiles.runtimeProfile(profileId);
         HttpHeaders headers = new HttpHeaders();
         headers.set(HttpHeaders.ACCEPT, "*/*");
         headers.set(HttpHeaders.ACCEPT_LANGUAGE, "en-HK");
@@ -66,7 +67,8 @@ public class PaymentDownstreamAuthService implements DownstreamAuthService {
         headers.set("X-zzzz-Request-Correlation-Id", UUID.randomUUID().toString());
         headers.set("X-zzzz-Session-Correlation-Id", UUID.randomUUID().toString());
         headers.set("X-zzzz-Saml3", samlToken);
-        headers.set("X-zzzz-Source-System-Id", value(downstream().sourceSystemId(), "11114418_O88"));
+        headers.set("X-zzzz-Source-System-Id",
+                profile.sourceSystemIdOrDefault(value(downstream().sourceSystemId(), "11114418_O88")));
         headers.set("X-zzzz-Src-Device-Id", value(downstream().deviceId(), "192.168.1.1, 192.168.1.2"));
         headers.set("X-zzzz-Src-UserAgent", value(downstream().userAgent(),
                 "Mozilla/5.0 (iPad; U; CPU OS 3_2_1 like Mac OS X; en-us) "
@@ -74,17 +76,16 @@ public class PaymentDownstreamAuthService implements DownstreamAuthService {
         return headers;
     }
 
-    private String resolveLoginUrl() {
+    private String resolveLoginUrl(String username) {
         String template = value(downstream().loginUrlTemplate(), DEFAULT_LOGIN_URL);
-        String username = value(downstream().loginUsername(), "");
         String encoded = UriUtils.encodePathSegment(username, StandardCharsets.UTF_8);
         return template.replace("{}", encoded).replace("{username}", encoded);
     }
 
     private Chat2PayProperties.DownstreamProperties downstream() {
         return properties.downstream() == null
-                ? new Chat2PayProperties.DownstreamProperties(null, null, null, null, null, null,
-                        null, null, null, null, null, null, null, null, null, null, null, null)
+                ? new Chat2PayProperties.DownstreamProperties(null, null, null, null,
+                        null, null, null, null, null, null, null, null, null)
                 : properties.downstream();
     }
 

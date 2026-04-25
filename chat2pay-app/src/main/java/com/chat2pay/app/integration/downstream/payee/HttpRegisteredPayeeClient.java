@@ -12,6 +12,7 @@ import org.springframework.web.client.RestClient;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -26,8 +27,7 @@ public class HttpRegisteredPayeeClient implements RegisteredPayeeClient {
     private final ObjectMapper mapper;
     private final RestClient http;
 
-    private volatile List<DownstreamPayee> cachedPayees = List.of();
-    private volatile Instant cachedAt = Instant.EPOCH;
+    private final Map<String, CachedPayees> cachedPayeesByProfile = new HashMap<>();
 
     public HttpRegisteredPayeeClient(Chat2PayProperties properties,
                                      DownstreamAuthService auth,
@@ -41,26 +41,32 @@ public class HttpRegisteredPayeeClient implements RegisteredPayeeClient {
     }
 
     @Override
-    public List<DownstreamPayee> loadPayees() {
+    public List<DownstreamPayee> loadPayees(String profileId) {
         if (properties.downstreamMockEnabled()) return List.of();
-        if (isCacheValid()) return cachedPayees;
+        synchronized (cachedPayeesByProfile) {
+            CachedPayees cached = cachedPayeesByProfile.get(profileId);
+            if (cached != null && isCacheValid(cached)) return cached.payees();
+        }
 
-        String samlToken = auth.login();
+        String samlToken = auth.login(profileId);
         JsonNode body = http.get()
                 .uri(payeeUrl())
-                .headers(h -> h.addAll(auth.authenticatedHeaders(samlToken)))
+                .headers(h -> h.addAll(auth.authenticatedHeaders(profileId, samlToken)))
                 .retrieve()
                 .body(JsonNode.class);
         List<DownstreamPayee> parsed = parsePayees(body);
-        cachedPayees = parsed;
-        cachedAt = Instant.now();
+        synchronized (cachedPayeesByProfile) {
+            cachedPayeesByProfile.put(profileId, new CachedPayees(parsed, Instant.now()));
+        }
         return parsed;
     }
 
-    private boolean isCacheValid() {
-        return !cachedPayees.isEmpty()
-                && cachedAt.plusSeconds(properties.downstreamPayeeCacheTtlSeconds()).isAfter(Instant.now());
+    private boolean isCacheValid(CachedPayees cached) {
+        return !cached.payees().isEmpty()
+                && cached.cachedAt().plusSeconds(properties.downstreamPayeeCacheTtlSeconds()).isAfter(Instant.now());
     }
+
+    private record CachedPayees(List<DownstreamPayee> payees, Instant cachedAt) {}
 
     private String payeeUrl() {
         Chat2PayProperties.DownstreamProperties downstream = properties.downstream();

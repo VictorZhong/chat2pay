@@ -914,6 +914,8 @@ function defaultProfiles(): ProfileSummary[] {
   return [
     {
       id: 'profile_victor',
+      guid: 'mock-profile-victor-guid',
+      permNetId: '11114418_O88',
       code: 'HK_STAFF_001',
       username: 'payment10',
       displayName: 'Victor Zhong',
@@ -924,6 +926,8 @@ function defaultProfiles(): ProfileSummary[] {
     },
     {
       id: 'profile_iris',
+      guid: 'mock-profile-iris-guid',
+      permNetId: '11114418_O89',
       code: 'HK_OPS_014',
       username: 'payment14',
       displayName: 'Iris Leung',
@@ -934,6 +938,8 @@ function defaultProfiles(): ProfileSummary[] {
     },
     {
       id: 'profile_marcus',
+      guid: 'mock-profile-marcus-guid',
+      permNetId: '11114418_O90',
       code: 'HK_FIN_021',
       username: 'payment21',
       displayName: 'Marcus Ng',

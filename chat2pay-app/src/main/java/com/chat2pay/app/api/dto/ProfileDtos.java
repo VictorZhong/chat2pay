@@ -11,6 +11,8 @@ public final class ProfileDtos {
 
     public record ProfileSummary(
             String id,
+            String guid,
+            String permNetId,
             String code,
             String username,
             String displayName,

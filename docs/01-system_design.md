@@ -296,12 +296,16 @@ Example:
 
 Every real downstream business call uses the same sequence:
 
-1. read the configured `PAYMENT_LOGIN_USERNAME` and `PAYMENT_LOGIN_PASSWORD`
-2. call `PAYMENT_LOGIN_URL`
-4. get the SAML token
-5. call the target business API with the required header
+1. load the active profile runtime config from `ctp_profile`
+2. use the profile `username` and plaintext POC `password` to call the configured `PAYMENT_LOGIN_URL`
+3. get the SAML3 token
+4. call the target business API with the required header
 
-This auth sequence belongs in a shared backend service, not inside each tool.
+The login URL and stable downstream endpoints stay in yaml. Profile-specific
+values such as login username/password, debit account number, debit product
+category, and payment currency live on `ctp_profile` and are cached by the
+backend for one day. This auth sequence belongs in a shared backend service,
+not inside each tool.
 Local POC runs may leave `PAYMENT_MOCK_ENABLED=true`; in that mode payee lookup
 uses the DB seed and domestic confirmation returns a mock reference without
 calling downstream.
@@ -414,10 +418,10 @@ sequenceDiagram
     DB-->>API: Profiles
     API-->>FE: Profile list
 
-    U->>FE: Select profile + enter shared password
+    U->>FE: Select profile + enter profile password
     FE->>API: POST /api/auth/profile-login
     API->>DB: Validate profile
-    API->>API: Validate shared password
+    API->>API: Validate profile password
     API-->>FE: Current user context
 ```
 

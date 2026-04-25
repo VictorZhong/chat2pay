@@ -16,6 +16,7 @@ import com.chat2pay.app.integration.llm.LlmCompletionResponse;
 import com.chat2pay.app.integration.llm.LlmProvider;
 import com.chat2pay.app.integration.llm.LlmRouter;
 import com.chat2pay.app.persistence.repository.PayeeStore;
+import com.chat2pay.app.persistence.repository.ProfileStore;
 import com.chat2pay.app.persistence.repository.SessionStore;
 import com.chat2pay.app.persistence.repository.SessionStore.SessionRecord;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -39,6 +40,7 @@ class ChatOrchestratorServiceTests {
     private final IntentInterpreter intentInterpreter = mock(IntentInterpreter.class);
     private final DomesticPaymentClient domesticPayments = mock(DomesticPaymentClient.class);
     private final LlmRouter llmRouter = mock(LlmRouter.class);
+    private final ProfileStore profiles = mock(ProfileStore.class);
     private final Chat2PayProperties properties = new Chat2PayProperties(
             "COPILOT_PERSONAL",
             "REMOTE_API",
@@ -97,12 +99,14 @@ class ChatOrchestratorServiceTests {
                 domesticPayments,
                 llmRouter,
                 properties,
+                profiles,
                 new ObjectMapper()
         );
     }
 
     private SessionRecord record() {
         SessionRecord record = mock(SessionRecord.class);
+        when(record.profileId()).thenReturn("profile_1");
         when(record.session()).thenReturn(session());
         when(record.messages()).thenReturn(new ArrayList<>());
         return record;

@@ -41,28 +41,47 @@ Profiles are manual in the POC. Insert at least one active profile before using 
 ```sql
 insert into ctp_profile (
   id,
+  guid,
+  perm_net_id,
   profile_code,
   username,
+  password,
   display_name,
   locale,
   supported_capabilities_json,
-  status
+  status,
+  debit_account_number,
+  debit_product_category_code,
+  payment_currency
 ) values (
   'profile_poc',
+  'profile-poc-guid',
+  '11114418_O88',
   'poc',
   'poc.user',
+  '<profile-login-password>',
   'POC User',
   'en-HK',
   '["REGISTERED_PAYEE_LOOKUP","DOMESTIC_PAYMENT"]'::jsonb,
-  'ACTIVE'
+  'ACTIVE',
+  '<profile-debit-account-number>',
+  'CUR',
+  'HKD'
 ) on conflict (id) do update set
+  guid = excluded.guid,
+  perm_net_id = excluded.perm_net_id,
+  username = excluded.username,
+  password = excluded.password,
   display_name = excluded.display_name,
   supported_capabilities_json = excluded.supported_capabilities_json,
   status = excluded.status,
+  debit_account_number = excluded.debit_account_number,
+  debit_product_category_code = excluded.debit_product_category_code,
+  payment_currency = excluded.payment_currency,
   updated_at = now();
 ```
 
-The current profile-selection login uses shared password `tb123`.
+The profile-selection login validates the selected profile's `password` column directly for the POC. The same profile `username` and `password` are used to call the test data service for the SAML3 token when real downstream mode is enabled. Runtime profile credentials/config are cached by the backend for one day.
 
 ## Personal Copilot Token
 
@@ -152,16 +171,12 @@ Real downstream mode:
 
 ```bash
 export PAYMENT_MOCK_ENABLED=false
-export PAYMENT_LOGIN_USERNAME=<sandbox-login-user>
-export PAYMENT_LOGIN_PASSWORD=<sandbox-login-password>
 export PAYMENT_LOGIN_URL='https://.../{username}/SAML3/30'
 export PAYMENT_PAYEE_URL='https://.../payees'
 export PAYMENT_CONFIRM_URL='https://.../confirm-domestic-payments'
-export PAYMENT_DEBIT_ACCOUNT_NUMBER=<debit-account-number>
-export PAYMENT_DEBIT_PRODUCT_CATEGORY_CODE=CUR
 ```
 
-Optional downstream headers and defaults are configured through `PAYMENT_CHANNEL_ID`, `PAYMENT_COUNTRY_CODE`, `PAYMENT_GROUP_MEMBER`, `PAYMENT_LOCALE`, `PAYMENT_SOURCE_SYSTEM_ID`, `PAYMENT_DEVICE_ID`, and `PAYMENT_USER_AGENT`.
+The login username/password, debit account number, product category, and payment currency are read from `ctp_profile` for the active profile. Optional downstream headers and defaults are configured through `PAYMENT_CHANNEL_ID`, `PAYMENT_COUNTRY_CODE`, `PAYMENT_GROUP_MEMBER`, `PAYMENT_LOCALE`, `PAYMENT_SOURCE_SYSTEM_ID`, `PAYMENT_DEVICE_ID`, and `PAYMENT_USER_AGENT`; `perm_net_id` is used as the source system id when present.
 
 ## Run the Backend
 

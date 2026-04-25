@@ -37,6 +37,8 @@ export type UiEventType = 'SELECT_ITEM' | 'SUBMIT_FORM' | 'CLICK_ACTION';
 
 export interface ProfileSummary {
   id: string;
+  guid: string | null;
+  permNetId: string | null;
   code: string;
   displayName: string;
   username: string;

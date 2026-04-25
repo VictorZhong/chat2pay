@@ -36,10 +36,8 @@ public record Chat2PayProperties(
                 ? 60 : downstream.payeeCacheTtlSeconds();
     }
 
-    public String downstreamCurrency() {
-        return downstream == null || downstream.currency() == null || downstream.currency().isBlank()
-                ? (defaultCurrency == null || defaultCurrency.isBlank() ? "HKD" : defaultCurrency)
-                : downstream.currency();
+    public String defaultCurrencyOrHkd() {
+        return defaultCurrency == null || defaultCurrency.isBlank() ? "HKD" : defaultCurrency;
     }
 
     public record IntentProperties(
@@ -50,14 +48,9 @@ public record Chat2PayProperties(
 
     public record DownstreamProperties(
             Boolean mockEnabled,
-            String loginUsername,
             String loginUrlTemplate,
-            String loginPassword,
             String payeeUrl,
             String confirmUrl,
-            String debitAccountNumber,
-            String debitProductCategoryCode,
-            String currency,
             Integer requestTimeoutMs,
             Integer payeeCacheTtlSeconds,
             String channelId,

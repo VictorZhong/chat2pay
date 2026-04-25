@@ -58,8 +58,8 @@ public class IntentInterpreter {
         this.payees = payees;
     }
 
-    public IntentAnalysis analyze(ChatSessionDetail session, String text) {
-        IntentAnalysis fallback = fallback(session, text);
+    public IntentAnalysis analyze(ChatSessionDetail session, String text, String profileId) {
+        IntentAnalysis fallback = fallback(session, text, profileId);
         if (!properties.useLlmIntent()) {
             return fallback.withSource("REGEX_FALLBACK");
         }
@@ -170,7 +170,7 @@ public class IntentInterpreter {
                 );
     }
 
-    private IntentAnalysis fallback(ChatSessionDetail session, String text) {
+    private IntentAnalysis fallback(ChatSessionDetail session, String text, String profileId) {
         ConversationState state = session.state();
         if (state == ConversationState.AWAITING_CONFIRMATION) {
             if (POSITIVE_CONFIRM.matcher(text).find()) return analysis(IntentType.CONFIRM_PAYMENT, null, null, null);
@@ -181,7 +181,7 @@ public class IntentInterpreter {
             return analysis(IntentType.INTERNATIONAL_PAYMENT, null, null, null);
         }
 
-        String payeeQuery = extractPayeeQuery(text);
+        String payeeQuery = extractPayeeQuery(profileId, text);
         Double amount = extractAmount(text);
         LocalDate date = extractPaymentDate(text);
         boolean hasDraft = session.activeDraft() != null;
@@ -208,8 +208,8 @@ public class IntentInterpreter {
         );
     }
 
-    private String extractPayeeQuery(String text) {
-        String alias = payees.findAliasInText(text);
+    private String extractPayeeQuery(String profileId, String text) {
+        String alias = payees.findAliasInText(profileId, text);
         if (alias != null) return alias;
         for (Pattern p : PAYEE_QUERY_PATTERNS) {
             Matcher m = p.matcher(text);

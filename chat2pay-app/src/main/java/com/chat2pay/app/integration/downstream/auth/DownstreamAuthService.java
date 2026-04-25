@@ -7,7 +7,7 @@ import org.springframework.http.HttpHeaders;
  */
 public interface DownstreamAuthService {
 
-    String login();
+    String login(String profileId);
 
-    HttpHeaders authenticatedHeaders(String samlToken);
+    HttpHeaders authenticatedHeaders(String profileId, String samlToken);
 }

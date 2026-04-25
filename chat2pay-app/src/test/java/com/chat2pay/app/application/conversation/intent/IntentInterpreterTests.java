@@ -56,9 +56,9 @@ class IntentInterpreterTests {
                 """.formatted(paymentDate)
         ));
         when(router.currentIfAvailable()).thenReturn(Optional.of(provider));
-        when(payees.findAliasInText("send 88.5 to sarah tomorrow")).thenReturn("sarah");
+        when(payees.findAliasInText("profile_1", "send 88.5 to sarah tomorrow")).thenReturn("sarah");
 
-        IntentAnalysis analysis = interpreter().analyze(session(ConversationState.IDLE), "send 88.5 to sarah tomorrow");
+        IntentAnalysis analysis = interpreter().analyze(session(ConversationState.IDLE), "send 88.5 to sarah tomorrow", "profile_1");
 
         assertThat(analysis.intent()).isEqualTo(IntentType.DOMESTIC_PAYMENT);
         assertThat(analysis.toolName()).isEqualTo("prepare_domestic_payment");
@@ -88,7 +88,7 @@ class IntentInterpreterTests {
         ));
         when(router.currentIfAvailable()).thenReturn(Optional.of(provider));
 
-        IntentAnalysis analysis = interpreter().analyze(session(ConversationState.IDLE), "send 88.5 to sarah tomorrow");
+        IntentAnalysis analysis = interpreter().analyze(session(ConversationState.IDLE), "send 88.5 to sarah tomorrow", "profile_1");
 
         assertThat(analysis.intent()).isEqualTo(IntentType.DOMESTIC_PAYMENT);
         assertThat(analysis.toolName()).isEqualTo("prepare_domestic_payment");
@@ -100,9 +100,9 @@ class IntentInterpreterTests {
     @Test
     void fallsBackToLocalParserWhenNoProviderIsAvailable() {
         when(router.currentIfAvailable()).thenReturn(Optional.empty());
-        when(payees.findAliasInText("do i have bob registered?")).thenReturn("bob");
+        when(payees.findAliasInText("profile_1", "do i have bob registered?")).thenReturn("bob");
 
-        IntentAnalysis analysis = interpreter().analyze(session(ConversationState.IDLE), "do i have bob registered?");
+        IntentAnalysis analysis = interpreter().analyze(session(ConversationState.IDLE), "do i have bob registered?", "profile_1");
 
         assertThat(analysis.intent()).isEqualTo(IntentType.PAYEE_LOOKUP);
         assertThat(analysis.toolName()).isEqualTo("get_registered_payees");

@@ -31,6 +31,9 @@ public class ChatMessageEntity {
     @Column(name = "session_id", length = 64, nullable = false)
     private String sessionId;
 
+    @Column(name = "profile_id", length = 64, nullable = false)
+    private String profileId;
+
     @Column(name = "sequence_no", nullable = false)
     private int sequenceNo;
 

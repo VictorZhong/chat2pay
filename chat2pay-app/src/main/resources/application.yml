@@ -70,14 +70,9 @@ chat2pay:
     # Keep true for local POC/test runs. Set PAYMENT_MOCK_ENABLED=false when
     # the sandbox login, payee lookup, and confirm endpoints are reachable.
     mock-enabled: ${PAYMENT_MOCK_ENABLED:true}
-    login-username: ${PAYMENT_LOGIN_USERNAME:}
     login-url-template: ${PAYMENT_LOGIN_URL:https://testdataservices.apps.cf.wgdc-dn-03.cloud.uk.zzzz/dsp/entity/HK/{}/SAML3/30}
-    login-password: ${PAYMENT_LOGIN_PASSWORD:}
     payee-url: ${PAYMENT_PAYEE_URL:https://mmf-payee-management--hk-hbap-banking-1.zzzz-dsvc-papi-hk01-hbap-cert.svc.default.shp.ape1.pre-prod.aws.cloud.zzzz/payees}
     confirm-url: ${PAYMENT_CONFIRM_URL:https://dcc-hk-hbap-mvmny-domestic-payments-papi-3.zzzz-dsvc-papi-hk01-hbap-cert.svc.default.shp.ape1.pre-prod.aws.cloud.zzzz/confirm-domestic-payments}
-    debit-account-number: ${PAYMENT_DEBIT_ACCOUNT_NUMBER:VEdTRlNCU0dTQlNHEpP3avL8TimV5LF2nbqGbba2fUVfkHsOGmwg9K1t43GQJgS5mnXu3_EvF0zwJmeFRslRn_min_CT9p_wuTR7nwoWHNdZuxAFiVO2GPQ=}
-    debit-product-category-code: ${PAYMENT_DEBIT_PRODUCT_CATEGORY_CODE:CUR}
-    currency: ${PAYMENT_CURRENCY:HKD}
     request-timeout-ms: ${PAYMENT_REQUEST_TIMEOUT_MS:30000}
     payee-cache-ttl-seconds: ${PAYEE_CACHE_TTL_SECONDS:60}
     channel-id: ${PAYMENT_CHANNEL_ID:WEB}

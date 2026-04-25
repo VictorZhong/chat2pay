@@ -25,6 +25,9 @@ public class RegisteredPayeeEntity {
     @Column(length = 64)
     private String id;
 
+    @Column(name = "profile_id", length = 64, nullable = false)
+    private String profileId;
+
     @Column(length = 160, nullable = false)
     private String name;
 

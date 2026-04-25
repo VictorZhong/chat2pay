@@ -17,7 +17,7 @@ The direction is:
 The current UI structure is already close enough and should remain:
 
 - profile selector page
-- shared password dialog
+- profile password dialog
 - left sidebar with session history
 - right chat workspace
 - branded chat message styling
@@ -71,7 +71,7 @@ Implemented in:
 Target behavior:
 
 - fetch profiles from the Java backend
-- keep the shared password gate
+- keep the profile password gate
 - allow the backend to return only one or a few demo profiles
 - treat `username` as backend-owned integration context, not a frontend concern
 
