@@ -12,3 +12,13 @@ chat2pay:
   primary-provider: COPILOT_PERSONAL
   fallback-provider: REMOTE_API
   default-currency: HKD
+  copilot:
+    # Provide one of these via env (LLM_API_KEY does the GitHub token exchange;
+    # COPILOT_SESSION_TOKEN bypasses it). Leaving both blank disables the provider —
+    # the deterministic orchestrator still serves the chat flow.
+    api-key: ${LLM_API_KEY:}
+    session-token: ${COPILOT_SESSION_TOKEN:}
+    model: ${LLM_MODEL:gpt-4o}
+    account-type: ${GITHUB_COPILOT_ACCOUNT_TYPE:individual}
+    editor-version: ${COPILOT_EDITOR_VERSION:1.114.0}
+    base-url: ${LLM_BASE_URL:}
