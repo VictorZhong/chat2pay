@@ -64,6 +64,15 @@ public class ChatOrchestratorService {
     private static final Pattern PAYMENT_RELATED = Pattern.compile(
             "\\b(pay|payment|send|transfer|payee|registered|lookup|find|show|list|confirm|cancel|swift|wire|international|overseas)\\b",
             Pattern.CASE_INSENSITIVE);
+    private static final Pattern PAYMENT_DOMAIN_TERMS = Pattern.compile(
+            "\\b(pay|payment|transfer|payee|payees|registered|domestic|swift|wire|international|overseas|confirm|cancel|hkd|amount)\\b",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern COMMON_CHAT = Pattern.compile(
+            "\\b(hi|hello|hey|good morning|good afternoon|good evening|what can you do|how can you help|help me|capabilities|what do you support)\\b",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern OBVIOUSLY_UNRELATED = Pattern.compile(
+            "\\b(weather|news|sports?|joke|story|poem|recipe|movie|music|translate|code|programming|homework|math|stock|crypto|restaurant|travel|flight|hotel|email|account balance|balance|loan|credit card|mortgage|investment|insurance)\\b",
+            Pattern.CASE_INSENSITIVE);
 
     private final SessionStore sessions;
     private final PayeeStore payees;
@@ -134,6 +143,7 @@ public class ChatOrchestratorService {
     // ---- text turn ------------------------------------------------------------
 
     private ChatMessage handleTextTurn(SessionRecord record, String text) {
+        if (isObviouslyUnrelated(text)) return outOfScopeGuidance(record);
         Optional<ChatMessage> loopResponse = handleWithLlmToolLoop(record, text);
         if (loopResponse.isPresent()) return loopResponse.get();
         return handleTextTurnDeterministic(record, text);
@@ -242,6 +252,19 @@ public class ChatOrchestratorService {
             return true;
         }
         return PAYMENT_RELATED.matcher(latestUserText).find();
+    }
+
+    private boolean isObviouslyUnrelated(String text) {
+        return OBVIOUSLY_UNRELATED.matcher(text).find()
+                && !PAYMENT_DOMAIN_TERMS.matcher(text).find()
+                && !COMMON_CHAT.matcher(text).find();
+    }
+
+    private ChatMessage outOfScopeGuidance(SessionRecord record) {
+        return assistantMessage(record.session().sessionId(), List.of(
+                infoBlock("Chat2Pay payments only",
+                        "I can help with registered domestic payees and domestic payments in this POC. Ask me to find a registered payee, or tell me who to pay, how much, and whether it should go now or later.")
+        ));
     }
 
     private List<Message> buildToolLoopMessages(SessionRecord record) {
@@ -651,9 +674,9 @@ public class ChatOrchestratorService {
         fields.add(new DisplayField("Reference", reference));
 
         return assistantMessage(record.session().sessionId(), List.of(
-                infoBlock("Payment submitted",
-                        "The domestic payment to " + draft.selectedPayee().name()
-                                + " was submitted successfully."),
+                infoBlock("✅ Payment submitted",
+                        "Your domestic payment to " + draft.selectedPayee().name()
+                                + " has been submitted successfully."),
                 summaryBlock("Completed payment", fields, null)
         ));
     }
