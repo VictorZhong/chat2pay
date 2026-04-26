@@ -391,6 +391,7 @@ function buildPayeeSelectionBlocks(query: string, matches: RegisteredPayee[]): C
         itemId: payee.payeeId,
         label: payee.name,
         description: `${payee.bankName} • ${payee.displayLabel}`,
+        metadata: payeeCardMetadata(payee),
       })),
       { purpose: 'payee-selection' },
     ),
@@ -470,8 +471,25 @@ function buildLookupBlocks(query: string | null, matches: RegisteredPayee[]): Co
         label: matches.length === 1 ? payee.name : `Match ${index + 1}`,
         value: `${payee.name} • ${payee.bankName} • ${payee.displayLabel}`,
       })),
+      {
+        purpose: 'registered-payee-results',
+        payeeCount: matches.length,
+        payees: matches.map(payeeCardMetadata),
+      },
     ),
   ];
+}
+
+function payeeCardMetadata(payee: PayeeSummary): Record<string, string> {
+  return {
+    payeeId: payee.payeeId,
+    name: payee.name,
+    payeeType: payee.payeeType ?? '',
+    bankCode: payee.bankCode ?? '',
+    bankName: payee.bankName ?? '',
+    accountNumber: payee.accountNumber ?? '',
+    displayLabel: payee.displayLabel ?? '',
+  };
 }
 
 function extractAmount(text: string) {

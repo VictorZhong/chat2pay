@@ -77,6 +77,7 @@ public class DomesticPaymentJourneyService {
             result.put("match_count", view.matches().size());
             result.put("payees", view.matches().stream()
                     .map(p -> Map.of(
+                            "payee_id", p.summary().payeeId(),
                             "name", p.summary().name(),
                             "bank_code", p.summary().bankCode(),
                             "bank_name", p.summary().bankName(),
@@ -142,7 +143,7 @@ public class DomesticPaymentJourneyService {
             List<SelectableItem> items = matches.stream().map(p ->
                     new SelectableItem(p.summary().payeeId(), p.summary().name(),
                             p.summary().bankName() + " • " + p.summary().displayLabel(),
-                            null, null)).toList();
+                            null, payeeMetadata(p.summary()))).toList();
             return assistantMessage(record.session().sessionId(), List.of(
                     textBlock("Choose payee",
                             "I found more than one registered payee for \"" + draft.payeeQueryText()
@@ -420,7 +421,13 @@ public class DomesticPaymentJourneyService {
 
         return new PayeeLookupView(matches, List.of(
                 textBlock("Registered payees", headline),
-                summaryBlock(matches.size() == 1 ? "Registered payee" : "Registered payee results", fields, null)
+                summaryBlock(matches.size() == 1 ? "Registered payee" : "Registered payee results",
+                        fields,
+                        Map.of(
+                                "purpose", "registered-payee-results",
+                                "payeeCount", matches.size(),
+                                "payees", matches.stream().map(p -> payeeMetadata(p.summary())).toList()
+                        ))
         ));
     }
 
@@ -469,6 +476,22 @@ public class DomesticPaymentJourneyService {
 
     private List<DisplayField> draftFields(PaymentDraft d) {
         return blocks.draftFields(d);
+    }
+
+    private static Map<String, Object> payeeMetadata(PayeeSummary p) {
+        Map<String, Object> metadata = new HashMap<>();
+        putIfPresent(metadata, "payeeId", p.payeeId());
+        putIfPresent(metadata, "name", p.name());
+        putIfPresent(metadata, "payeeType", p.payeeType());
+        putIfPresent(metadata, "bankCode", p.bankCode());
+        putIfPresent(metadata, "bankName", p.bankName());
+        putIfPresent(metadata, "accountNumber", p.accountNumber());
+        putIfPresent(metadata, "displayLabel", p.displayLabel());
+        return metadata;
+    }
+
+    private static void putIfPresent(Map<String, Object> target, String key, String value) {
+        if (value != null && !value.isBlank()) target.put(key, value);
     }
 
     private ChatMessage assistantMessage(String sessionId, List<ContentBlock> contentBlocks) {

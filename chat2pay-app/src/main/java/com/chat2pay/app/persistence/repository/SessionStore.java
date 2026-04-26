@@ -101,7 +101,7 @@ public class SessionStore {
             ensureProfileExists(profileId);
             String id = "session_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
             Instant now = Instant.now();
-            String resolvedTitle = (title == null || title.isBlank()) ? "New conversation" : title;
+            String resolvedTitle = normalizeTitle(title);
 
             ChatSessionEntity entity = new ChatSessionEntity();
             entity.setId(id);
@@ -372,5 +372,10 @@ public class SessionStore {
         }
         if (text == null) return null;
         return text.length() > 160 ? text.substring(0, 160) : text;
+    }
+
+    private static String normalizeTitle(String title) {
+        String resolved = (title == null || title.isBlank()) ? "New conversation" : title.trim();
+        return resolved.length() > 120 ? resolved.substring(0, 120) : resolved;
     }
 }

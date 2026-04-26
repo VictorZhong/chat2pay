@@ -43,28 +43,28 @@ public class PaymentDraftEntity {
     @Column(length = 32, nullable = false)
     private PaymentDraftStatus status;
 
-    @Column(name = "payee_query_text", length = 160)
+    @Column(name = "payee_query_text", columnDefinition = "text")
     private String payeeQueryText;
 
-    @Column(name = "selected_payee_id", length = 128)
+    @Column(name = "selected_payee_id", columnDefinition = "text")
     private String selectedPayeeId;
 
-    @Column(name = "selected_payee_name", length = 160)
+    @Column(name = "selected_payee_name", columnDefinition = "text")
     private String selectedPayeeName;
 
-    @Column(name = "selected_payee_type", length = 32)
+    @Column(name = "selected_payee_type", columnDefinition = "text")
     private String selectedPayeeType;
 
-    @Column(name = "selected_bank_code", length = 32)
+    @Column(name = "selected_bank_code", columnDefinition = "text")
     private String selectedBankCode;
 
-    @Column(name = "selected_bank_name", length = 160)
+    @Column(name = "selected_bank_name", columnDefinition = "text")
     private String selectedBankName;
 
-    @Column(name = "selected_account_number", length = 64)
+    @Column(name = "selected_account_number", columnDefinition = "text")
     private String selectedAccountNumber;
 
-    @Column(name = "selected_display_label", length = 160)
+    @Column(name = "selected_display_label", columnDefinition = "text")
     private String selectedDisplayLabel;
 
     @Column(precision = 18, scale = 2)
@@ -79,7 +79,7 @@ public class PaymentDraftEntity {
     @Column(name = "user_confirmed_at")
     private Instant userConfirmedAt;
 
-    @Column(name = "downstream_reference", length = 128)
+    @Column(name = "downstream_reference", columnDefinition = "text")
     private String downstreamReference;
 
     @Column(name = "last_error_code", length = 64)

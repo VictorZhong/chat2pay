@@ -126,6 +126,44 @@ class DomesticPaymentJourneyServiceTests {
         assertThat(block.text()).contains("amount", "payment date");
     }
 
+    @Test
+    void registeredPayeeLookupCarriesCardMetadataForTheUi() {
+        SessionRecord record = recordWithDraft(draft(null, null, null), ConversationState.IDLE);
+        when(payees.all("profile_1")).thenReturn(List.of(
+                new RegisteredPayee(selectedPayee(), List.of("alice")),
+                new RegisteredPayee(payee("payee_2", "Bob Lee", "Test Bank", "Savings - 998877"), List.of("bob"))
+        ));
+
+        ChatMessage response = service().handlePayeeLookup(record, null);
+
+        ContentBlock.SummaryCardBlock block = (ContentBlock.SummaryCardBlock) response.contentBlocks().get(1);
+        assertThat(block.metadata()).containsEntry("purpose", "registered-payee-results");
+        assertThat(block.metadata()).containsEntry("payeeCount", 2);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> renderedPayees = (List<Map<String, Object>>) block.metadata().get("payees");
+        assertThat(renderedPayees).hasSize(2);
+        assertThat(renderedPayees.get(0)).containsEntry("payeeId", "payee_1");
+        assertThat(renderedPayees.get(0)).containsEntry("bankName", "Test Bank");
+    }
+
+    @Test
+    void payeeSelectionCarriesStructuredPayeeMetadata() {
+        SessionRecord record = recordWithDraft(draft(null, null, null), ConversationState.COLLECTING_DETAILS);
+        when(payees.findByQuery("profile_1", "alice")).thenReturn(List.of(
+                new RegisteredPayee(selectedPayee(), List.of("alice")),
+                new RegisteredPayee(payee("payee_2", "Alice Savings", "Second Bank", "Savings - 223344"),
+                        List.of("alice"))
+        ));
+
+        ChatMessage response = service().continueDomesticPayment(record, domesticIntent("alice", null, null));
+
+        ContentBlock.SelectableListBlock block = (ContentBlock.SelectableListBlock) response.contentBlocks().get(1);
+        assertThat(block.metadata()).containsEntry("purpose", "payee-selection");
+        assertThat(block.items()).hasSize(2);
+        assertThat(block.items().get(0).metadata()).containsEntry("payeeId", "payee_1");
+        assertThat(block.items().get(0).metadata()).containsEntry("accountNumber", "123456");
+    }
+
     private DomesticPaymentJourneyService service() {
         return new DomesticPaymentJourneyService(
                 payees,
@@ -200,6 +238,18 @@ class DomesticPaymentJourneyServiceTests {
                 "Test Bank",
                 "123456",
                 "Current - 123456"
+        );
+    }
+
+    private PayeeSummary payee(String id, String name, String bankName, String displayLabel) {
+        return new PayeeSummary(
+                id,
+                name,
+                "DOMESTIC",
+                "004",
+                bankName,
+                "998877",
+                displayLabel
         );
     }
 

@@ -116,19 +116,19 @@ erDiagram
         varchar(64) session_id FK
         varchar(32) payment_type
         varchar(32) status
-        varchar(160) payee_query_text
-        varchar(128) selected_payee_id
-        varchar(160) selected_payee_name
-        varchar(32) selected_payee_type
-        varchar(32) selected_bank_code
-        varchar(160) selected_bank_name
-        varchar(64) selected_account_number
-        varchar(160) selected_display_label
+        text payee_query_text
+        text selected_payee_id
+        text selected_payee_name
+        text selected_payee_type
+        text selected_bank_code
+        text selected_bank_name
+        text selected_account_number
+        text selected_display_label
         numeric(18,2) amount
         varchar(3) currency
         date payment_date
         timestamptz user_confirmed_at
-        varchar(128) downstream_reference
+        text downstream_reference
         varchar(64) last_error_code
         text last_error_message
         jsonb context_json
@@ -252,6 +252,8 @@ Stores the visible conversation plus important structured payloads.
 
 - assistant deltas do not need separate rows
 - persist the final assembled assistant message
+- long conversation content is stored in `text`/`jsonb`; `ctp_chat_session.title`
+  and `last_message_preview` stay bounded because they are derived display fields
 - store assistant turn duration in `metadata_json.processingMs`
 - if needed, store a short tool summary in `metadata_json`
 
@@ -268,19 +270,19 @@ Stores the current or completed domestic payment draft for a session.
 | `session_id` | `varchar(64)` | Unique FK to `ctp_chat_session.id` |
 | `payment_type` | `varchar(32)` | V1 value `DOMESTIC_PAYMENT` |
 | `status` | `varchar(32)` | `DRAFT`, `AWAITING_CONFIRMATION`, `EXECUTING`, `CONFIRMED`, `FAILED`, `CANCELLED` |
-| `payee_query_text` | `varchar(160)` | Raw or normalized user payee text |
-| `selected_payee_id` | `varchar(128)` | Opaque downstream payee identifier |
-| `selected_payee_name` | `varchar(160)` | User-facing payee name |
-| `selected_payee_type` | `varchar(32)` | Downstream payee type |
-| `selected_bank_code` | `varchar(32)` | Payee bank code |
-| `selected_bank_name` | `varchar(160)` | Payee bank name |
-| `selected_account_number` | `varchar(64)` | Display-safe account identifier |
-| `selected_display_label` | `varchar(160)` | Product/account label shown in confirmation |
+| `payee_query_text` | `text` | Raw or normalized user payee text |
+| `selected_payee_id` | `text` | Opaque downstream payee identifier; not truncated because it is used for confirmation |
+| `selected_payee_name` | `text` | User-facing payee name |
+| `selected_payee_type` | `text` | Downstream payee type |
+| `selected_bank_code` | `text` | Payee bank code |
+| `selected_bank_name` | `text` | Payee bank name |
+| `selected_account_number` | `text` | Display-safe account identifier |
+| `selected_display_label` | `text` | Product/account label shown in confirmation |
 | `amount` | `numeric(18,2)` | Payment amount |
 | `currency` | `varchar(3)` | Copied from the active profile payment currency |
 | `payment_date` | `date` | Date only, no time-of-day in V1 |
 | `user_confirmed_at` | `timestamptz` | Set when user explicitly confirms |
-| `downstream_reference` | `varchar(128)` | Confirm response reference if any |
+| `downstream_reference` | `text` | Confirm response reference if any |
 | `last_error_code` | `varchar(64)` | Downstream or internal error code |
 | `last_error_message` | `text` | Last failure message |
 | `context_json` | `jsonb` | Extra tool context and future extension fields |
