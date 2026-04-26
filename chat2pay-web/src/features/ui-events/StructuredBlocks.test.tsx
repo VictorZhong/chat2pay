@@ -127,4 +127,28 @@ describe('StructuredBlock', () => {
 
     expect(screen.getAllByText('Needed')).toHaveLength(2);
   });
+
+  it('disables summary actions without showing a loading state', () => {
+    const block: ContentBlock = {
+      blockId: 'blk_summary_3',
+      type: 'SUMMARY_CARD',
+      title: 'Domestic payment summary',
+      fields: [{ label: 'Payee', value: 'Alice Chan' }],
+      metadata: {
+        actions: [
+          { id: 'CONFIRM_PAYMENT', label: 'Confirm payment' },
+          { id: 'CANCEL_PAYMENT', label: 'Cancel', tone: 'secondary' },
+        ],
+      },
+    };
+
+    render(<StructuredBlock messageId="msg_1" block={block} onSubmit={vi.fn()} disabled />);
+
+    const confirm = screen.getByRole('button', { name: 'Confirm payment' });
+    const cancel = screen.getByRole('button', { name: 'Cancel' });
+    expect(confirm).toBeDisabled();
+    expect(cancel).toBeDisabled();
+    expect(confirm).toHaveAttribute('aria-busy', 'false');
+    expect(cancel).toHaveAttribute('aria-busy', 'false');
+  });
 });

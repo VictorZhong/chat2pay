@@ -326,7 +326,6 @@ function SimpleFormCard({
       <div className="mt-5 flex justify-end">
         <BrandButton
           disabled={disabled}
-          loading={Boolean(disabled)}
           onClick={() =>
             onSubmit({
               eventType: 'SUBMIT_FORM',
@@ -399,7 +398,6 @@ function SummaryCardView({
               key={action.id}
               variant={action.tone === 'secondary' ? 'secondary' : 'primary'}
               disabled={disabled}
-              loading={Boolean(disabled)}
               onClick={() =>
                 onSubmit({
                   eventType: 'CLICK_ACTION',
