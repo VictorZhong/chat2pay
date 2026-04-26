@@ -36,7 +36,7 @@ export function MessageRenderer({
       className={cn('brand-message-entry flex gap-4', isUser && 'justify-end')}
       style={{ animationDelay: `${Math.min(entryIndex * 40, 240)}ms` }}
     >
-      {!isUser ? <BrandAvatar name={assistantName} size="sm" /> : null}
+      {!isUser ? <BrandAvatar name={assistantName} size="sm" variant="assistant" /> : null}
       <div className={cn('max-w-[840px] flex-1 space-y-3', isUser && 'flex max-w-[720px] flex-col items-end')}>
         <div className={cn('flex items-center gap-3', isUser && 'justify-end')}>
           <p className="text-sm font-semibold text-brand-black">{isUser ? 'You' : assistantName}</p>

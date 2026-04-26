@@ -271,7 +271,7 @@ public class DomesticPaymentJourneyService {
         fields.add(new DisplayField("Reference", reference));
 
         return assistantMessage(record.session().sessionId(), List.of(
-                infoBlock("✅ Payment submitted",
+                infoBlock("Payment submitted",
                         "Your domestic payment to " + draft.selectedPayee().name()
                                 + " has been submitted successfully."),
                 summaryBlock("Completed payment", fields, null)

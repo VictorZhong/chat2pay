@@ -3,6 +3,7 @@ import { BrandButton } from '@/shared/ui/BrandButton';
 import { ChatHistoryList } from '@/features/session-history/ChatHistoryList';
 import { UserMenu } from '@/features/user-menu/UserMenu';
 import { cn } from '@/shared/lib/cn';
+import { BrandMark } from '@/shared/ui/BrandMark';
 import {
   BankIcon,
   MenuFoldIcon,
@@ -51,12 +52,15 @@ export function Sidebar({
       <div className="border-b border-brand-line px-3 py-3">
         <div className="mb-3 flex items-center justify-between gap-2">
           {!collapsed ? (
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-brand-red">chat2pay</p>
-              <h1 className="mt-0.5 text-base font-semibold text-brand-black">Payment workspace</h1>
+            <div className="flex min-w-0 items-center gap-3">
+              <BrandMark size="sm" />
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-brand-red">chat2pay</p>
+                <h1 className="mt-0.5 truncate text-base font-semibold text-brand-black">Payment workspace</h1>
+              </div>
             </div>
           ) : (
-            <div className="h-9 w-9 border border-brand-black bg-brand-red" />
+            <BrandMark size="sm" />
           )}
           <button
             className="flex h-9 w-9 items-center justify-center border border-brand-line bg-white text-sm font-semibold hover:border-brand-black"

@@ -646,7 +646,7 @@ public class ChatOrchestratorService implements PaymentToolActions {
             case CLICK_ACTION -> "CONFIRM_PAYMENT".equals(request.actionValue()) ? "Confirm payment"
                     : "CANCEL_PAYMENT".equals(request.actionValue()) ? "Cancel payment"
                     : "Clicked action";
-            case SELECT_ITEM -> "Selected " + (request.selectedItemId() != null ? request.selectedItemId() : "item");
+            case SELECT_ITEM -> "Payee chosen";
             case SUBMIT_FORM -> "Submitted details";
         };
     }

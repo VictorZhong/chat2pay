@@ -1,13 +1,20 @@
 import { cn } from '@/shared/lib/cn';
 import { initialsOf } from '@/shared/lib/format';
+import { BrandMark } from '@/shared/ui/BrandMark';
 
 export function BrandAvatar({
   name,
   size = 'md',
+  variant = 'user',
 }: {
   name: string;
   size?: 'sm' | 'md' | 'lg';
+  variant?: 'user' | 'assistant';
 }) {
+  if (variant === 'assistant') {
+    return <BrandMark size={size} className="bg-white" />;
+  }
+
   return (
     <div
       className={cn(

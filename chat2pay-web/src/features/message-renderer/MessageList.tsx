@@ -60,7 +60,7 @@ export function MessageList({
         ) : null}
         {showAssistantLoading ? (
           <div className="brand-message-entry flex gap-4" aria-live="polite" aria-label="Assistant response loading">
-            <BrandAvatar name={assistantName} size="sm" />
+            <BrandAvatar name={assistantName} size="sm" variant="assistant" />
             <div className="max-w-[840px] flex-1 space-y-3">
               <div className="flex items-center gap-3">
                 <p className="text-sm font-semibold text-brand-black">{assistantName}</p>

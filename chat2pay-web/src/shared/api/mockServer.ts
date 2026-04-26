@@ -1135,7 +1135,7 @@ export function submitUiEvent(profileId: string, sessionId: string, request: UiE
     const record = getRecord(profileId, sessionId);
     const userText =
       request.eventType === 'SELECT_ITEM'
-        ? `Selected ${request.selectedItemId ?? 'item'}`
+        ? 'Payee chosen'
         : request.eventType === 'CLICK_ACTION'
           ? request.actionValue === 'CONFIRM_PAYMENT'
             ? 'Confirm payment'

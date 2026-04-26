@@ -21,6 +21,7 @@ import { BrandButton } from '@/shared/ui/BrandButton';
 import { BrandLoadingPanel } from '@/shared/ui/BrandLoadingPanel';
 import { ConversationStatusPill } from '@/features/session-history/ConversationStatusPill';
 import { SessionTitleEditor } from '@/features/session-history/SessionTitleEditor';
+import { DeleteChatDialog } from '@/features/session-history/DeleteChatDialog';
 import { INTERACTION_DELAY_MS } from '@/shared/config/env';
 import { wait } from '@/shared/lib/time';
 import { createId } from '@/shared/lib/id';
@@ -62,8 +63,7 @@ function derivePendingUiEventText(messages: ChatMessage[], payload: UiEventReque
   }
 
   if (sourceBlock?.type === 'SELECTABLE_LIST') {
-    const item = sourceBlock.items.find((entry) => entry.itemId === selectedId);
-    return item ? `Selected ${item.label}` : 'Selected an option';
+    return 'Payee chosen';
   }
 
   return 'Submitted action';
@@ -159,6 +159,7 @@ export function ChatWorkspacePage() {
   const collapsed = useSidebarStore((state) => state.collapsed);
   const setCollapsed = useSidebarStore((state) => state.setCollapsed);
   const [textInputOverrideKey, setTextInputOverrideKey] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ChatSessionSummary | null>(null);
 
   const sessionsQuery = useQuery({
     queryKey: queryKeys.sessions(currentUser.profileId),
@@ -223,6 +224,7 @@ export function ChatWorkspacePage() {
       if (sessionId === deletedSessionId) {
         navigate('/chat');
       }
+      setDeleteTarget(null);
     },
   });
 
@@ -390,13 +392,7 @@ export function ChatWorkspacePage() {
         onToggleCollapsed={() => setCollapsed(!collapsed)}
         onNewChat={() => createSessionMutation.mutate()}
         onSelectSession={(selectedSessionId) => navigate(`/chat/${selectedSessionId}`)}
-        onDeleteSession={(target: ChatSessionSummary) => {
-          if (typeof window !== 'undefined') {
-            const confirmed = window.confirm(`Delete chat "${target.title}"? This cannot be undone.`);
-            if (!confirmed) return;
-          }
-          deleteSessionMutation.mutate(target.sessionId);
-        }}
+        onDeleteSession={(target: ChatSessionSummary) => setDeleteTarget(target)}
         pendingDeleteSessionId={
           deleteSessionMutation.isPending ? (deleteSessionMutation.variables ?? null) : null
         }
@@ -485,6 +481,20 @@ export function ChatWorkspacePage() {
           )}
         </div>
       </section>
+      <DeleteChatDialog
+        session={deleteTarget}
+        busy={deleteSessionMutation.isPending}
+        onCancel={() => {
+          if (!deleteSessionMutation.isPending) {
+            setDeleteTarget(null);
+          }
+        }}
+        onConfirm={() => {
+          if (deleteTarget) {
+            deleteSessionMutation.mutate(deleteTarget.sessionId);
+          }
+        }}
+      />
     </main>
   );
 }
