@@ -495,6 +495,11 @@ function extractPaymentDate(text: string) {
     return todayDate();
   }
 
+  const isoDate = text.match(/\b(\d{4}-\d{2}-\d{2})\b/);
+  if (isoDate?.[1]) {
+    return isoDate[1];
+  }
+
   return null;
 }
 
@@ -697,25 +702,53 @@ function cancelPayment(record: MockSessionRecord, userMessage?: ChatMessage | nu
 }
 
 function continueDomesticPayment(record: MockSessionRecord, text: string, userMessage?: ChatMessage | null) {
+  return applyDomesticPaymentSlots(
+    record,
+    {
+      payeeQuery: extractPayeeQuery(text),
+      amount: extractAmount(text),
+      paymentDate: extractPaymentDate(text),
+    },
+    userMessage,
+  );
+}
+
+function applyDomesticPaymentSlots(
+  record: MockSessionRecord,
+  slots: { payeeQuery: string | null; amount: number | null; paymentDate: string | null },
+  userMessage?: ChatMessage | null,
+) {
   const draft = ensureDomesticDraft(record);
-  const payeeQuery = extractPayeeQuery(text);
-  const amount = extractAmount(text);
-  const paymentDate = extractPaymentDate(text);
+  const payeeChanged = isNewPayeeQuery(draft, slots.payeeQuery);
 
-  if (payeeQuery) {
-    draft.payeeQueryText = payeeQuery;
-    draft.selectedPayee = null;
+  if (slots.payeeQuery) {
+    if (payeeChanged) {
+      draft.amount = null;
+      draft.paymentDate = null;
+    }
+    draft.payeeQueryText = slots.payeeQuery;
+    if (payeeChanged) {
+      draft.selectedPayee = null;
+    }
   }
 
-  if (amount !== null) {
-    draft.amount = amount;
+  if (!payeeChanged && slots.amount !== null) {
+    draft.amount = slots.amount;
   }
 
-  if (paymentDate) {
-    draft.paymentDate = paymentDate;
+  if (!payeeChanged && slots.paymentDate) {
+    draft.paymentDate = slots.paymentDate;
   }
 
   updateDraftTimestamp(draft);
+
+  if (draft.selectedPayee) {
+    if (draft.amount === null || draft.amount === undefined || !draft.paymentDate) {
+      return askForMissingDetails(record, draft, userMessage);
+    }
+
+    return prepareConfirmation(record, draft, userMessage);
+  }
 
   if (!draft.payeeQueryText) {
     return askForMissingDetails(record, draft, userMessage);
@@ -764,6 +797,27 @@ function continueDomesticPayment(record: MockSessionRecord, text: string, userMe
   return prepareConfirmation(record, draft, userMessage);
 }
 
+function isNewPayeeQuery(draft: PaymentDraft, payeeQuery: string | null) {
+  if (!payeeQuery) {
+    return false;
+  }
+
+  const normalized = normalize(payeeQuery);
+  if (!normalized) {
+    return false;
+  }
+
+  if (!draft.payeeQueryText && !draft.selectedPayee) {
+    return false;
+  }
+
+  if (normalize(draft.payeeQueryText ?? '') === normalized) {
+    return false;
+  }
+
+  return !draft.selectedPayee || normalize(draft.selectedPayee.name) !== normalized;
+}
+
 function handlePayeeLookup(record: MockSessionRecord, text: string, userMessage?: ChatMessage | null) {
   const query = extractPayeeQuery(text);
   const matches = query ? matchPayees(query) : REGISTERED_PAYEES;
@@ -782,6 +836,11 @@ function handlePayeeLookup(record: MockSessionRecord, text: string, userMessage?
 function handleTextTurn(record: MockSessionRecord, text: string, userMessage?: ChatMessage | null) {
   const trimmedText = text.trim();
   const currentState = record.session.state;
+  const hasDraftDetails =
+    Boolean(record.session.activeDraft) &&
+    (extractPayeeQuery(trimmedText) !== null ||
+      extractAmount(trimmedText) !== null ||
+      extractPaymentDate(trimmedText) !== null);
 
   if (currentState === 'AWAITING_CONFIRMATION') {
     if (isPositiveConfirmation(trimmedText)) {
@@ -793,7 +852,13 @@ function handleTextTurn(record: MockSessionRecord, text: string, userMessage?: C
     }
   }
 
-  if (currentState === 'AWAITING_PAYEE_SELECTION' && record.session.activeDraft) {
+  if (
+    currentState === 'AWAITING_PAYEE_SELECTION' &&
+    record.session.activeDraft &&
+    !isPaymentIntent(trimmedText) &&
+    !isPayeeLookupIntent(trimmedText) &&
+    !hasDraftDetails
+  ) {
     return respond(
       record,
       buildAssistantMessage(record.session.sessionId, [
@@ -812,7 +877,7 @@ function handleTextTurn(record: MockSessionRecord, text: string, userMessage?: C
     return respond(record, buildAssistantMessage(record.session.sessionId, buildUnsupportedBlocks()), userMessage);
   }
 
-  if (isPaymentIntent(trimmedText)) {
+  if (isPaymentIntent(trimmedText) || hasDraftDetails) {
     return continueDomesticPayment(record, trimmedText, userMessage);
   }
 
@@ -858,7 +923,15 @@ function handleUiTurn(record: MockSessionRecord, request: UiEventRequest, userMe
       );
     }
 
+    const payeeChanged = Boolean(
+      record.session.activeDraft.selectedPayee &&
+        record.session.activeDraft.selectedPayee.payeeId !== selectedPayee.payeeId,
+    );
     record.session.activeDraft.selectedPayee = clone(selectedPayee);
+    if (payeeChanged) {
+      record.session.activeDraft.amount = null;
+      record.session.activeDraft.paymentDate = null;
+    }
     updateDraftTimestamp(record.session.activeDraft);
     if (
       record.session.activeDraft.amount === null ||
@@ -888,24 +961,23 @@ function handleUiTurn(record: MockSessionRecord, request: UiEventRequest, userMe
     const amountText = request.formValues?.amount?.trim();
     const paymentDate = request.formValues?.paymentDate?.trim();
 
-    if (payeeQuery) {
-      record.session.activeDraft.payeeQueryText = payeeQuery;
-      record.session.activeDraft.selectedPayee = null;
-    }
-
+    let amount: number | null = null;
     if (amountText) {
       const parsedAmount = Number(amountText);
       if (Number.isFinite(parsedAmount) && parsedAmount > 0) {
-        record.session.activeDraft.amount = parsedAmount;
+        amount = parsedAmount;
       }
     }
 
-    if (paymentDate) {
-      record.session.activeDraft.paymentDate = paymentDate;
-    }
-
-    updateDraftTimestamp(record.session.activeDraft);
-    return continueDomesticPayment(record, '', userMessage);
+    return applyDomesticPaymentSlots(
+      record,
+      {
+        payeeQuery: payeeQuery || null,
+        amount,
+        paymentDate: paymentDate || null,
+      },
+      userMessage,
+    );
   }
 
   return respond(

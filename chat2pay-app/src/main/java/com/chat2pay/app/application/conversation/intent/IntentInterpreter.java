@@ -38,6 +38,7 @@ public class IntentInterpreter {
     private static final Pattern DO_I_HAVE = Pattern.compile("do i have", Pattern.CASE_INSENSITIVE);
     private static final Pattern POSITIVE_CONFIRM = Pattern.compile("\\b(confirm|confirmed|yes|okay|ok|go ahead|proceed|send it|approve)\\b", Pattern.CASE_INSENSITIVE);
     private static final Pattern CANCEL = Pattern.compile("\\b(cancel|stop|never mind|don'?t|do not)\\b", Pattern.CASE_INSENSITIVE);
+    private static final Pattern ISO_DATE = Pattern.compile("\\b(\\d{4}-\\d{2}-\\d{2})\\b");
 
     private static final java.util.List<Pattern> PAYEE_QUERY_PATTERNS = java.util.List.of(
             Pattern.compile("(?:pay|send|transfer)(?:\\s+to)?\\s+(.+?)(?=\\s+\\d|\\s+hkd|\\s+today|\\s+tomorrow|\\s+later|$)", Pattern.CASE_INSENSITIVE),
@@ -191,7 +192,9 @@ public class IntentInterpreter {
         LocalDate date = extractPaymentDate(text);
         boolean hasDraft = session.activeDraft() != null;
         boolean detailOnlyForDraft = hasDraft && (payeeQuery != null || amount != null || date != null)
-                && (state == ConversationState.COLLECTING_DETAILS || state == ConversationState.IDLE);
+                && (state == ConversationState.COLLECTING_DETAILS
+                    || state == ConversationState.IDLE
+                    || state == ConversationState.FAILED);
 
         if (PAYMENT_INTENT.matcher(text).find() || detailOnlyForDraft) {
             return analysis(IntentType.DOMESTIC_PAYMENT, payeeQuery, amount, date);
@@ -236,6 +239,12 @@ public class IntentInterpreter {
         String n = text.toLowerCase(Locale.ROOT);
         if (n.contains("tomorrow") || n.contains("later")) return LocalDate.now().plusDays(1);
         if (n.contains("today") || n.contains("now")) return LocalDate.now();
+        Matcher m = ISO_DATE.matcher(text);
+        if (m.find()) {
+            try {
+                return LocalDate.parse(m.group(1));
+            } catch (RuntimeException ignored) { }
+        }
         return null;
     }
 

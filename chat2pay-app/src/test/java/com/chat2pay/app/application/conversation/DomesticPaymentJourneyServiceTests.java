@@ -5,6 +5,8 @@ import com.chat2pay.app.api.dto.ChatDtos.ChatSessionDetail;
 import com.chat2pay.app.api.dto.ChatDtos.PayeeSummary;
 import com.chat2pay.app.api.dto.ChatDtos.PaymentDraft;
 import com.chat2pay.app.api.dto.ContentBlock;
+import com.chat2pay.app.application.conversation.intent.IntentAnalysis;
+import com.chat2pay.app.application.conversation.intent.IntentType;
 import com.chat2pay.app.domain.conversation.ChatSessionStatus;
 import com.chat2pay.app.domain.conversation.ConversationState;
 import com.chat2pay.app.domain.conversation.LlmProviderType;
@@ -13,6 +15,7 @@ import com.chat2pay.app.domain.payment.PaymentType;
 import com.chat2pay.app.integration.downstream.domestic.DomesticPaymentClient;
 import com.chat2pay.app.integration.downstream.domestic.DomesticPaymentClient.PaymentConfirmationResult;
 import com.chat2pay.app.persistence.repository.PayeeStore;
+import com.chat2pay.app.persistence.repository.PayeeStore.RegisteredPayee;
 import com.chat2pay.app.persistence.repository.ProfileStore;
 import com.chat2pay.app.persistence.repository.SessionStore.SessionRecord;
 import org.junit.jupiter.api.Test;
@@ -21,12 +24,15 @@ import org.mockito.ArgumentCaptor;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -61,6 +67,65 @@ class DomesticPaymentJourneyServiceTests {
         assertThat(block.title()).contains("Payment submitted");
     }
 
+    @Test
+    void fillingAmountAfterPayeeSelectionDoesNotAskToSelectPayeeAgain() {
+        PaymentDraft draft = draft(selectedPayee(), null, null);
+        SessionRecord record = recordWithDraft(draft, ConversationState.COLLECTING_DETAILS);
+
+        ChatMessage response = service().continueDomesticPayment(record, domesticIntent(
+                null, new BigDecimal("100"), null));
+
+        verify(payees, never()).findByQuery(anyString(), anyString());
+        assertThat(record.session().activeDraft().selectedPayee().payeeId()).isEqualTo("payee_1");
+        assertThat(record.session().activeDraft().amount()).isEqualByComparingTo(new BigDecimal("100.00"));
+        assertThat(record.session().activeDraft().paymentDate()).isNull();
+        assertThat(record.session().state()).isEqualTo(ConversationState.COLLECTING_DETAILS);
+        ContentBlock.TextBlock block = (ContentBlock.TextBlock) response.contentBlocks().get(0);
+        assertThat(block.text()).contains("payment date").doesNotContain("amount, payment date");
+    }
+
+    @Test
+    void fillingDateAfterPayeeSelectionKeepsPayeeAndAsksForAmount() {
+        LocalDate date = LocalDate.now().plusDays(1);
+        PaymentDraft draft = draft(selectedPayee(), null, null);
+        SessionRecord record = recordWithDraft(draft, ConversationState.COLLECTING_DETAILS);
+
+        ChatMessage response = service().continueDomesticPayment(record, domesticIntent(null, null, date));
+
+        verify(payees, never()).findByQuery(anyString(), anyString());
+        assertThat(record.session().activeDraft().selectedPayee().payeeId()).isEqualTo("payee_1");
+        assertThat(record.session().activeDraft().amount()).isNull();
+        assertThat(record.session().activeDraft().paymentDate()).isEqualTo(date);
+        ContentBlock.TextBlock block = (ContentBlock.TextBlock) response.contentBlocks().get(0);
+        assertThat(block.text()).contains("amount").doesNotContain("payment date");
+    }
+
+    @Test
+    void changingPayeeClearsAmountAndDate() {
+        PaymentDraft draft = draft(selectedPayee(), new BigDecimal("125.50"), LocalDate.now());
+        SessionRecord record = recordWithDraft(draft, ConversationState.COLLECTING_DETAILS);
+        PayeeSummary bob = new PayeeSummary(
+                "payee_2",
+                "Bob Lee",
+                "DOMESTIC",
+                "004",
+                "Test Bank",
+                "998877",
+                "Savings - 998877"
+        );
+        when(payees.findByQuery("profile_1", "bob")).thenReturn(List.of(new RegisteredPayee(bob, List.of("bob"))));
+
+        ChatMessage response = service().continueDomesticPayment(record, domesticIntent(
+                "bob", new BigDecimal("200"), LocalDate.now().plusDays(1)));
+
+        verify(payees).findByQuery("profile_1", "bob");
+        assertThat(record.session().activeDraft().selectedPayee().payeeId()).isEqualTo("payee_2");
+        assertThat(record.session().activeDraft().amount()).isNull();
+        assertThat(record.session().activeDraft().paymentDate()).isNull();
+        ContentBlock.TextBlock block = (ContentBlock.TextBlock) response.contentBlocks().get(0);
+        assertThat(block.text()).contains("amount", "payment date");
+    }
+
     private DomesticPaymentJourneyService service() {
         return new DomesticPaymentJourneyService(
                 payees,
@@ -73,8 +138,12 @@ class DomesticPaymentJourneyServiceTests {
     }
 
     private SessionRecord recordWithDraft() {
+        return recordWithDraft(sessionWithDraft().activeDraft(), ConversationState.AWAITING_CONFIRMATION);
+    }
+
+    private SessionRecord recordWithDraft(PaymentDraft draft, ConversationState state) {
         SessionRecord record = mock(SessionRecord.class);
-        AtomicReference<ChatSessionDetail> session = new AtomicReference<>(sessionWithDraft());
+        AtomicReference<ChatSessionDetail> session = new AtomicReference<>(sessionWithDraft(draft, state));
         when(record.profileId()).thenReturn("profile_1");
         when(record.session()).thenAnswer(invocation -> session.get());
         doAnswer(invocation -> {
@@ -85,8 +154,45 @@ class DomesticPaymentJourneyServiceTests {
     }
 
     private ChatSessionDetail sessionWithDraft() {
+        return sessionWithDraft(draft(selectedPayee(), new BigDecimal("125.50"), LocalDate.now()),
+                ConversationState.AWAITING_CONFIRMATION);
+    }
+
+    private ChatSessionDetail sessionWithDraft(PaymentDraft draft, ConversationState state) {
         Instant now = Instant.now();
-        PayeeSummary payee = new PayeeSummary(
+        return new ChatSessionDetail(
+                "session_1",
+                "Pay Alice",
+                false,
+                ChatSessionStatus.ACTIVE,
+                state,
+                LlmProviderType.COPILOT_PERSONAL,
+                draft,
+                now,
+                now
+        );
+    }
+
+    private PaymentDraft draft(PayeeSummary payee, BigDecimal amount, LocalDate date) {
+        return new PaymentDraft(
+                "draft_1",
+                "session_1",
+                PaymentType.DOMESTIC_PAYMENT,
+                PaymentDraftStatus.DRAFT,
+                "alice",
+                payee,
+                amount,
+                "HKD",
+                date,
+                null,
+                null,
+                Map.of(),
+                Instant.now()
+        );
+    }
+
+    private PayeeSummary selectedPayee() {
+        return new PayeeSummary(
                 "payee_1",
                 "Alice Chan",
                 "DOMESTIC",
@@ -95,31 +201,16 @@ class DomesticPaymentJourneyServiceTests {
                 "123456",
                 "Current - 123456"
         );
-        PaymentDraft draft = new PaymentDraft(
-                "draft_1",
-                "session_1",
-                PaymentType.DOMESTIC_PAYMENT,
-                PaymentDraftStatus.AWAITING_CONFIRMATION,
-                "alice",
-                payee,
-                new BigDecimal("125.50"),
-                "HKD",
-                LocalDate.now(),
-                null,
-                null,
-                Map.of(),
-                now
-        );
-        return new ChatSessionDetail(
-                "session_1",
-                "Pay Alice",
-                false,
-                ChatSessionStatus.ACTIVE,
-                ConversationState.AWAITING_CONFIRMATION,
-                LlmProviderType.COPILOT_PERSONAL,
-                draft,
-                now,
-                now
+    }
+
+    private IntentAnalysis domesticIntent(String payeeQuery, BigDecimal amount, LocalDate date) {
+        return new IntentAnalysis(
+                IntentType.DOMESTIC_PAYMENT,
+                IntentAnalysis.toolNameFor(IntentType.DOMESTIC_PAYMENT),
+                payeeQuery,
+                amount,
+                date,
+                "TEST"
         );
     }
 }

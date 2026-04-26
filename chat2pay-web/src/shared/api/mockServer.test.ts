@@ -80,6 +80,91 @@ describe('mockServer domestic payment flow', () => {
     expect(turn.assistantMessage.contentBlocks?.some((block) => block.type === 'SUMMARY_CARD')).toBe(true);
   });
 
+  it('keeps the selected payee when the user later supplies only amount or date', async () => {
+    const user = await profileLogin({
+      profileId: 'profile_victor',
+      password: 'tb123',
+    });
+    const created = await createChatSession(user.profileId);
+
+    const firstTurn = await sendChatMessage(user.profileId, created.sessionId, {
+      messageText: 'Pay Bob',
+    });
+    const payeeList = firstTurn.assistantMessage.contentBlocks?.find((block) => block.type === 'SELECTABLE_LIST');
+
+    if (!payeeList || payeeList.type !== 'SELECTABLE_LIST') {
+      throw new Error('Expected payee selection block.');
+    }
+
+    await submitUiEvent(user.profileId, created.sessionId, {
+      eventType: 'SELECT_ITEM',
+      sourceMessageId: firstTurn.assistantMessage.messageId,
+      sourceBlockId: payeeList.blockId,
+      selectedItemId: 'payee_bob_current',
+    });
+
+    const amountTurn = await sendChatMessage(user.profileId, created.sessionId, {
+      messageText: '100 HKD',
+    });
+
+    expect(amountTurn.session.state).toBe('COLLECTING_DETAILS');
+    expect(amountTurn.activeDraft?.selectedPayee?.payeeId).toBe('payee_bob_current');
+    expect(amountTurn.activeDraft?.amount).toBe(100);
+    expect(amountTurn.activeDraft?.paymentDate).toBeNull();
+    expect(amountTurn.assistantMessage.contentBlocks?.some((block) => block.type === 'SELECTABLE_LIST')).toBe(false);
+    expect(amountTurn.assistantMessage.contentBlocks?.[0]?.type).toBe('TEXT');
+    if (amountTurn.assistantMessage.contentBlocks?.[0]?.type === 'TEXT') {
+      expect(amountTurn.assistantMessage.contentBlocks[0].text).toContain('payment date');
+      expect(amountTurn.assistantMessage.contentBlocks[0].text).not.toContain('amount, payment date');
+    }
+
+    const dateTurn = await sendChatMessage(user.profileId, created.sessionId, {
+      messageText: 'tomorrow',
+    });
+
+    expect(dateTurn.session.state).toBe('AWAITING_CONFIRMATION');
+    expect(dateTurn.activeDraft?.selectedPayee?.payeeId).toBe('payee_bob_current');
+    expect(dateTurn.activeDraft?.amount).toBe(100);
+    expect(dateTurn.activeDraft?.paymentDate).toBeTruthy();
+  });
+
+  it('clears amount and date when the user changes payee', async () => {
+    const user = await profileLogin({
+      profileId: 'profile_victor',
+      password: 'tb123',
+    });
+    const created = await createChatSession(user.profileId);
+
+    const firstTurn = await sendChatMessage(user.profileId, created.sessionId, {
+      messageText: 'Pay Bob 5000 HKD today',
+    });
+    const payeeList = firstTurn.assistantMessage.contentBlocks?.find((block) => block.type === 'SELECTABLE_LIST');
+
+    if (!payeeList || payeeList.type !== 'SELECTABLE_LIST') {
+      throw new Error('Expected payee selection block.');
+    }
+
+    await submitUiEvent(user.profileId, created.sessionId, {
+      eventType: 'SELECT_ITEM',
+      sourceMessageId: firstTurn.assistantMessage.messageId,
+      sourceBlockId: payeeList.blockId,
+      selectedItemId: 'payee_bob_current',
+    });
+
+    const changePayeeTurn = await sendChatMessage(user.profileId, created.sessionId, {
+      messageText: 'Pay Sarah 900 HKD tomorrow',
+    });
+
+    expect(changePayeeTurn.session.state).toBe('COLLECTING_DETAILS');
+    expect(changePayeeTurn.activeDraft?.selectedPayee?.payeeId).toBe('payee_sarah_salary');
+    expect(changePayeeTurn.activeDraft?.amount).toBeNull();
+    expect(changePayeeTurn.activeDraft?.paymentDate).toBeNull();
+    if (changePayeeTurn.assistantMessage.contentBlocks?.[0]?.type === 'TEXT') {
+      expect(changePayeeTurn.assistantMessage.contentBlocks[0].text).toContain('amount');
+      expect(changePayeeTurn.assistantMessage.contentBlocks[0].text).toContain('payment date');
+    }
+  });
+
   it('rejects profile login when the POC access password is incorrect', async () => {
     await expect(
       profileLogin({

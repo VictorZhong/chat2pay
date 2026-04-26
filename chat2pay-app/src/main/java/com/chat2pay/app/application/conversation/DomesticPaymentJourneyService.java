@@ -29,6 +29,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.HashMap;
 
@@ -94,19 +95,27 @@ public class DomesticPaymentJourneyService {
     }
 
     public ChatMessage continueDomesticPayment(SessionRecord record, IntentAnalysis intent) {
-        PaymentDraft draft = stateMachine.ensureDraft(record, profileCurrency(record.profileId()));
+        PaymentDraft draft = record.session().activeDraft() != null
+                ? record.session().activeDraft()
+                : stateMachine.ensureDraft(record, profileCurrency(record.profileId()));
 
         String payeeQuery = intent.payeeQuery();
-        BigDecimal amount = intent.amount();
-        LocalDate date = intent.paymentDate();
+        boolean payeeChanged = isNewPayeeQuery(draft, payeeQuery);
+        BigDecimal amount = payeeChanged ? null : intent.amount() != null ? intent.amount() : draft.amount();
+        LocalDate date = payeeChanged ? null : intent.paymentDate() != null ? intent.paymentDate() : draft.paymentDate();
 
         draft = stateMachine.updateDraft(draft,
                 payeeQuery != null ? payeeQuery : draft.payeeQueryText(),
-                payeeQuery != null ? null : draft.selectedPayee(),
-                amount != null ? amount : draft.amount(),
-                date != null ? date : draft.paymentDate(),
+                payeeChanged ? null : draft.selectedPayee(),
+                amount,
+                date,
                 draft.status(), null);
         record.setSession(stateMachine.withDraft(record.session(), draft));
+
+        if (draft.selectedPayee() != null) {
+            if (draft.amount() == null || draft.paymentDate() == null) return askForMissingDetails(record, draft);
+            return prepareConfirmation(record, draft);
+        }
 
         if (draft.payeeQueryText() == null) return askForMissingDetails(record, draft);
 
@@ -163,8 +172,12 @@ public class DomesticPaymentJourneyService {
                     errorBlock("Selection expired", "The selected payee is no longer available.")));
         }
 
+        boolean payeeChanged = draft.selectedPayee() != null
+                && !draft.selectedPayee().payeeId().equals(payee.summary().payeeId());
         draft = stateMachine.updateDraft(draft, draft.payeeQueryText(), payee.summary(),
-                draft.amount(), draft.paymentDate(), draft.status(), null);
+                payeeChanged ? null : draft.amount(),
+                payeeChanged ? null : draft.paymentDate(),
+                draft.status(), null);
         record.setSession(stateMachine.withDraft(record.session(), draft));
         if (draft.amount() == null || draft.paymentDate() == null) return askForMissingDetails(record, draft);
         return prepareConfirmation(record, draft);
@@ -181,29 +194,24 @@ public class DomesticPaymentJourneyService {
         String amountText = trim(values.get("amount"));
         String paymentDate = trim(values.get("paymentDate"));
 
-        BigDecimal amount = draft.amount();
+        BigDecimal amount = null;
         if (amountText != null) {
             try {
                 BigDecimal parsed = new BigDecimal(amountText);
                 if (parsed.signum() > 0) amount = parsed;
             } catch (NumberFormatException ignored) { }
         }
-        LocalDate date = draft.paymentDate();
+        LocalDate date = null;
         if (paymentDate != null) {
             try { date = LocalDate.parse(paymentDate); } catch (Exception ignored) { }
         }
 
-        draft = stateMachine.updateDraft(draft,
-                payeeQuery != null ? payeeQuery : draft.payeeQueryText(),
-                payeeQuery != null ? null : draft.selectedPayee(),
-                amount, date, draft.status(), null);
-        record.setSession(stateMachine.withDraft(record.session(), draft));
         return continueDomesticPayment(record, new IntentAnalysis(
                 IntentType.DOMESTIC_PAYMENT,
                 IntentAnalysis.toolNameFor(IntentType.DOMESTIC_PAYMENT),
-                null,
-                null,
-                null,
+                payeeQuery,
+                amount,
+                date,
                 "UI_EVENT"
         ));
     }
@@ -335,6 +343,29 @@ public class DomesticPaymentJourneyService {
                 textBlock("Need more details", prompt),
                 summaryBlock("Current draft", draftFields(draft), null)
         ));
+    }
+
+    private static boolean isNewPayeeQuery(PaymentDraft draft, String payeeQuery) {
+        if (payeeQuery == null || payeeQuery.isBlank()) return false;
+        String next = normalizePayee(payeeQuery);
+        if (next == null) return false;
+        if (draft.payeeQueryText() == null && draft.selectedPayee() == null) return false;
+        if (samePayeeText(next, draft.payeeQueryText())) return false;
+        return draft.selectedPayee() == null || !samePayeeText(next, draft.selectedPayee().name());
+    }
+
+    private static boolean samePayeeText(String normalized, String value) {
+        String current = normalizePayee(value);
+        return current != null && current.equals(normalized);
+    }
+
+    private static String normalizePayee(String value) {
+        if (value == null) return null;
+        String normalized = value.toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9\\s]", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        return normalized.isBlank() ? null : normalized;
     }
 
     private ChatMessage prepareConfirmation(SessionRecord record, PaymentDraft draft) {
