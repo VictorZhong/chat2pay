@@ -42,10 +42,13 @@ writing chat2pay tables.
    `["REGISTERED_PAYEE_LOOKUP","DOMESTIC_PAYMENT"]` for V1.
 3. Set `payment_currency`, `debit_account_number`, and
    `debit_product_category_code` when real downstream mode is needed.
-4. For mock mode only, seed profile-scoped registered payee fixtures in
+4. Set `source_system_id` or endpoint-specific overrides such as
+   `payee_source_system_id` and `domestic_payment_source_system_id` per profile;
+   this value is not derived from `perm_net_id`.
+5. For mock mode only, seed profile-scoped registered payee fixtures in
    `V2__seed_payees.sql` or add a follow-up migration. Do not use these tables
    as production payee storage.
-5. For real downstream testing, set `PAYMENT_MOCK_ENABLED=false` and configure
+6. For real downstream testing, set `PAYMENT_MOCK_ENABLED=false` and configure
    `PAYMENT_LOGIN_URL`, `PAYMENT_PAYEE_URL`, and `PAYMENT_CONFIRM_URL`.
 
 The profile selector uses the fixed POC access password `tb123`. The

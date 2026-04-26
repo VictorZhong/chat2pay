@@ -41,6 +41,8 @@ logging:
 chat2pay:
   primary-provider: COPILOT_PERSONAL
   fallback-provider: REMOTE_API
+  # Runtime payment currency is profile-owned; this legacy default is not used
+  # for real downstream payment payloads.
   default-currency: HKD
   copilot:
     # API key is now read from ctp_llm_credential at runtime so the operator can
@@ -83,6 +85,7 @@ chat2pay:
     country-code: ${PAYMENT_COUNTRY_CODE:HK}
     group-member: ${PAYMENT_GROUP_MEMBER:HBAP}
     locale: ${PAYMENT_LOCALE:en_HK}
+    # Fallback only. Real source system ids should be configured on ctp_profile.
     source-system-id: ${PAYMENT_SOURCE_SYSTEM_ID:11114418_O88}
     device-id: ${PAYMENT_DEVICE_ID:192.168.1.1, 192.168.1.2}
     user-agent: ${PAYMENT_USER_AGENT:Mozilla/5.0 (iPad; U; CPU OS 3_2_1 like Mac OS X; en-us) AppleWebKit/531.21.10 (KHTML, like Gecko) Mobile/7B405}

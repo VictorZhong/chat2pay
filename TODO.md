@@ -207,3 +207,6 @@ Legend: `[ ]` open · `[x]` done · `[~]` in progress · `[-]` won't do (POC)
   `PaymentPolicyGuard`, `DomesticPaymentJourneyService`, canonical cross-border
   unsupported tool naming with legacy alias, and a cross-border ORTT client
   boundary. Preserved both `COPILOT_PERSONAL` and `REMOTE_API` providers.
+- 2026-04-26: Moved downstream source system ids into profile-scoped runtime
+  config and kept debit account number, product category code, and payment
+  currency profile-owned for real downstream payment calls.

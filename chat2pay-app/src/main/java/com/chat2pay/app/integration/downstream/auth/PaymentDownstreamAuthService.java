@@ -3,6 +3,7 @@ package com.chat2pay.app.integration.downstream.auth;
 import com.chat2pay.app.config.Chat2PayProperties;
 import com.chat2pay.app.persistence.repository.ProfileStore;
 import com.chat2pay.app.persistence.repository.ProfileStore.RuntimeProfile;
+import com.chat2pay.app.persistence.repository.ProfileStore.SourceSystemContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
@@ -75,7 +76,9 @@ public class PaymentDownstreamAuthService implements DownstreamAuthService {
     }
 
     @Override
-    public HttpHeaders authenticatedHeaders(String profileId, String samlToken) {
+    public HttpHeaders authenticatedHeaders(String profileId,
+                                            String samlToken,
+                                            SourceSystemContext sourceSystemContext) {
         RuntimeProfile profile = profiles.runtimeProfile(profileId);
         HttpHeaders headers = new HttpHeaders();
         headers.set(HttpHeaders.ACCEPT, "*/*");
@@ -89,7 +92,7 @@ public class PaymentDownstreamAuthService implements DownstreamAuthService {
         headers.set("X-zzzz-Session-Correlation-Id", UUID.randomUUID().toString());
         headers.set("X-zzzz-Saml3", samlToken);
         headers.set("X-zzzz-Source-System-Id",
-                profile.sourceSystemIdOrDefault(value(downstream().sourceSystemId(), "11114418_O88")));
+                profile.sourceSystemIdFor(sourceSystemContext, value(downstream().sourceSystemId(), "11114418_O88")));
         headers.set("X-zzzz-Src-Device-Id", value(downstream().deviceId(), "192.168.1.1, 192.168.1.2"));
         headers.set("X-zzzz-Src-UserAgent", value(downstream().userAgent(),
                 "Mozilla/5.0 (iPad; U; CPU OS 3_2_1 like Mac OS X; en-us) "

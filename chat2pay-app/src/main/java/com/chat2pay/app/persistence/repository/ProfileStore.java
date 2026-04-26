@@ -78,7 +78,11 @@ public class ProfileStore {
                 p.getPassword(),
                 p.getDebitAccountNumber(),
                 p.getDebitProductCategoryCode(),
-                p.getPaymentCurrency()
+                p.getPaymentCurrency(),
+                p.getSourceSystemId(),
+                p.getPayeeSourceSystemId(),
+                p.getDomesticPaymentSourceSystemId(),
+                p.getCrossBorderPaymentSourceSystemId()
         );
     }
 
@@ -92,7 +96,11 @@ public class ProfileStore {
             String password,
             String debitAccountNumber,
             String debitProductCategoryCode,
-            String paymentCurrency
+            String paymentCurrency,
+            String sourceSystemId,
+            String payeeSourceSystemId,
+            String domesticPaymentSourceSystemId,
+            String crossBorderPaymentSourceSystemId
     ) {
         public String requiredUsername() {
             if (username == null || username.isBlank()) {
@@ -115,19 +123,44 @@ public class ProfileStore {
             return debitAccountNumber;
         }
 
-        public String debitProductCategoryCodeOrDefault() {
-            return debitProductCategoryCode == null || debitProductCategoryCode.isBlank()
-                    ? "CUR" : debitProductCategoryCode;
+        public String requiredDebitProductCategoryCode() {
+            if (debitProductCategoryCode == null || debitProductCategoryCode.isBlank()) {
+                throw new IllegalStateException(
+                        "Profile " + profileId + " has no debit product category code configured.");
+            }
+            return debitProductCategoryCode;
         }
 
-        public String paymentCurrencyOrDefault(String defaultCurrency) {
-            if (paymentCurrency != null && !paymentCurrency.isBlank()) return paymentCurrency;
-            return defaultCurrency == null || defaultCurrency.isBlank() ? "HKD" : defaultCurrency;
+        public String requiredPaymentCurrency() {
+            if (paymentCurrency == null || paymentCurrency.isBlank()) {
+                throw new IllegalStateException("Profile " + profileId + " has no payment currency configured.");
+            }
+            return paymentCurrency;
         }
 
-        public String sourceSystemIdOrDefault(String defaultSourceSystemId) {
-            if (permNetId != null && !permNetId.isBlank()) return permNetId;
-            return defaultSourceSystemId;
+        public String sourceSystemIdFor(SourceSystemContext context, String defaultSourceSystemId) {
+            return switch (context == null ? SourceSystemContext.DEFAULT : context) {
+                case PAYEE_LOOKUP -> firstNonBlank(payeeSourceSystemId, sourceSystemId, defaultSourceSystemId);
+                case DOMESTIC_PAYMENT_CONFIRM ->
+                        firstNonBlank(domesticPaymentSourceSystemId, sourceSystemId, defaultSourceSystemId);
+                case CROSS_BORDER_PAYMENT ->
+                        firstNonBlank(crossBorderPaymentSourceSystemId, sourceSystemId, defaultSourceSystemId);
+                case DEFAULT -> firstNonBlank(sourceSystemId, defaultSourceSystemId);
+            };
         }
+    }
+
+    public enum SourceSystemContext {
+        DEFAULT,
+        PAYEE_LOOKUP,
+        DOMESTIC_PAYMENT_CONFIRM,
+        CROSS_BORDER_PAYMENT
+    }
+
+    private static String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank()) return value.trim();
+        }
+        return null;
     }
 }

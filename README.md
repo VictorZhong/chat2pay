@@ -85,11 +85,15 @@ insert into ctp_profile (
   status,
   debit_account_number,
   debit_product_category_code,
-  payment_currency
+  payment_currency,
+  source_system_id,
+  payee_source_system_id,
+  domestic_payment_source_system_id,
+  cross_border_payment_source_system_id
 ) values (
   'profile_poc',
   'profile-poc-guid',
-  '11114418_O88',
+  '<profile-permnet-id>',
   'poc',
   'poc.user',
   '<testdataservice-profile-password>',
@@ -99,7 +103,11 @@ insert into ctp_profile (
   'ACTIVE',
   '<profile-debit-account-number>',
   'CUR',
-  'HKD'
+  'HKD',
+  '<default-source-system-id>',
+  '<payee-source-system-id>',
+  '<domestic-payment-source-system-id>',
+  '<cross-border-payment-source-system-id>'
 ) on conflict (id) do update set
   guid = excluded.guid,
   perm_net_id = excluded.perm_net_id,
@@ -111,6 +119,10 @@ insert into ctp_profile (
   debit_account_number = excluded.debit_account_number,
   debit_product_category_code = excluded.debit_product_category_code,
   payment_currency = excluded.payment_currency,
+  source_system_id = excluded.source_system_id,
+  payee_source_system_id = excluded.payee_source_system_id,
+  domestic_payment_source_system_id = excluded.domestic_payment_source_system_id,
+  cross_border_payment_source_system_id = excluded.cross_border_payment_source_system_id,
   updated_at = now();
 ```
 
@@ -218,7 +230,7 @@ export PAYMENT_PAYEE_URL='https://.../payees'
 export PAYMENT_CONFIRM_URL='https://.../confirm-domestic-payments'
 ```
 
-The login username/password, debit account number, product category, and payment currency are read from `ctp_profile` for the active profile. Optional downstream headers and defaults are configured through `PAYMENT_CHANNEL_ID`, `PAYMENT_COUNTRY_CODE`, `PAYMENT_GROUP_MEMBER`, `PAYMENT_LOCALE`, `PAYMENT_SOURCE_SYSTEM_ID`, `PAYMENT_DEVICE_ID`, and `PAYMENT_USER_AGENT`; `perm_net_id` is used as the source system id when present.
+The login username/password, debit account number, product category, payment currency, and downstream source system ids are read from `ctp_profile` for the active profile. `PAYMENT_SOURCE_SYSTEM_ID` is only a fallback when a profile-specific source system id is absent; `perm_net_id` is never used as the source system id. Other optional downstream headers/defaults are configured through `PAYMENT_CHANNEL_ID`, `PAYMENT_COUNTRY_CODE`, `PAYMENT_GROUP_MEMBER`, `PAYMENT_LOCALE`, `PAYMENT_DEVICE_ID`, and `PAYMENT_USER_AGENT`.
 
 Backend logging defaults to DEBUG for `com.chat2pay` in the POC. It logs full LLM request/response bodies, tool-loop tool calls/results, and downstream URL/header/body/status details; Hibernate SQL/bind logging is kept at INFO to reduce DB noise. These logs include sensitive tokens and downstream credentials, so keep DEBUG logging scoped to local/sandbox troubleshooting. CORS is open for `/api/**` so the same build can run behind changing k8s ingress domains.
 

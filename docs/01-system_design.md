@@ -465,16 +465,18 @@ Every real downstream business call uses the same sequence:
 
 The login URL and stable downstream endpoints stay in yaml. Profile-specific
 values such as login username/password, debit account number, debit product
-category, and payment currency live on `ctp_profile` and are cached by the
-backend for one day. This auth sequence belongs in a shared backend service,
-not inside each tool.
+category, payment currency, and downstream source system ids live on
+`ctp_profile` and are cached by the backend for one day. Source system id is
+never inferred from `perm_net_id`; `PAYMENT_SOURCE_SYSTEM_ID` is only a
+fallback when a profile-specific source system id is absent. This auth sequence
+belongs in a shared backend service, not inside each tool.
 
 Real payee data is always owned by downstream payee APIs. Local POC runs may
 leave `PAYMENT_MOCK_ENABLED=true`; in that mode payee lookup can use seeded
 `ctp_registered_payee` / `ctp_payee_alias` rows as mock fixtures and domestic
 confirmation returns a mock reference. Those tables are not the target
-production payee store and should not be used for real payee create/update
-flows.
+production payee store; payee create/update flows should call downstream APIs
+directly rather than writing chat2pay tables.
 
 ### 9.2 V1 Tool Set
 

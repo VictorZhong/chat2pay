@@ -2,6 +2,7 @@ package com.chat2pay.app.integration.downstream.payee;
 
 import com.chat2pay.app.config.Chat2PayProperties;
 import com.chat2pay.app.integration.downstream.auth.DownstreamAuthService;
+import com.chat2pay.app.persistence.repository.ProfileStore.SourceSystemContext;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -62,7 +63,7 @@ public class HttpRegisteredPayeeClient implements RegisteredPayeeClient {
 
         String samlToken = auth.login(profileId);
         String url = payeeUrl();
-        HttpHeaders headers = auth.authenticatedHeaders(profileId, samlToken);
+        HttpHeaders headers = auth.authenticatedHeaders(profileId, samlToken, SourceSystemContext.PAYEE_LOOKUP);
         log.debug("Downstream payee HTTP request: profileId={} method=GET url={} headers={} body=<none>",
                 profileId, url, headers);
         ResponseEntity<String> response;

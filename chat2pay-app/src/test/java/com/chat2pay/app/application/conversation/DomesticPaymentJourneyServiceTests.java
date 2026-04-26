@@ -5,7 +5,6 @@ import com.chat2pay.app.api.dto.ChatDtos.ChatSessionDetail;
 import com.chat2pay.app.api.dto.ChatDtos.PayeeSummary;
 import com.chat2pay.app.api.dto.ChatDtos.PaymentDraft;
 import com.chat2pay.app.api.dto.ContentBlock;
-import com.chat2pay.app.config.Chat2PayProperties;
 import com.chat2pay.app.domain.conversation.ChatSessionStatus;
 import com.chat2pay.app.domain.conversation.ConversationState;
 import com.chat2pay.app.domain.conversation.LlmProviderType;
@@ -36,13 +35,6 @@ class DomesticPaymentJourneyServiceTests {
     private final PayeeStore payees = mock(PayeeStore.class);
     private final DomesticPaymentClient domesticPayments = mock(DomesticPaymentClient.class);
     private final ProfileStore profiles = mock(ProfileStore.class);
-    private final Chat2PayProperties properties = new Chat2PayProperties(
-            "COPILOT_PERSONAL",
-            "REMOTE_API",
-            "HKD",
-            new Chat2PayProperties.IntentProperties(true, 350, 0.0),
-            null
-    );
 
     @Test
     void domesticExecutionDirectlyConfirmsValidatedDraft() {
@@ -73,7 +65,6 @@ class DomesticPaymentJourneyServiceTests {
         return new DomesticPaymentJourneyService(
                 payees,
                 domesticPayments,
-                properties,
                 profiles,
                 new ChatBlockFactory(),
                 new ConversationStateMachine(),

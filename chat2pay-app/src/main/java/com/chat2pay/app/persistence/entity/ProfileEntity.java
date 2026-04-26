@@ -68,6 +68,18 @@ public class ProfileEntity {
     @Column(name = "payment_currency", length = 3)
     private String paymentCurrency;
 
+    @Column(name = "source_system_id", length = 128)
+    private String sourceSystemId;
+
+    @Column(name = "payee_source_system_id", length = 128)
+    private String payeeSourceSystemId;
+
+    @Column(name = "domestic_payment_source_system_id", length = 128)
+    private String domesticPaymentSourceSystemId;
+
+    @Column(name = "cross_border_payment_source_system_id", length = 128)
+    private String crossBorderPaymentSourceSystemId;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt = Instant.now();
 

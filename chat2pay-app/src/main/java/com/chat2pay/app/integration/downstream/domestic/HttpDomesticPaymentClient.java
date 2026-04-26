@@ -6,6 +6,7 @@ import com.chat2pay.app.integration.downstream.payee.RegisteredPayeeClient;
 import com.chat2pay.app.integration.downstream.payee.RegisteredPayeeClient.DownstreamPayee;
 import com.chat2pay.app.persistence.repository.ProfileStore;
 import com.chat2pay.app.persistence.repository.ProfileStore.RuntimeProfile;
+import com.chat2pay.app.persistence.repository.ProfileStore.SourceSystemContext;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -79,7 +80,8 @@ public class HttpDomesticPaymentClient implements DomesticPaymentClient {
         String samlToken = auth.login(request.profileId());
         Map<String, Object> payload = buildPayload(request, payee, profile);
         String url = confirmUrl();
-        HttpHeaders headers = auth.authenticatedHeaders(request.profileId(), samlToken);
+        HttpHeaders headers = auth.authenticatedHeaders(
+                request.profileId(), samlToken, SourceSystemContext.DOMESTIC_PAYMENT_CONFIRM);
         log.debug("Downstream domestic confirm request summary: profileId={} url={} payeeId={} payeeName={} amount={} date={} currency={}",
                 request.profileId(),
                 url,
@@ -87,7 +89,7 @@ public class HttpDomesticPaymentClient implements DomesticPaymentClient {
                 firstNonBlank(request.payeeName(), payee.name()),
                 request.amount(),
                 request.paymentDate(),
-                profile.paymentCurrencyOrDefault(properties.defaultCurrencyOrHkd()));
+                profile.requiredPaymentCurrency());
         log.debug("Downstream domestic confirm HTTP request: profileId={} method=POST url={} headers={} body={}",
                 request.profileId(), url, headers, payload);
         ResponseEntity<String> response;
@@ -121,18 +123,18 @@ public class HttpDomesticPaymentClient implements DomesticPaymentClient {
                 responseBody,
                 "Payment confirmed for " + firstNonBlank(request.payeeName(), payee.name())
                         + " (" + request.amount() + " "
-                        + profile.paymentCurrencyOrDefault(properties.defaultCurrencyOrHkd()) + ")."
+                        + profile.requiredPaymentCurrency() + ")."
         );
     }
 
     private Map<String, Object> buildPayload(DomesticPaymentRequest request,
                                              DownstreamPayee payee,
                                              RuntimeProfile profile) {
-        String currency = profile.paymentCurrencyOrDefault(properties.defaultCurrencyOrHkd());
+        String currency = profile.requiredPaymentCurrency();
 
         Map<String, Object> debitAccountIdentifier = Map.of(
                 "accountNumber", profile.requiredDebitAccountNumber(),
-                "productCategoryCode", profile.debitProductCategoryCodeOrDefault()
+                "productCategoryCode", profile.requiredDebitProductCategoryCode()
         );
         Map<String, Object> debitAccount = Map.of(
                 "debitAccountIdentifier", debitAccountIdentifier,

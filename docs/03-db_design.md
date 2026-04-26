@@ -73,6 +73,10 @@ erDiagram
         text debit_account_number
         varchar(16) debit_product_category_code
         varchar(3) payment_currency
+        varchar(128) source_system_id
+        varchar(128) payee_source_system_id
+        varchar(128) domestic_payment_source_system_id
+        varchar(128) cross_border_payment_source_system_id
         timestamptz created_at
         timestamptz updated_at
     }
@@ -173,7 +177,7 @@ Stores the predefined demo profiles shown on the landing page.
 |---|---|---|
 | `id` | `varchar(64)` | ULID primary key |
 | `guid` | `varchar(64)` | POC profile GUID |
-| `perm_net_id` | `varchar(128)` | Profile PermNet/source-system identity |
+| `perm_net_id` | `varchar(128)` | Profile PermNet identity; not used as downstream source system id |
 | `profile_code` | `varchar(64)` | Internal display code |
 | `username` | `varchar(128)` | Test-data-service login username |
 | `password` | `text` | Plaintext test-data-service password for SAML3 token generation; not the UI profile-selection password |
@@ -183,8 +187,12 @@ Stores the predefined demo profiles shown on the landing page.
 | `supported_capabilities_json` | `jsonb` | Example `["REGISTERED_PAYEE_LOOKUP","DOMESTIC_PAYMENT"]` |
 | `status` | `varchar(16)` | `ACTIVE` / `INACTIVE` |
 | `debit_account_number` | `text` | Profile-specific debit account used for real payment confirmation |
-| `debit_product_category_code` | `varchar(16)` | Example `CUR` |
-| `payment_currency` | `varchar(3)` | Profile-specific payment currency, defaulting to app default when absent |
+| `debit_product_category_code` | `varchar(16)` | Profile-specific debit account product category, example `CUR` |
+| `payment_currency` | `varchar(3)` | Profile-specific payment currency used by real downstream payment calls |
+| `source_system_id` | `varchar(128)` | Default downstream source system id for this profile |
+| `payee_source_system_id` | `varchar(128)` | Optional source system id override for payee lookup APIs |
+| `domestic_payment_source_system_id` | `varchar(128)` | Optional source system id override for domestic payment confirm APIs |
+| `cross_border_payment_source_system_id` | `varchar(128)` | Optional source system id override for future cross-border ORTT APIs |
 
 ## 4.2 `ctp_chat_session`
 
@@ -269,7 +277,7 @@ Stores the current or completed domestic payment draft for a session.
 | `selected_account_number` | `varchar(64)` | Display-safe account identifier |
 | `selected_display_label` | `varchar(160)` | Product/account label shown in confirmation |
 | `amount` | `numeric(18,2)` | Payment amount |
-| `currency` | `varchar(3)` | Copied from the active profile payment currency, defaulting to app currency when absent |
+| `currency` | `varchar(3)` | Copied from the active profile payment currency |
 | `payment_date` | `date` | Date only, no time-of-day in V1 |
 | `user_confirmed_at` | `timestamptz` | Set when user explicitly confirms |
 | `downstream_reference` | `varchar(128)` | Confirm response reference if any |
@@ -386,6 +394,10 @@ The executable schema is version-controlled in Flyway migrations under
 - `V3__profile_scoped_runtime_config.sql` adds profile runtime credentials,
   profile-scoped payment config, and direct `profile_id` partition keys to
   messages, drafts, and seeded payees.
+- `V4__session_title_locked.sql` adds a manual-title lock for AI title
+  suggestions.
+- `V5__profile_source_system_ids.sql` adds profile-scoped source system ids
+  used by downstream auth headers.
 - Flyway itself uses `ctp_flyway_schema_history`, configured through
   `spring.flyway.table`.
 
@@ -402,6 +414,9 @@ For V1:
   call the test data service for SAML3 token generation in real downstream mode
 - set `debit_account_number`, `debit_product_category_code`, and
   `payment_currency` per profile; these values are not global yaml settings
+- set `source_system_id` or endpoint-specific overrides such as
+  `payee_source_system_id` and `domestic_payment_source_system_id` per profile;
+  do not derive source system id from `perm_net_id`
 - keep profile display data lightweight
 - use `V2__seed_payees.sql` only for local POC/mock mode payee data; those seed
   rows are assigned to `profile_poc` by V3 unless the operator updates them

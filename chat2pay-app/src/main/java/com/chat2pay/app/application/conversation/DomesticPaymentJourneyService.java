@@ -11,7 +11,6 @@ import com.chat2pay.app.application.conversation.intent.IntentAnalysis;
 import com.chat2pay.app.application.conversation.intent.IntentType;
 import com.chat2pay.app.application.conversation.tool.PaymentToolContext;
 import com.chat2pay.app.application.conversation.tool.PaymentToolExecution;
-import com.chat2pay.app.config.Chat2PayProperties;
 import com.chat2pay.app.domain.conversation.ChatSessionStatus;
 import com.chat2pay.app.domain.conversation.ConversationState;
 import com.chat2pay.app.domain.payment.PaymentDraftStatus;
@@ -40,7 +39,6 @@ public class DomesticPaymentJourneyService {
 
     private final PayeeStore payees;
     private final DomesticPaymentClient domesticPayments;
-    private final Chat2PayProperties properties;
     private final ProfileStore profiles;
     private final ChatBlockFactory blocks;
     private final ConversationStateMachine stateMachine;
@@ -48,14 +46,12 @@ public class DomesticPaymentJourneyService {
 
     public DomesticPaymentJourneyService(PayeeStore payees,
                                          DomesticPaymentClient domesticPayments,
-                                         Chat2PayProperties properties,
                                          ProfileStore profiles,
                                          ChatBlockFactory blocks,
                                          ConversationStateMachine stateMachine,
                                          PaymentPolicyGuard policyGuard) {
         this.payees = payees;
         this.domesticPayments = domesticPayments;
-        this.properties = properties;
         this.profiles = profiles;
         this.blocks = blocks;
         this.stateMachine = stateMachine;
@@ -409,7 +405,7 @@ public class DomesticPaymentJourneyService {
     }
 
     private String profileCurrency(String profileId) {
-        return profiles.runtimeProfile(profileId).paymentCurrencyOrDefault(properties.defaultCurrencyOrHkd());
+        return profiles.runtimeProfile(profileId).requiredPaymentCurrency();
     }
 
     private Map<String, Object> withContext(Map<String, Object> existing, Map<String, Object> updates) {
