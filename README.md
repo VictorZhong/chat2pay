@@ -33,6 +33,11 @@ entities and repository-backed stores live in `persistence/`.
 
 `chat2pay-web/` is the React + TypeScript frontend. `pages/` owns profile selection and the chat workspace, `features/` owns chat input, message rendering, session history, sidebar, and user menu behavior, and `shared/` contains handwritten API contracts, client calls, reusable UI primitives, styles, config, and small formatting helpers.
 
+For PCF static hosting, `chat2pay-web/public/Staticfile` enables pushstate
+routing. Vite copies it to `dist/Staticfile`, so direct refreshes on routes like
+`/chat` and `/chat/session_xx` fall back to `index.html` instead of returning
+404 from the Staticfile buildpack.
+
 `docs/02-api_contract.yaml` is kept for manual FE/BE alignment only. V1 intentionally does not generate models from it and does not maintain a duplicate contract mirror.
 
 The frontend renders backend-provided structured blocks: text blocks for normal conversation, selectable lists for payee disambiguation, summary cards for confirmation/results, and info/error blocks for guardrail outcomes. The frontend does not own intent detection, LLM access, downstream API access, or payment workflow branching.

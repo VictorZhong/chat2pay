@@ -184,11 +184,6 @@ function PayeeCardContent({ payee }: { payee: PayeeCardData }) {
             {payee.name}
           </h4>
         </div>
-        {payee.payeeType ? (
-          <span className="shrink-0 border border-brand-line bg-brand-fog px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-brand-gray">
-            {payee.payeeType.replaceAll('_', ' ')}
-          </span>
-        ) : null}
       </div>
 
       <div className="grid gap-2">
@@ -429,7 +424,7 @@ function PaymentStatusMark({ tone }: { tone: AlertTone }) {
   return (
     <span
       className={cn(
-        'inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[11px] font-bold leading-none text-white',
+        'mt-[3px] inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[11px] font-bold leading-none text-white',
         tone === 'success' ? 'bg-[#00847f]' : 'bg-brand-red',
       )}
       aria-hidden="true"

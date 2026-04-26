@@ -1,7 +1,9 @@
-import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ContentBlock } from '@/shared/api/contracts';
 import { StructuredBlock } from '@/features/ui-events/StructuredBlocks';
+
+afterEach(() => cleanup());
 
 describe('StructuredBlock', () => {
   it('renders registered payee lookup results as payee cards', () => {
@@ -43,6 +45,8 @@ describe('StructuredBlock', () => {
     expect(screen.getByText('Alice Chan')).toBeInTheDocument();
     expect(screen.getByText('Test Bank')).toBeInTheDocument();
     expect(screen.getByText('Current - 123456')).toBeInTheDocument();
+    expect(screen.getByText('Payee 01')).toBeInTheDocument();
+    expect(screen.queryByText('DOMESTIC')).not.toBeInTheDocument();
   });
 
   it('renders payee selection cards and submits the selected item', () => {
@@ -76,6 +80,35 @@ describe('StructuredBlock', () => {
       sourceBlockId: 'blk_list_1',
       selectedItemId: 'payee_1',
     });
+  });
+
+  it('does not submit selectable items while disabled', () => {
+    const onSubmit = vi.fn();
+    const block: ContentBlock = {
+      blockId: 'blk_list_2',
+      type: 'SELECTABLE_LIST',
+      title: 'Registered payee matches',
+      metadata: { purpose: 'payee-selection' },
+      items: [
+        {
+          itemId: 'payee_1',
+          label: 'Alice Chan',
+          description: 'Test Bank • Current - 123456',
+          metadata: {
+            name: 'Alice Chan',
+            bankName: 'Test Bank',
+            displayLabel: 'Current - 123456',
+          },
+        },
+      ],
+    };
+
+    render(<StructuredBlock messageId="msg_1" block={block} onSubmit={onSubmit} disabled />);
+
+    const button = screen.getByRole('button', { name: /Alice Chan/i });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it('highlights pending summary fields', () => {

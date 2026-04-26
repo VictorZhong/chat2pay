@@ -376,9 +376,6 @@ export function ChatWorkspacePage() {
     Boolean(requiredInteraction)
     && requiredInteraction?.key !== textInputOverrideKey
     && !readOnly;
-  const completedSessionReason = completedSession
-    ? 'This instruction has been submitted successfully. Start a new chat if you need to make another request.'
-    : undefined;
   const pendingUserText = sendMessageMutation.isPending
     ? sendMessageMutation.variables
     : submitUiEventMutation.isPending
@@ -465,15 +462,25 @@ export function ChatWorkspacePage() {
               <MessageList
                 messages={messages}
                 assistantName="Assistant"
-                onSubmitUiEvent={(payload) => submitUiEventMutation.mutate(payload)}
-                disabled={showAssistantLoading}
+                onSubmitUiEvent={(payload) => {
+                  if (!readOnly && !showAssistantLoading) {
+                    submitUiEventMutation.mutate(payload);
+                  }
+                }}
+                disabled={showAssistantLoading || readOnly}
                 pendingUserText={pendingUserText}
                 showAssistantLoading={showAssistantLoading}
               />
               <ChatInputBar
                 disabled={readOnly || !sessionId || interactionLocksInput}
                 busy={busy}
-                disabledReason={completedSessionReason ?? (interactionLocksInput ? requiredInteraction?.reason : undefined)}
+                disabledReason={
+                  completedSession
+                    ? 'This instruction has been submitted successfully. Start a new chat if you need to make another request.'
+                    : interactionLocksInput
+                      ? requiredInteraction?.reason
+                      : undefined
+                }
                 onEnableTextInput={interactionLocksInput && requiredInteraction
                   ? () => setTextInputOverrideKey(requiredInteraction.key)
                   : undefined}
