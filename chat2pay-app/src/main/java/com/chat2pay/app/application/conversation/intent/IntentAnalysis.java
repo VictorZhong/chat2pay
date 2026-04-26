@@ -41,7 +41,7 @@ public record IntentAnalysis(
             case PAYEE_LOOKUP -> "get_registered_payees";
             case CONFIRM_PAYMENT -> "confirm_domestic_payment";
             case CANCEL_PAYMENT -> "cancel_payment";
-            case INTERNATIONAL_PAYMENT -> "unsupported_international_payment";
+            case CROSS_BORDER_PAYMENT -> "unsupported_cross_border_payment";
             case UNKNOWN -> null;
         };
     }

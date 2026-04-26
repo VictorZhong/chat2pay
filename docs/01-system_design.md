@@ -129,6 +129,8 @@ flowchart LR
         BE11["Downstream Auth Service"]
         BE12["Registered Payee Client"]
         BE13["Domestic Payment Client"]
+        BE14["Capability Registry"]
+        BE15["Domestic Payment Journey Service"]
     end
 
     subgraph DB["PostgreSQL"]
@@ -164,6 +166,10 @@ flowchart LR
     BE3 --> BE6
     BE3 --> BE7
     BE3 --> BE8
+    BE3 --> BE14
+    BE3 --> BE15
+    BE15 --> BE5
+    BE15 --> BE6
 
     BE4 --> BE9
     BE4 --> BE10
@@ -244,6 +250,22 @@ The capability layer should expose business operations such as:
 - `proposeCrossBorderPayment`
 - `confirmCrossBorderPayment`
 - `runFraudCheck`
+
+Initial implementation status:
+
+| Capability | Inputs | Output type | Risk | Confirmation |
+|---|---|---|---|---|
+| `listPayees` | optional `nameQuery` | `payeeList` | read-only | none |
+| `prepareDomesticPayment` | payee query, amount, payment date | `paymentDraft` | draft mutation | none |
+| `confirmDomesticPayment` | active validated draft | `paymentConfirmation` | side-effecting | explicit user confirmation |
+| `cancelPayment` | active draft | `paymentCancellation` | draft mutation | none |
+| `unsupportedCrossBorderPayment` | user request context | `unsupportedCapability` | unsupported | blocked in V1 |
+
+The Java code now has `CapabilityRegistry` metadata for the implemented V1
+capabilities and derives model-facing tool definitions from that registry. The
+V2 table should extend this same registry with account, transaction,
+eligibility, limit, fraud, payment-option, and cross-border ORTT propose/confirm
+capabilities instead of adding raw REST endpoints as tools.
 
 Those names are intentionally semantic. A capability may call one or more
 downstream APIs, normalize errors, apply policy, and return frontend-ready
@@ -332,10 +354,11 @@ The backend, not the model, enforces these rules:
 
 The provider boundary is `LlmProvider.complete(LlmCompletionRequest)`.
 `LlmCompletionRequest` carries chat messages, tool definitions, tool choice,
-assistant tool calls, and tool-result messages. Payment tool definitions and
-prompts are centralized in `PaymentToolDefinitions`; `PaymentToolRegistry`
-selects a `PaymentTool` implementation for execution, and backend action
-methods still own payment state transitions and side effects.
+assistant tool calls, and tool-result messages. Model-facing payment tool
+definitions are generated from `CapabilityRegistry`; prompt text remains in
+`PaymentToolDefinitions`. `PaymentToolRegistry` selects a `PaymentTool`
+implementation for execution, and backend capability/journey services own
+payment state transitions and side effects.
 
 This keeps the controller stable while V2 adds more providers and tools.
 
@@ -350,7 +373,8 @@ request. The model sees:
 - a compact active-draft summary
 - the last 12 persisted chat messages, mapped back to user/assistant roles
 
-The request includes all V1 tool definitions and sets `tool_choice` to `auto`.
+The request includes all V1 capability-derived tool definitions and sets
+`tool_choice` to `auto`.
 The provider can return plain assistant content, one or more tool calls, or no
 usable decision. If more than one tool call is returned, the backend logs the
 dropped tool names and executes only the first call for this V1 loop.

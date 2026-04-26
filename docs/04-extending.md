@@ -5,14 +5,17 @@ reviewable as V1 grows.
 
 ## Add a New Payment Tool
 
-1. Add the tool schema in `PaymentToolDefinitions.all()`.
+1. Add or update the semantic metadata in `CapabilityRegistry`.
 2. Add a `PaymentTool` implementation and let `PaymentToolRegistry` pick it up
    as a Spring bean. Keep side effects behind backend validation; never trust
    tool arguments directly for payment execution.
-3. Extend `IntentInterpreter.fromToolCall` if the tool can also be selected by
+3. Add aliases only for backward compatibility with prior model-facing tool
+   names; keep the canonical tool name aligned with the semantic capability.
+4. Extend `IntentInterpreter.fromToolCall` if the tool can also be selected by
    the standalone intent interpreter.
-4. Add or update unit tests for the interpreter and orchestrator behavior.
-5. Update `docs/02-api_contract.yaml` only when the frontend contract changes.
+5. Add or update unit tests for capability metadata, interpreter behavior, and
+   the journey/capability service.
+6. Update `docs/02-api_contract.yaml` only when the frontend contract changes.
 
 Tool handlers should return structured blocks through `ChatBlockFactory` and
 should leave the controller contract unchanged. V2 payment rails should arrive

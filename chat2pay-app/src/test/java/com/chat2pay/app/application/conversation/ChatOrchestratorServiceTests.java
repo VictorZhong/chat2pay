@@ -5,19 +5,17 @@ import com.chat2pay.app.api.dto.ChatDtos.ChatSessionDetail;
 import com.chat2pay.app.api.dto.ChatDtos.ChatTurnResponse;
 import com.chat2pay.app.api.dto.ChatDtos.SendMessageRequest;
 import com.chat2pay.app.api.dto.ContentBlock;
+import com.chat2pay.app.application.capability.CapabilityRegistry;
 import com.chat2pay.app.application.conversation.tool.PaymentToolRegistry;
 import com.chat2pay.app.application.conversation.intent.IntentInterpreter;
 import com.chat2pay.app.config.Chat2PayProperties;
 import com.chat2pay.app.domain.conversation.ChatSessionStatus;
 import com.chat2pay.app.domain.conversation.ConversationState;
 import com.chat2pay.app.domain.conversation.LlmProviderType;
-import com.chat2pay.app.integration.downstream.domestic.DomesticPaymentClient;
 import com.chat2pay.app.integration.llm.LlmCompletionRequest;
 import com.chat2pay.app.integration.llm.LlmCompletionResponse;
 import com.chat2pay.app.integration.llm.LlmProvider;
 import com.chat2pay.app.integration.llm.LlmRouter;
-import com.chat2pay.app.persistence.repository.PayeeStore;
-import com.chat2pay.app.persistence.repository.ProfileStore;
 import com.chat2pay.app.persistence.repository.SessionStore;
 import com.chat2pay.app.persistence.repository.SessionStore.SessionRecord;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -40,11 +38,8 @@ import static org.mockito.Mockito.when;
 class ChatOrchestratorServiceTests {
 
     private final SessionStore sessions = mock(SessionStore.class);
-    private final PayeeStore payees = mock(PayeeStore.class);
     private final IntentInterpreter intentInterpreter = mock(IntentInterpreter.class);
-    private final DomesticPaymentClient domesticPayments = mock(DomesticPaymentClient.class);
     private final LlmRouter llmRouter = mock(LlmRouter.class);
-    private final ProfileStore profiles = mock(ProfileStore.class);
     private final Chat2PayProperties properties = new Chat2PayProperties(
             "COPILOT_PERSONAL",
             "REMOTE_API",
@@ -98,17 +93,17 @@ class ChatOrchestratorServiceTests {
     private ChatOrchestratorService service() {
         return new ChatOrchestratorService(
                 sessions,
-                payees,
                 intentInterpreter,
-                domesticPayments,
                 llmRouter,
                 properties,
-                profiles,
                 new ObjectMapper(),
                 mock(SessionTitleSuggester.class),
                 new ChatBlockFactory(),
                 new ConversationStateMachine(),
-                mock(PaymentToolRegistry.class)
+                mock(PaymentToolRegistry.class),
+                new PaymentPolicyGuard(),
+                new CapabilityRegistry(),
+                mock(DomesticPaymentJourneyService.class)
         );
     }
 

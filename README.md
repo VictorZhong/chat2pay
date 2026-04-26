@@ -23,7 +23,13 @@ chat2pay/
 └── chat2pay-web/
 ```
 
-`chat2pay-app/` is the Spring Boot backend. REST and streaming endpoints live in `api/`; turn orchestration, tool-loop handling, state transitions, and response block construction live in `application/conversation/`; provider adapters live in `integration/llm/`; downstream payment/payee clients live in `integration/downstream/`; JPA entities and repository-backed stores live in `persistence/`.
+`chat2pay-app/` is the Spring Boot backend. REST and streaming endpoints live in
+`api/`; semantic capability metadata lives in `application/capability/`; turn
+orchestration, tool-loop handling, domestic journey handling, policy guardrails,
+state transitions, and response block construction live in
+`application/conversation/`; provider adapters live in `integration/llm/`;
+downstream payment/payee clients live in `integration/downstream/`; JPA
+entities and repository-backed stores live in `persistence/`.
 
 `chat2pay-web/` is the React + TypeScript frontend. `pages/` owns profile selection and the chat workspace, `features/` owns chat input, message rendering, session history, sidebar, and user menu behavior, and `shared/` contains handwritten API contracts, client calls, reusable UI primitives, styles, config, and small formatting helpers.
 

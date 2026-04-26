@@ -1,61 +1,16 @@
 package com.chat2pay.app.application.conversation.tool;
 
+import com.chat2pay.app.application.capability.CapabilityRegistry;
 import com.chat2pay.app.integration.llm.LlmCompletionRequest.ToolDefinition;
 
 import java.util.List;
-import java.util.Map;
 
 public final class PaymentToolDefinitions {
 
     private PaymentToolDefinitions() {}
 
     public static List<ToolDefinition> all() {
-        return List.of(
-                tool("get_registered_payees",
-                        "Fetch registered domestic payees. Use when the user asks to find, list, or check payees.",
-                        Map.of(
-                                "name_query", Map.of(
-                                        "type", "string",
-                                        "description", "Optional payee-name search string from the user request."
-                                )
-                        ),
-                        List.of()
-                ),
-                tool("prepare_domestic_payment",
-                        "Collect or update domestic payment details before explicit confirmation.",
-                        Map.of(
-                                "payeeQuery", Map.of(
-                                        "type", "string",
-                                        "description", "User-facing payee name or alias. Do not pass opaque ids."
-                                ),
-                                "amount", Map.of(
-                                        "type", "number",
-                                        "description", "Positive payment amount in HKD."
-                                ),
-                                "paymentDate", Map.of(
-                                        "type", "string",
-                                        "format", "date",
-                                        "description", "Payment date as YYYY-MM-DD."
-                                )
-                        ),
-                        List.of()
-                ),
-                tool("confirm_domestic_payment",
-                        "Confirm the active domestic payment draft. Use only after explicit user confirmation.",
-                        Map.of(),
-                        List.of()
-                ),
-                tool("cancel_payment",
-                        "Cancel the active domestic payment draft.",
-                        Map.of(),
-                        List.of()
-                ),
-                tool("unsupported_international_payment",
-                        "Use for international, overseas, SWIFT, or wire transfer requests.",
-                        Map.of(),
-                        List.of()
-                )
-        );
+        return CapabilityRegistry.defaultLlmToolDefinitions();
     }
 
     public static String paymentAssistantPrompt() {
@@ -78,7 +33,7 @@ public final class PaymentToolDefinitions {
                 - Once a single payee, amount, and payment date are known, the backend will ask for explicit confirmation.
                 - Never call confirm_domestic_payment until the latest user message explicitly confirms the pending payment.
                 - Never expose opaque downstream identifiers, internal ids, or tool arguments to the user.
-                - For international, overseas, SWIFT, or wire transfer requests, call unsupported_international_payment.
+                - For cross-border, overseas, international, SWIFT, or wire transfer requests, call unsupported_cross_border_payment.
                 - For greetings and capability questions, do not call tools; answer naturally in one or two short sentences and guide the user toward payee lookup or domestic payments.
                 - If the request is outside the supported payment/payee/common-chat scope, do not call tools; briefly say Chat2Pay only supports registered domestic payee lookup and domestic payments in this POC.
                 """;
@@ -98,16 +53,16 @@ public final class PaymentToolDefinitions {
                 - prepare_domestic_payment: collect/prepare a domestic payment to a registered payee.
                 - confirm_domestic_payment: use only when the latest user message explicitly confirms a pending payment.
                 - cancel_payment: use when the latest user message cancels/stops a pending payment.
-                - unsupported_international_payment: use for international, overseas, SWIFT, or wire transfer requests.
+                - unsupported_cross_border_payment: use for cross-border, overseas, international, SWIFT, or wire transfer requests.
 
                 Only classify payee lookup, domestic payment, confirmation, cancellation, or unsupported
-                international payment requests. Return UNKNOWN for unrelated banking, account, balance,
+                cross-border payment requests. Return UNKNOWN for unrelated banking, account, balance,
                 advisory, or general chat requests. Never expose or invent opaque downstream identifiers.
 
                 JSON schema:
                 {
-                  "intent": "DOMESTIC_PAYMENT|PAYEE_LOOKUP|INTERNATIONAL_PAYMENT|CONFIRM_PAYMENT|CANCEL_PAYMENT|UNKNOWN",
-                  "toolName": "get_registered_payees|prepare_domestic_payment|confirm_domestic_payment|cancel_payment|unsupported_international_payment|null",
+                  "intent": "DOMESTIC_PAYMENT|PAYEE_LOOKUP|CROSS_BORDER_PAYMENT|CONFIRM_PAYMENT|CANCEL_PAYMENT|UNKNOWN",
+                  "toolName": "get_registered_payees|prepare_domestic_payment|confirm_domestic_payment|cancel_payment|unsupported_cross_border_payment|null",
                   "payeeQuery": "user-facing payee name or alias, or null",
                   "amount": number or null,
                   "paymentDate": "YYYY-MM-DD" or null
@@ -116,17 +71,5 @@ public final class PaymentToolDefinitions {
                 The backend validates every tool call. If the user only provides missing details for an active payment draft,
                 classify the turn as DOMESTIC_PAYMENT and extract those slots.
                 """;
-    }
-
-    private static ToolDefinition tool(String name,
-                                       String description,
-                                       Map<String, Object> properties,
-                                       List<String> required) {
-        return new ToolDefinition(name, description, Map.of(
-                "type", "object",
-                "properties", properties,
-                "required", required,
-                "additionalProperties", false
-        ));
     }
 }

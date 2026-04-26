@@ -12,7 +12,8 @@ import java.util.Locale;
 import java.util.Optional;
 
 /**
- * Registered payee directory backed by ctp_registered_payee and ctp_payee_alias.
+ * Registered-payee lookup facade. Real downstream mode fetches payees live from
+ * the configured API; the local tables are used only for mock POC fixtures.
  */
 @Repository
 public class PayeeStore {

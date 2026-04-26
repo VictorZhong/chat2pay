@@ -3,14 +3,13 @@ package com.chat2pay.app.application.conversation;
 import com.chat2pay.app.api.dto.ChatDtos.ChatMessage;
 import com.chat2pay.app.api.dto.ChatDtos.ChatSessionDetail;
 import com.chat2pay.app.api.dto.ChatDtos.ChatTurnResponse;
-import com.chat2pay.app.api.dto.ChatDtos.ErrorSummary;
-import com.chat2pay.app.api.dto.ChatDtos.PayeeSummary;
 import com.chat2pay.app.api.dto.ChatDtos.PaymentDraft;
 import com.chat2pay.app.api.dto.ChatDtos.SendMessageRequest;
 import com.chat2pay.app.api.dto.ChatDtos.UiEventRequest;
 import com.chat2pay.app.api.dto.ContentBlock;
 import com.chat2pay.app.api.dto.ContentBlock.DisplayField;
 import com.chat2pay.app.api.dto.ContentBlock.SelectableItem;
+import com.chat2pay.app.application.capability.CapabilityRegistry;
 import com.chat2pay.app.application.conversation.tool.PaymentToolActions;
 import com.chat2pay.app.application.conversation.tool.PaymentToolContext;
 import com.chat2pay.app.application.conversation.tool.PaymentToolDefinitions;
@@ -20,23 +19,15 @@ import com.chat2pay.app.application.conversation.intent.IntentAnalysis;
 import com.chat2pay.app.application.conversation.intent.IntentInterpreter;
 import com.chat2pay.app.application.conversation.intent.IntentType;
 import com.chat2pay.app.config.Chat2PayProperties;
-import com.chat2pay.app.domain.conversation.ChatSessionStatus;
 import com.chat2pay.app.domain.conversation.ConversationState;
 import com.chat2pay.app.domain.conversation.MessageKind;
 import com.chat2pay.app.domain.conversation.MessageRole;
-import com.chat2pay.app.domain.payment.PaymentDraftStatus;
-import com.chat2pay.app.integration.downstream.domestic.DomesticPaymentClient;
-import com.chat2pay.app.integration.downstream.domestic.DomesticPaymentClient.DomesticPaymentRequest;
-import com.chat2pay.app.integration.downstream.domestic.DomesticPaymentClient.PaymentConfirmationResult;
 import com.chat2pay.app.integration.llm.LlmCompletionRequest;
 import com.chat2pay.app.integration.llm.LlmCompletionRequest.Message;
 import com.chat2pay.app.integration.llm.LlmCompletionResponse;
 import com.chat2pay.app.integration.llm.LlmCompletionResponse.ToolCall;
 import com.chat2pay.app.integration.llm.LlmProvider;
 import com.chat2pay.app.integration.llm.LlmRouter;
-import com.chat2pay.app.persistence.repository.PayeeStore;
-import com.chat2pay.app.persistence.repository.PayeeStore.RegisteredPayee;
-import com.chat2pay.app.persistence.repository.ProfileStore;
 import com.chat2pay.app.persistence.repository.SessionStore;
 import com.chat2pay.app.persistence.repository.SessionStore.SessionRecord;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -63,14 +54,11 @@ public class ChatOrchestratorService implements PaymentToolActions {
 
     private static final Logger log = LoggerFactory.getLogger(ChatOrchestratorService.class);
     private static final int MAX_TOOL_LOOP_ITERATIONS = 4;
-    private static final Pattern EXPLICIT_CONFIRMATION = Pattern.compile(
-            "\\b(confirm|confirmed|yes|okay|ok|go ahead|proceed|send it|approve)\\b",
-            Pattern.CASE_INSENSITIVE);
     private static final Pattern PAYMENT_RELATED = Pattern.compile(
-            "\\b(pay|payment|send|transfer|payee|registered|lookup|find|show|list|confirm|cancel|swift|wire|international|overseas)\\b",
+            "\\b(pay|payment|send|transfer|payee|registered|lookup|find|show|list|confirm|cancel|swift|wire|international|overseas|cross[- ]?border)\\b",
             Pattern.CASE_INSENSITIVE);
     private static final Pattern PAYMENT_DOMAIN_TERMS = Pattern.compile(
-            "\\b(pay|payment|transfer|payee|payees|registered|domestic|swift|wire|international|overseas|confirm|cancel|hkd|amount)\\b",
+            "\\b(pay|payment|transfer|payee|payees|registered|domestic|swift|wire|international|overseas|cross[- ]?border|confirm|cancel|hkd|amount)\\b",
             Pattern.CASE_INSENSITIVE);
     private static final Pattern COMMON_CHAT = Pattern.compile(
             "\\b(hi|hello|hey|good morning|good afternoon|good evening|what can you do|how can you help|help me|capabilities|what do you support)\\b",
@@ -80,42 +68,42 @@ public class ChatOrchestratorService implements PaymentToolActions {
             Pattern.CASE_INSENSITIVE);
 
     private final SessionStore sessions;
-    private final PayeeStore payees;
     private final IntentInterpreter intentInterpreter;
-    private final DomesticPaymentClient domesticPayments;
     private final LlmRouter llmRouter;
     private final Chat2PayProperties properties;
-    private final ProfileStore profiles;
     private final ObjectMapper mapper;
     private final SessionTitleSuggester titleSuggester;
     private final ChatBlockFactory blocks;
     private final ConversationStateMachine stateMachine;
     private final PaymentToolRegistry paymentTools;
+    private final PaymentPolicyGuard policyGuard;
+    private final CapabilityRegistry capabilityRegistry;
+    private final DomesticPaymentJourneyService domesticJourney;
 
     public ChatOrchestratorService(SessionStore sessions,
-                                   PayeeStore payees,
                                    IntentInterpreter intentInterpreter,
-                                   DomesticPaymentClient domesticPayments,
                                    LlmRouter llmRouter,
                                    Chat2PayProperties properties,
-                                   ProfileStore profiles,
                                    ObjectMapper mapper,
                                    SessionTitleSuggester titleSuggester,
                                    ChatBlockFactory blocks,
                                    ConversationStateMachine stateMachine,
-                                   PaymentToolRegistry paymentTools) {
+                                   PaymentToolRegistry paymentTools,
+                                   PaymentPolicyGuard policyGuard,
+                                   CapabilityRegistry capabilityRegistry,
+                                   DomesticPaymentJourneyService domesticJourney) {
         this.sessions = sessions;
-        this.payees = payees;
         this.intentInterpreter = intentInterpreter;
-        this.domesticPayments = domesticPayments;
         this.llmRouter = llmRouter;
         this.properties = properties;
-        this.profiles = profiles;
         this.mapper = mapper;
         this.titleSuggester = titleSuggester;
         this.blocks = blocks;
         this.stateMachine = stateMachine;
         this.paymentTools = paymentTools;
+        this.policyGuard = policyGuard;
+        this.capabilityRegistry = capabilityRegistry;
+        this.domesticJourney = domesticJourney;
     }
 
     public ChatMessage welcomeMessage(String sessionId) {
@@ -201,8 +189,8 @@ public class ChatOrchestratorService implements PaymentToolActions {
         IntentAnalysis intent = intentInterpreter.analyze(record.session(), text, record.profileId());
 
         if (state == ConversationState.AWAITING_CONFIRMATION) {
-            if (intent.intent() == IntentType.CONFIRM_PAYMENT) return executePayment(record);
-            if (intent.intent() == IntentType.CANCEL_PAYMENT) return cancelPayment(record);
+            if (intent.intent() == IntentType.CONFIRM_PAYMENT) return domesticJourney.executePayment(record);
+            if (intent.intent() == IntentType.CANCEL_PAYMENT) return domesticJourney.cancelPayment(record);
         }
 
         if (state == ConversationState.AWAITING_PAYEE_SELECTION
@@ -215,17 +203,13 @@ public class ChatOrchestratorService implements PaymentToolActions {
             ));
         }
 
-        if (intent.intent() == IntentType.INTERNATIONAL_PAYMENT) {
-            stateMachine.transition(record, ConversationState.IDLE, ChatSessionStatus.ACTIVE);
-            return assistantMessage(record.session().sessionId(), List.of(
-                    infoBlock("Not supported in V1",
-                            "This POC currently supports registered payee lookup and domestic payment to a registered payee only.")
-            ));
+        if (intent.intent() == IntentType.CROSS_BORDER_PAYMENT) {
+            return domesticJourney.unsupportedCrossBorderPayment(record);
         }
 
-        if (intent.intent() == IntentType.DOMESTIC_PAYMENT) return continueDomesticPayment(record, intent);
+        if (intent.intent() == IntentType.DOMESTIC_PAYMENT) return domesticJourney.continueDomesticPayment(record, intent);
         if (intent.intent() == IntentType.PAYEE_LOOKUP) {
-            return handlePayeeLookup(record, intent);
+            return domesticJourney.handlePayeeLookup(record, intent.payeeQuery());
         }
 
         return assistantMessage(record.session().sessionId(), List.of(
@@ -256,7 +240,7 @@ public class ChatOrchestratorService implements PaymentToolActions {
                     messages,
                     properties.intentMaxTokens(),
                     properties.intentTemperature(),
-                    PaymentToolDefinitions.all(),
+                    capabilityRegistry.llmToolDefinitions(),
                     "auto"
             );
             LlmCompletionResponse response = provider.complete(request);
@@ -304,7 +288,7 @@ public class ChatOrchestratorService implements PaymentToolActions {
 
     private boolean shouldFallbackWhenNoTool(SessionRecord record, String latestUserText) {
         if (record.session().state() == ConversationState.AWAITING_CONFIRMATION
-                && EXPLICIT_CONFIRMATION.matcher(latestUserText).find()) {
+                && policyGuard.hasExplicitConfirmation(latestUserText)) {
             return true;
         }
         return PAYMENT_RELATED.matcher(latestUserText).find();
@@ -365,32 +349,8 @@ public class ChatOrchestratorService implements PaymentToolActions {
 
     @Override
     public PaymentToolExecution executeRegisteredPayeesTool(PaymentToolContext context) {
-        SessionRecord record = context.record();
-        ToolCall toolCall = context.toolCall();
         String query = firstString(context.args(), "name_query", "payeeQuery", "payee_name", "payeeName");
-        PayeeLookupView view;
-        try {
-            view = buildPayeeLookupView(record, query);
-        } catch (RuntimeException ex) {
-            return terminalTool(toolCall,
-                    Map.of("ok", false, "error", "registered_payee_lookup_failed",
-                            "message", downstreamMessage(ex)),
-                    payeeLookupFailed(record, ex));
-        }
-        Map<String, Object> result = new HashMap<>();
-        result.put("ok", true);
-        if (query != null) result.put("query", query);
-        result.put("match_count", view.matches().size());
-        result.put("payees", view.matches().stream()
-                .map(p -> Map.of(
-                        "name", p.summary().name(),
-                        "bank_code", p.summary().bankCode(),
-                        "bank_name", p.summary().bankName(),
-                        "account_number", p.summary().accountNumber(),
-                        "display_label", p.summary().displayLabel()
-                ))
-                .toList());
-        return new PaymentToolExecution(toolCall.id(), toolCall.name(), result, null, view.blocks());
+        return domesticJourney.executeRegisteredPayeesTool(context, query);
     }
 
     @Override
@@ -398,7 +358,7 @@ public class ChatOrchestratorService implements PaymentToolActions {
         SessionRecord record = context.record();
         ToolCall toolCall = context.toolCall();
         Map<String, Object> args = context.args();
-        ChatMessage response = continueDomesticPayment(record, new IntentAnalysis(
+        ChatMessage response = domesticJourney.continueDomesticPayment(record, new IntentAnalysis(
                 IntentType.DOMESTIC_PAYMENT,
                 IntentAnalysis.toolNameFor(IntentType.DOMESTIC_PAYMENT),
                 firstString(args, "payeeQuery", "name_query", "payee_name", "payeeName"),
@@ -413,39 +373,30 @@ public class ChatOrchestratorService implements PaymentToolActions {
     public PaymentToolExecution executeConfirmDomesticPaymentTool(PaymentToolContext context) {
         SessionRecord record = context.record();
         ToolCall toolCall = context.toolCall();
-        if (record.session().state() != ConversationState.AWAITING_CONFIRMATION
-                || !EXPLICIT_CONFIRMATION.matcher(context.latestUserText()).find()) {
-            PaymentDraft draft = record.session().activeDraft();
-            List<ContentBlock> blocks = new ArrayList<>();
-            blocks.add(infoBlock("Explicit confirmation required",
-                    "Please review the domestic payment summary and explicitly confirm before I submit it."));
-            if (draft != null) blocks.add(summaryBlock("Current draft", draftFields(draft), null));
+        PaymentPolicyGuard.PolicyDecision decision = policyGuard.canConfirmDomesticPayment(
+                record, context.latestUserText());
+        if (!decision.allowed()) {
             return terminalTool(toolCall,
-                    Map.of("ok", false, "error", "explicit_confirmation_required"),
-                    assistantMessage(record.session().sessionId(), blocks));
+                    Map.of("ok", false, "error", decision.code()),
+                    domesticJourney.explicitConfirmationRequired(record, decision));
         }
-        ChatMessage response = executePayment(record);
+        ChatMessage response = domesticJourney.executePayment(record);
         return terminalTool(toolCall, draftToolResult(record, "confirm_domestic_payment"), response);
     }
 
     @Override
     public PaymentToolExecution executeCancelPaymentTool(PaymentToolContext context) {
         return terminalTool(context.toolCall(), Map.of("ok", true, "action", "cancel_payment"),
-                cancelPayment(context.record()));
+                domesticJourney.cancelPayment(context.record()));
     }
 
     @Override
-    public PaymentToolExecution executeUnsupportedInternationalPaymentTool(PaymentToolContext context) {
-        SessionRecord record = context.record();
+    public PaymentToolExecution executeUnsupportedCrossBorderPaymentTool(PaymentToolContext context) {
         ToolCall toolCall = context.toolCall();
-        stateMachine.transition(record, ConversationState.IDLE, ChatSessionStatus.ACTIVE);
-        ChatMessage response = assistantMessage(record.session().sessionId(), List.of(
-                infoBlock("Not supported in V1",
-                        "This POC currently supports registered payee lookup and domestic payment to a registered payee only.")
-        ));
+        PaymentPolicyGuard.PolicyDecision decision = policyGuard.crossBorderUnavailableInV1();
         return terminalTool(toolCall,
-                Map.of("ok", false, "error", "international_payment_not_supported"),
-                response);
+                Map.of("ok", false, "error", decision.code()),
+                domesticJourney.unsupportedCrossBorderPayment(context.record()));
     }
 
     @Override
@@ -481,110 +432,6 @@ public class ChatOrchestratorService implements PaymentToolActions {
         return result;
     }
 
-    private ChatMessage handlePayeeLookup(SessionRecord record, IntentAnalysis intent) {
-        try {
-            PayeeLookupView view = buildPayeeLookupView(record, intent.payeeQuery());
-            return assistantMessage(record.session().sessionId(), view.blocks());
-        } catch (RuntimeException ex) {
-            return payeeLookupFailed(record, ex);
-        }
-    }
-
-    private PayeeLookupView buildPayeeLookupView(SessionRecord record, String query) {
-        List<RegisteredPayee> matches = query != null
-                ? payees.findByQuery(record.profileId(), query)
-                : payees.all(record.profileId());
-
-        stateMachine.transition(record, ConversationState.IDLE, ChatSessionStatus.ACTIVE);
-        if (query != null) stateMachine.setTitle(record, "Find " + stateMachine.titleCase(query));
-        else stateMachine.setTitle(record, "Registered payees");
-
-        if (matches.isEmpty()) {
-            return new PayeeLookupView(matches, List.of(
-                    infoBlock("No registered payees found",
-                            query != null
-                                    ? "I could not find a registered payee matching \"" + query + "\"."
-                                    : "There are no registered payees available in this profile.")
-            ));
-        }
-
-        List<DisplayField> fields = new ArrayList<>();
-        for (int i = 0; i < matches.size(); i++) {
-            PayeeSummary p = matches.get(i).summary();
-            fields.add(new DisplayField(
-                    matches.size() == 1 ? p.name() : "Match " + (i + 1),
-                    p.name() + " • " + p.bankName() + " • " + p.displayLabel()));
-        }
-
-        String headline = query != null
-                ? "I found " + matches.size() + " registered payee" + (matches.size() == 1 ? "" : "s")
-                  + " matching \"" + query + "\"."
-                : "I found " + matches.size() + " registered payees for this profile.";
-
-        return new PayeeLookupView(matches, List.of(
-                textBlock("Registered payees", headline),
-                summaryBlock(matches.size() == 1 ? "Registered payee" : "Registered payee results", fields, null)
-        ));
-    }
-
-    private ChatMessage continueDomesticPayment(SessionRecord record, IntentAnalysis intent) {
-        PaymentDraft draft = stateMachine.ensureDraft(record, profileCurrency(record.profileId()));
-
-        String payeeQuery = intent.payeeQuery();
-        BigDecimal amount = intent.amount();
-        LocalDate date = intent.paymentDate();
-
-        draft = stateMachine.updateDraft(draft,
-                payeeQuery != null ? payeeQuery : draft.payeeQueryText(),
-                payeeQuery != null ? null : draft.selectedPayee(),
-                amount != null ? amount : draft.amount(),
-                date != null ? date : draft.paymentDate(),
-                draft.status(), null);
-        record.setSession(stateMachine.withDraft(record.session(), draft));
-
-        if (draft.payeeQueryText() == null) return askForMissingDetails(record, draft);
-
-        List<RegisteredPayee> matches;
-        try {
-            matches = payees.findByQuery(record.profileId(), draft.payeeQueryText());
-        } catch (RuntimeException ex) {
-            return payeeLookupFailed(record, ex);
-        }
-        if (matches.isEmpty()) {
-            stateMachine.transition(record, ConversationState.COLLECTING_DETAILS, ChatSessionStatus.ACTIVE);
-            stateMachine.titleFromDraft(record, draft);
-            return assistantMessage(record.session().sessionId(), List.of(
-                    infoBlock("Registered payee not found",
-                            "I could not find a registered payee matching \"" + draft.payeeQueryText()
-                                    + "\". Please try another payee name."),
-                    summaryBlock("Current draft", draftFields(draft), null)
-            ));
-        }
-
-        if (matches.size() > 1) {
-            stateMachine.transition(record, ConversationState.AWAITING_PAYEE_SELECTION, ChatSessionStatus.ACTIVE);
-            stateMachine.titleFromDraft(record, draft);
-            List<SelectableItem> items = matches.stream().map(p ->
-                    new SelectableItem(p.summary().payeeId(), p.summary().name(),
-                            p.summary().bankName() + " • " + p.summary().displayLabel(),
-                            null, null)).toList();
-            return assistantMessage(record.session().sessionId(), List.of(
-                    textBlock("Choose payee",
-                            "I found more than one registered payee for \"" + draft.payeeQueryText()
-                                    + "\". Please choose the correct one."),
-                    new ContentBlock.SelectableListBlock(newBlockId("list"),
-                            "Registered payee matches", items, Map.of("purpose", "payee-selection"))
-            ));
-        }
-
-        draft = stateMachine.updateDraft(draft, draft.payeeQueryText(), matches.get(0).summary(),
-                draft.amount(), draft.paymentDate(), draft.status(), null);
-        record.setSession(stateMachine.withDraft(record.session(), draft));
-
-        if (draft.amount() == null || draft.paymentDate() == null) return askForMissingDetails(record, draft);
-        return prepareConfirmation(record, draft);
-    }
-
     // ---- UI turn --------------------------------------------------------------
 
     private ChatMessage handleUiTurn(SessionRecord record, UiEventRequest request) {
@@ -596,207 +443,22 @@ public class ChatOrchestratorService implements PaymentToolActions {
     }
 
     private ChatMessage handleSelectItem(SessionRecord record, UiEventRequest request) {
-        String selectedId = request.selectedItemId();
-        if (selectedId == null) {
-            return assistantMessage(record.session().sessionId(), List.of(
-                    errorBlock("Invalid selection", "No item was selected.")));
-        }
-        var payee = payees.findById(record.profileId(), selectedId).orElse(null);
-        PaymentDraft draft = record.session().activeDraft();
-        if (payee == null || draft == null) {
-            return assistantMessage(record.session().sessionId(), List.of(
-                    errorBlock("Selection expired", "The selected payee is no longer available.")));
-        }
-
-        draft = stateMachine.updateDraft(draft, draft.payeeQueryText(), payee.summary(),
-                draft.amount(), draft.paymentDate(), draft.status(), null);
-        record.setSession(stateMachine.withDraft(record.session(), draft));
-        if (draft.amount() == null || draft.paymentDate() == null) return askForMissingDetails(record, draft);
-        return prepareConfirmation(record, draft);
+        return domesticJourney.selectPayee(record, request.selectedItemId());
     }
 
     private ChatMessage handleClickAction(SessionRecord record, UiEventRequest request) {
         String action = request.actionValue();
-        if ("CONFIRM_PAYMENT".equals(action)) return executePayment(record);
-        if ("CANCEL_PAYMENT".equals(action)) return cancelPayment(record);
+        if ("CONFIRM_PAYMENT".equals(action)) return domesticJourney.executePayment(record);
+        if ("CANCEL_PAYMENT".equals(action)) return domesticJourney.cancelPayment(record);
         return assistantMessage(record.session().sessionId(), List.of(
                 infoBlock("Nothing changed", "That action is not available in the current conversation state.")));
     }
 
     private ChatMessage handleSubmitForm(SessionRecord record, UiEventRequest request) {
-        PaymentDraft draft = record.session().activeDraft();
-        if (draft == null) {
-            return assistantMessage(record.session().sessionId(), List.of(
-                    infoBlock("No active draft", "Start a payment request before submitting details.")));
-        }
-        Map<String, String> values = request.formValues() == null ? Map.of() : request.formValues();
-        String payeeQuery = trim(values.get("payee"));
-        String amountText = trim(values.get("amount"));
-        String paymentDate = trim(values.get("paymentDate"));
-
-        BigDecimal amount = draft.amount();
-        if (amountText != null) {
-            try {
-                BigDecimal parsed = new BigDecimal(amountText);
-                if (parsed.signum() > 0) amount = parsed;
-            } catch (NumberFormatException ignored) { }
-        }
-        LocalDate date = draft.paymentDate();
-        if (paymentDate != null) {
-            try { date = LocalDate.parse(paymentDate); } catch (Exception ignored) { }
-        }
-
-        draft = stateMachine.updateDraft(draft,
-                payeeQuery != null ? payeeQuery : draft.payeeQueryText(),
-                payeeQuery != null ? null : draft.selectedPayee(),
-                amount, date, draft.status(), null);
-        record.setSession(stateMachine.withDraft(record.session(), draft));
-        return continueDomesticPayment(record, new IntentAnalysis(
-                IntentType.DOMESTIC_PAYMENT,
-                IntentAnalysis.toolNameFor(IntentType.DOMESTIC_PAYMENT),
-                null,
-                null,
-                null,
-                "UI_EVENT"
-        ));
-    }
-
-    // ---- state transitions ----------------------------------------------------
-
-    private ChatMessage askForMissingDetails(SessionRecord record, PaymentDraft draft) {
-        draft = stateMachine.updateDraft(draft, draft.payeeQueryText(), draft.selectedPayee(),
-                draft.amount(), draft.paymentDate(), PaymentDraftStatus.DRAFT, null);
-        record.setSession(stateMachine.withDraft(record.session(), draft));
-        stateMachine.transition(record, ConversationState.COLLECTING_DETAILS, ChatSessionStatus.ACTIVE);
-        stateMachine.titleFromDraft(record, draft);
-
-        List<String> missing = new ArrayList<>();
-        if (draft.payeeQueryText() == null && draft.selectedPayee() == null) missing.add("payee");
-        if (draft.amount() == null) missing.add("amount");
-        if (draft.paymentDate() == null) missing.add("payment date");
-
-        String prompt = missing.size() == 1
-                ? "I still need the " + missing.get(0) + " before I can prepare the domestic payment."
-                : "I still need these details before I can prepare the domestic payment: "
-                        + String.join(", ", missing) + ".";
-
-        return assistantMessage(record.session().sessionId(), List.of(
-                textBlock("Need more details", prompt),
-                summaryBlock("Current draft", draftFields(draft), null)
-        ));
-    }
-
-    private ChatMessage prepareConfirmation(SessionRecord record, PaymentDraft draft) {
-        draft = stateMachine.updateDraft(draft, draft.payeeQueryText(), draft.selectedPayee(), draft.amount(),
-                draft.paymentDate(), PaymentDraftStatus.AWAITING_CONFIRMATION, null);
-        record.setSession(stateMachine.withDraft(record.session(), draft));
-        stateMachine.transition(record, ConversationState.AWAITING_CONFIRMATION, ChatSessionStatus.ACTIVE);
-        stateMachine.titleFromDraft(record, draft);
-
-        Map<String, Object> actions = Map.of("actions", List.of(
-                Map.of("id", "CONFIRM_PAYMENT", "label", "Confirm payment"),
-                Map.of("id", "CANCEL_PAYMENT", "label", "Cancel", "tone", "secondary")
-        ));
-
-        return assistantMessage(record.session().sessionId(), List.of(
-                textBlock("Awaiting confirmation",
-                        "Please confirm the payee, amount, and payment date before I submit the domestic payment."),
-                summaryBlock("Domestic payment summary", draftFields(draft), actions)
-        ));
-    }
-
-    private ChatMessage executePayment(SessionRecord record) {
-        PaymentDraft draft = record.session().activeDraft();
-        if (draft == null || draft.selectedPayee() == null
-                || draft.amount() == null || draft.paymentDate() == null) {
-            return assistantMessage(record.session().sessionId(), List.of(
-                    errorBlock("Unable to execute",
-                            "The payment draft is incomplete. Please provide the missing details first.")));
-        }
-
-        draft = stateMachine.updateDraft(draft, draft.payeeQueryText(), draft.selectedPayee(), draft.amount(),
-                draft.paymentDate(), PaymentDraftStatus.EXECUTING, draft.downstreamReference());
-        record.setSession(stateMachine.withDraft(record.session(), draft));
-        stateMachine.transition(record, ConversationState.EXECUTING, ChatSessionStatus.ACTIVE);
-
-        PaymentConfirmationResult result;
-        try {
-            result = domesticPayments.confirm(new DomesticPaymentRequest(
-                    record.profileId(),
-                    draft.selectedPayee().payeeId(),
-                    draft.selectedPayee().name(),
-                    draft.amount(),
-                    draft.paymentDate()
-            ));
-            if (!result.ok()) {
-                throw new IllegalStateException(result.message() == null
-                        ? "Domestic payment confirmation was rejected." : result.message());
-            }
-        } catch (RuntimeException ex) {
-            log.warn("Downstream domestic payment confirmation failed: profileId={} sessionId={} draftId={} message={}",
-                    record.profileId(), record.session().sessionId(), draft.draftId(), ex.getMessage());
-            log.debug("Downstream domestic payment confirmation failure details", ex);
-            Map<String, Object> context = withContext(draft.context(), Map.of(
-                    "downstreamError", ex.getMessage() == null ? "Unknown downstream error" : ex.getMessage()
-            ));
-            draft = stateMachine.updateDraft(draft, draft.payeeQueryText(), draft.selectedPayee(), draft.amount(),
-                    draft.paymentDate(), PaymentDraftStatus.FAILED, draft.downstreamReference(),
-                    new ErrorSummary("DOWNSTREAM_PAYMENT_FAILED", ex.getMessage()), context);
-            record.setSession(stateMachine.withDraft(record.session(), draft));
-            stateMachine.transition(record, ConversationState.FAILED, ChatSessionStatus.FAILED);
-            return assistantMessage(record.session().sessionId(), List.of(
-                    errorBlock("Payment failed",
-                            "The domestic payment could not be submitted: " + ex.getMessage()),
-                    summaryBlock("Failed payment", draftFields(draft), null)
-            ));
-        }
-
-        String reference = result.reference() == null || result.reference().isBlank()
-                ? "DOM-" + LocalDate.now().toString().replace("-", "") + "-"
-                    + draft.draftId().substring(Math.max(0, draft.draftId().length() - 4))
-                : result.reference();
-        Map<String, Object> context = withContext(draft.context(), Map.of(
-                "downstreamStatusCode", result.statusCode(),
-                "downstreamResponse", result.response() == null ? Map.of() : result.response()
-        ));
-        draft = stateMachine.updateDraft(draft, draft.payeeQueryText(), draft.selectedPayee(), draft.amount(),
-                draft.paymentDate(), PaymentDraftStatus.CONFIRMED, reference, null, context);
-        record.setSession(stateMachine.withDraft(record.session(), draft));
-        stateMachine.transition(record, ConversationState.COMPLETED, ChatSessionStatus.COMPLETED);
-
-        List<DisplayField> fields = new ArrayList<>(draftFields(draft));
-        fields.add(new DisplayField("Reference", reference));
-
-        return assistantMessage(record.session().sessionId(), List.of(
-                infoBlock("✅ Payment submitted",
-                        "Your domestic payment to " + draft.selectedPayee().name()
-                                + " has been submitted successfully."),
-                summaryBlock("Completed payment", fields, null)
-        ));
-    }
-
-    private ChatMessage cancelPayment(SessionRecord record) {
-        PaymentDraft draft = record.session().activeDraft();
-        if (draft == null) {
-            return assistantMessage(record.session().sessionId(), List.of(
-                    infoBlock("No active draft", "There is no active domestic payment draft to cancel.")));
-        }
-        draft = stateMachine.updateDraft(draft, draft.payeeQueryText(), draft.selectedPayee(), draft.amount(),
-                draft.paymentDate(), PaymentDraftStatus.CANCELLED, draft.downstreamReference());
-        record.setSession(stateMachine.withDraft(record.session(), draft));
-        stateMachine.transition(record, ConversationState.CANCELLED, ChatSessionStatus.CANCELLED);
-        String who = draft.selectedPayee() != null ? draft.selectedPayee().name()
-                : draft.payeeQueryText() != null ? draft.payeeQueryText() : "the selected payee";
-        return assistantMessage(record.session().sessionId(), List.of(
-                infoBlock("Payment cancelled",
-                        "The domestic payment draft for " + who + " was cancelled."),
-                summaryBlock("Cancelled draft", draftFields(draft), null)
-        ));
+        return domesticJourney.submitDetails(record, request.formValues());
     }
 
     // ---- helpers --------------------------------------------------------------
-
-    private record PayeeLookupView(List<RegisteredPayee> matches, List<ContentBlock> blocks) {}
 
     private record CompletedTurn(
             ChatSessionDetail session,
@@ -862,21 +524,6 @@ public class ChatOrchestratorService implements PaymentToolActions {
         } catch (JsonProcessingException ex) {
             return String.valueOf(value);
         }
-    }
-
-    private ChatMessage payeeLookupFailed(SessionRecord record, RuntimeException ex) {
-        log.warn("Registered payee lookup failed: profileId={} sessionId={} message={}",
-                record.profileId(), record.session().sessionId(), ex.getMessage());
-        log.debug("Registered payee lookup failure details", ex);
-        stateMachine.transition(record, ConversationState.IDLE, ChatSessionStatus.ACTIVE);
-        return assistantMessage(record.session().sessionId(), List.of(
-                errorBlock("Registered payee lookup failed",
-                        "I could not retrieve registered payees right now. Please try again after downstream access is restored.")
-        ));
-    }
-
-    private static String downstreamMessage(RuntimeException ex) {
-        return ex.getMessage() == null ? "Unknown downstream error" : ex.getMessage();
     }
 
     private String messageContent(ChatMessage message) {
@@ -952,17 +599,6 @@ public class ChatOrchestratorService implements PaymentToolActions {
         }
     }
 
-    private String profileCurrency(String profileId) {
-        return profiles.runtimeProfile(profileId).paymentCurrencyOrDefault(properties.defaultCurrencyOrHkd());
-    }
-
-    private Map<String, Object> withContext(Map<String, Object> existing, Map<String, Object> updates) {
-        Map<String, Object> next = new HashMap<>();
-        if (existing != null) next.putAll(existing);
-        next.putAll(updates);
-        return next;
-    }
-
     // ---- block builders -------------------------------------------------------
 
     private ContentBlock.TextBlock textBlock(String title, String text) {
@@ -971,19 +607,6 @@ public class ChatOrchestratorService implements PaymentToolActions {
 
     private ContentBlock.InfoCardBlock infoBlock(String title, String text) {
         return blocks.infoBlock(title, text);
-    }
-
-    private ContentBlock.ErrorCardBlock errorBlock(String title, String text) {
-        return blocks.errorBlock(title, text);
-    }
-
-    private ContentBlock.SummaryCardBlock summaryBlock(String title, List<DisplayField> fields,
-                                                       Map<String, Object> metadata) {
-        return blocks.summaryBlock(title, fields, metadata);
-    }
-
-    private List<DisplayField> draftFields(PaymentDraft d) {
-        return blocks.draftFields(d);
     }
 
     // ---- message constructors -------------------------------------------------
@@ -1038,7 +661,4 @@ public class ChatOrchestratorService implements PaymentToolActions {
         return ChatBlockFactory.newMessageId();
     }
 
-    private static String newBlockId(String kind) {
-        return ChatBlockFactory.newBlockId(kind);
-    }
 }

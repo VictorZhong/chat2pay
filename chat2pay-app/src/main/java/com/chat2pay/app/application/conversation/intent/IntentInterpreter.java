@@ -2,6 +2,7 @@ package com.chat2pay.app.application.conversation.intent;
 
 import com.chat2pay.app.api.dto.ChatDtos.ChatSessionDetail;
 import com.chat2pay.app.api.dto.ChatDtos.PaymentDraft;
+import com.chat2pay.app.application.capability.CapabilityRegistry;
 import com.chat2pay.app.config.Chat2PayProperties;
 import com.chat2pay.app.application.conversation.tool.PaymentToolDefinitions;
 import com.chat2pay.app.domain.conversation.ConversationState;
@@ -33,7 +34,7 @@ public class IntentInterpreter {
     private static final Pattern AMOUNT = Pattern.compile("(?:hkd\\s*)?(\\d+(?:\\.\\d{1,2})?)", Pattern.CASE_INSENSITIVE);
     private static final Pattern PAYMENT_INTENT = Pattern.compile("\\b(pay|payment|send|transfer)\\b", Pattern.CASE_INSENSITIVE);
     private static final Pattern LOOKUP_INTENT = Pattern.compile("\\b(payee|payees|registered|lookup|look up|find|show|list)\\b", Pattern.CASE_INSENSITIVE);
-    private static final Pattern INTERNATIONAL_INTENT = Pattern.compile("\\b(international|overseas|swift|wire)\\b", Pattern.CASE_INSENSITIVE);
+    private static final Pattern CROSS_BORDER_INTENT = Pattern.compile("\\b(cross[- ]?border|international|overseas|swift|wire)\\b", Pattern.CASE_INSENSITIVE);
     private static final Pattern DO_I_HAVE = Pattern.compile("do i have", Pattern.CASE_INSENSITIVE);
     private static final Pattern POSITIVE_CONFIRM = Pattern.compile("\\b(confirm|confirmed|yes|okay|ok|go ahead|proceed|send it|approve)\\b", Pattern.CASE_INSENSITIVE);
     private static final Pattern CANCEL = Pattern.compile("\\b(cancel|stop|never mind|don'?t|do not)\\b", Pattern.CASE_INSENSITIVE);
@@ -48,15 +49,18 @@ public class IntentInterpreter {
     private final Chat2PayProperties properties;
     private final ObjectMapper mapper;
     private final PayeeStore payees;
+    private final CapabilityRegistry capabilityRegistry;
 
     public IntentInterpreter(LlmRouter router,
                              Chat2PayProperties properties,
                              ObjectMapper mapper,
-                             PayeeStore payees) {
+                             PayeeStore payees,
+                             CapabilityRegistry capabilityRegistry) {
         this.router = router;
         this.properties = properties;
         this.mapper = mapper;
         this.payees = payees;
+        this.capabilityRegistry = capabilityRegistry;
     }
 
     public IntentAnalysis analyze(ChatSessionDetail session, String text, String profileId) {
@@ -87,7 +91,7 @@ public class IntentInterpreter {
                 ),
                 properties.intentMaxTokens(),
                 properties.intentTemperature(),
-                PaymentToolDefinitions.all(),
+                capabilityRegistry.llmToolDefinitions(),
                 "auto"
         );
         LlmCompletionResponse response = provider.complete(request);
@@ -134,7 +138,7 @@ public class IntentInterpreter {
             case "prepare_domestic_payment" -> IntentType.DOMESTIC_PAYMENT;
             case "confirm_domestic_payment" -> IntentType.CONFIRM_PAYMENT;
             case "cancel_payment" -> IntentType.CANCEL_PAYMENT;
-            case "unsupported_international_payment" -> IntentType.INTERNATIONAL_PAYMENT;
+            case "unsupported_cross_border_payment", "unsupported_international_payment" -> IntentType.CROSS_BORDER_PAYMENT;
             default -> IntentType.UNKNOWN;
         };
 
@@ -178,8 +182,8 @@ public class IntentInterpreter {
             if (CANCEL.matcher(text).find()) return analysis(IntentType.CANCEL_PAYMENT, null, null, null);
         }
 
-        if (INTERNATIONAL_INTENT.matcher(text).find()) {
-            return analysis(IntentType.INTERNATIONAL_PAYMENT, null, null, null);
+        if (CROSS_BORDER_INTENT.matcher(text).find()) {
+            return analysis(IntentType.CROSS_BORDER_PAYMENT, null, null, null);
         }
 
         String payeeQuery = extractPayeeQuery(profileId, text);
@@ -242,7 +246,7 @@ public class IntentInterpreter {
         return switch (normalized) {
             case "DOMESTIC", "DOMESTIC_PAYMENT", "PAYMENT", "MAKE_PAYMENT" -> IntentType.DOMESTIC_PAYMENT;
             case "PAYEE", "LOOKUP", "LOOKUP_PAYEE", "PAYEE_LOOKUP", "REGISTERED_PAYEE_LOOKUP" -> IntentType.PAYEE_LOOKUP;
-            case "INTERNATIONAL", "INTERNATIONAL_PAYMENT", "WIRE", "SWIFT" -> IntentType.INTERNATIONAL_PAYMENT;
+            case "CROSS_BORDER", "CROSS_BORDER_PAYMENT", "INTERNATIONAL", "INTERNATIONAL_PAYMENT", "WIRE", "SWIFT" -> IntentType.CROSS_BORDER_PAYMENT;
             case "CONFIRM", "CONFIRM_PAYMENT", "APPROVE_PAYMENT" -> IntentType.CONFIRM_PAYMENT;
             case "CANCEL", "CANCEL_PAYMENT", "STOP_PAYMENT" -> IntentType.CANCEL_PAYMENT;
             default -> IntentType.UNKNOWN;

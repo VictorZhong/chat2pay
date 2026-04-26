@@ -10,7 +10,7 @@ public interface PaymentToolActions {
 
     PaymentToolExecution executeCancelPaymentTool(PaymentToolContext context);
 
-    PaymentToolExecution executeUnsupportedInternationalPaymentTool(PaymentToolContext context);
+    PaymentToolExecution executeUnsupportedCrossBorderPaymentTool(PaymentToolContext context);
 
     PaymentToolExecution executeUnknownPaymentTool(PaymentToolContext context);
 }

@@ -1,6 +1,7 @@
 package com.chat2pay.app.application.conversation.intent;
 
 import com.chat2pay.app.api.dto.ChatDtos.ChatSessionDetail;
+import com.chat2pay.app.application.capability.CapabilityRegistry;
 import com.chat2pay.app.config.Chat2PayProperties;
 import com.chat2pay.app.domain.conversation.ChatSessionStatus;
 import com.chat2pay.app.domain.conversation.ConversationState;
@@ -111,8 +112,22 @@ class IntentInterpreterTests {
         assertThat(analysis.source()).isEqualTo("REGEX_FALLBACK");
     }
 
+    @Test
+    void classifiesCrossBorderAsUnsupportedV1Capability() {
+        when(router.currentIfAvailable()).thenReturn(Optional.empty());
+
+        IntentAnalysis analysis = interpreter().analyze(
+                session(ConversationState.IDLE),
+                "send a cross-border wire payment to alice",
+                "profile_1");
+
+        assertThat(analysis.intent()).isEqualTo(IntentType.CROSS_BORDER_PAYMENT);
+        assertThat(analysis.toolName()).isEqualTo("unsupported_cross_border_payment");
+        assertThat(analysis.source()).isEqualTo("REGEX_FALLBACK");
+    }
+
     private IntentInterpreter interpreter() {
-        return new IntentInterpreter(router, properties, new ObjectMapper(), payees);
+        return new IntentInterpreter(router, properties, new ObjectMapper(), payees, new CapabilityRegistry());
     }
 
     private ChatSessionDetail session(ConversationState state) {

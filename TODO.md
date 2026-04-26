@@ -101,8 +101,8 @@ Legend: `[ ]` open · `[x]` done · `[~]` in progress · `[-]` won't do (POC)
       synthesis, and where backend guardrails fire (confirmation gating, draft
       validation).
 - [x] **Add `docs/04-extending.md`** with two cookbooks:
-      - "Add a new payment tool" — register in `PaymentToolDefinitions.all()`,
-        add a handler in the new `PaymentToolRegistry`, extend
+      - "Add a new payment tool" — register semantic metadata in
+        `CapabilityRegistry`, add a handler in `PaymentToolRegistry`, extend
         `IntentInterpreter.fromToolCall` if needed, add a unit test.
       - "Add a new test profile" — insert into `ctp_profile`, configure
         capabilities + currency + debit account; how to seed mock payee
@@ -114,7 +114,7 @@ Legend: `[ ]` open · `[x]` done · `[~]` in progress · `[-]` won't do (POC)
 
 ### P0 — Do before adding many downstream APIs
 
-- [ ] **Define the semantic capability model.** Create a short design doc or
+- [x] **Define the semantic capability model.** Create a short design doc or
       section listing V2 capabilities (`listAccounts`, `getAccountDetails`,
       `listPayees`, `getPayeeDetails`, `listTransactionHistory`,
       `getPaymentOptions`, `checkEligibility`, `checkLimit`,
@@ -123,27 +123,33 @@ Legend: `[ ]` open · `[x]` done · `[~]` in progress · `[-]` won't do (POC)
       risk level, required user confirmation, and whether each is read-only or
       side-effecting. Payee capabilities must be live downstream reads in real
       mode, not DB directory reads.
-- [ ] **Standardize V2 terminology and rail scope.** Use `cross-border payment`
+- [~] **Standardize V2 terminology and rail scope.** Use `cross-border payment`
       in docs/product/code when touching V2, model the POC rail as ORTT only,
       and leave GD/non-ORTT rails out of scope. Treat existing
       `INTERNATIONAL_PAYMENT` names as legacy placeholders to rename when the
-      V2 contract/code is changed.
-- [ ] **Retire DB-backed payee directory assumptions.** Real-mode
+      V2 contract/code is changed. Backend intent/tool names now use
+      cross-border terminology with a legacy `unsupported_international_payment`
+      alias; public enum cleanup is still pending.
+- [~] **Retire DB-backed payee directory assumptions.** Real-mode
       `listPayees` / `getPayeeDetails` must call downstream APIs at request
       time. Keep `ctp_registered_payee` / `ctp_payee_alias` only as local mock
       fixtures or move them behind a test-only fixture module. Payee
-      create/update flows should call downstream APIs directly.
-- [ ] **Introduce a `CapabilityRegistry`.** Move from payment-tool-name routing
+      create/update flows should call downstream APIs directly. Current code
+      uses `PayeeStore` as a live-downstream-or-mock facade; physical fixture
+      table retirement is still pending.
+- [x] **Introduce a `CapabilityRegistry`.** Move from payment-tool-name routing
       toward semantic capabilities with metadata: capability id, description,
       input schema, output type, risk level, required state, and confirmation
       policy. Keep LLM tool definitions generated from this registry where
       practical.
-- [ ] **Extract a real payment journey state machine.** Model V2 states for
+- [~] **Extract a real payment journey state machine.** Model V2 states for
       account selection, payee selection, payment-option selection,
       eligibility/limit/fraud checks, domestic direct-confirm review,
       cross-border proposal review, explicit confirmation, execution,
       held/rejected/completed/failed/cancelled. State transitions should be
-      backend-owned and unit tested.
+      backend-owned and unit tested. Domestic V1 journey logic has been moved
+      out of `ChatOrchestratorService` into `DomesticPaymentJourneyService`;
+      V2 cross-border states are still pending.
 - [ ] **Add cross-border ORTT proposal/confirm execution.** Domestic V1 remains
       direct confirm after backend validation and explicit user confirmation.
       Cross-border ORTT must introduce backend-owned `paymentProposalId` /
@@ -157,10 +163,12 @@ Legend: `[ ]` open · `[x]` done · `[~]` in progress · `[-]` won't do (POC)
       clients into `accounts`, `payees`, `transactions`, `payment-options`,
       `limits`, `eligibility`, `fraud`, and `payments`, with consistent auth,
       timeout, retry, correlation-id, idempotency, and downstream error mapping.
-- [ ] **Add a policy guard layer.** Centralize rules for PII exposure,
+- [~] **Add a policy guard layer.** Centralize rules for PII exposure,
       capability authorization, confirmation requirements, side-effect gating,
       idempotency keys, and audit metadata before any capability can call a
-      downstream mutating API.
+      downstream mutating API. A first `PaymentPolicyGuard` now gates domestic
+      confirmation and blocks cross-border in V1; broader PII/idempotency/audit
+      policy is still pending.
 - [ ] **Normalize capability result envelopes.** Use a common result shape for
       success, missing-details, user-choice-needed, blocked-by-policy,
       downstream-error, and terminal execution states so the chat renderer does
@@ -173,9 +181,11 @@ Legend: `[ ]` open · `[x]` done · `[~]` in progress · `[-]` won't do (POC)
 
 ### P2 — LLM integration and observability
 
-- [ ] **Generate LLM tool specs from capabilities.** Derive model-facing tool
+- [~] **Generate LLM tool specs from capabilities.** Derive model-facing tool
       schemas from the capability registry, but keep only the safe semantic
       capabilities visible to the model. Do not expose raw REST endpoints.
+      V1 tool schemas now come from `CapabilityRegistry`; V2 capabilities are
+      still pending.
 - [ ] **Add capability-level tests.** For each capability, cover happy path,
       missing details, downstream failure, policy block, and side-effect gating.
       Add journey tests for common payment scenarios across multiple turns.
@@ -193,3 +203,7 @@ Legend: `[ ]` open · `[x]` done · `[~]` in progress · `[-]` won't do (POC)
 
 - 2026-04-26: Completed P0, P1, P2, P4, plus `normalizeToolCalls` warn logging.
 - 2026-04-26: Completed P3 orchestrator split into `ChatBlockFactory`, `ConversationStateMachine`, and `PaymentToolRegistry`.
+- 2026-04-26: Started V2 refactor foundation: added `CapabilityRegistry`,
+  `PaymentPolicyGuard`, `DomesticPaymentJourneyService`, canonical cross-border
+  unsupported tool naming with legacy alias, and a cross-border ORTT client
+  boundary. Preserved both `COPILOT_PERSONAL` and `REMOTE_API` providers.
