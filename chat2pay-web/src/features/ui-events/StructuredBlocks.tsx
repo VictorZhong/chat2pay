@@ -219,32 +219,18 @@ function SummaryCardView({
   );
 }
 
-function PaymentStatusMark({ status }: { status: 'success' | 'failure' }) {
+type AlertTone = 'success' | 'failure';
+
+function PaymentStatusMark({ tone }: { tone: AlertTone }) {
   return (
-    <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center" aria-hidden="true">
-      <svg viewBox="0 0 24 24" className="h-5 w-5">
-        <rect x="1.5" y="1.5" width="21" height="21" fill="#111111" />
-        <rect x="4" y="4" width="16" height="16" fill="#DB0011" />
-        <path d="M4 4L12 12L4 20V4Z" fill="#FFFFFF" />
-        <path d="M20 4L12 12L20 20V4Z" fill="#FFFFFF" />
-        <path d="M4 4L12 12L20 4H4Z" fill="#DB0011" />
-        <path d="M4 20L12 12L20 20H4Z" fill="#DB0011" />
-        {status === 'success' ? (
-          <path
-            d="M7.7 12.1L10.8 15.2L16.8 8.8"
-            fill="none"
-            stroke="#111111"
-            strokeWidth="2.2"
-            strokeLinecap="square"
-            strokeLinejoin="miter"
-          />
-        ) : (
-          <>
-            <path d="M8.2 8.2L15.8 15.8" stroke="#111111" strokeWidth="2.2" strokeLinecap="square" />
-            <path d="M15.8 8.2L8.2 15.8" stroke="#111111" strokeWidth="2.2" strokeLinecap="square" />
-          </>
-        )}
-      </svg>
+    <span
+      className={cn(
+        'inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[11px] font-bold leading-none text-white',
+        tone === 'success' ? 'bg-[#00847f]' : 'bg-brand-red',
+      )}
+      aria-hidden="true"
+    >
+      {tone === 'success' ? '✓' : '!'}
     </span>
   );
 }
@@ -256,8 +242,24 @@ function normalizeTitle(title?: string | null) {
 function TextCard({ title, text, accent = 'black' }: { title?: string | null; text: string; accent?: 'black' | 'red' }) {
   const displayTitle = normalizeTitle(title);
   const normalizedTitle = displayTitle?.toLowerCase() ?? '';
-  const paymentStatus =
+  const alertTone: AlertTone | null =
     normalizedTitle === 'payment submitted' ? 'success' : accent === 'red' ? 'failure' : null;
+
+  if (alertTone && displayTitle) {
+    return (
+      <div
+        className={cn(
+          'flex items-start gap-3 border px-5 py-4 text-sm leading-6 text-brand-black',
+          alertTone === 'success' ? 'border-[#8ecfca] bg-[#e4f3f1]' : 'border-[#e8a7ad] bg-[#fff4f5]',
+        )}
+      >
+        <PaymentStatusMark tone={alertTone} />
+        <p>
+          <span className="font-semibold">{displayTitle}.</span> {text}
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -268,7 +270,6 @@ function TextCard({ title, text, accent = 'black' }: { title?: string | null; te
     >
       {displayTitle ? (
         <div className="mb-2 flex items-center gap-2">
-          {paymentStatus ? <PaymentStatusMark status={paymentStatus} /> : null}
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-brand-gray">{displayTitle}</p>
         </div>
       ) : null}

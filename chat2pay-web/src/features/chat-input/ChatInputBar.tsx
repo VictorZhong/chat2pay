@@ -46,7 +46,7 @@ export function ChatInputBar({
       <div className="flex items-center gap-2">
         <textarea
           className="brand-textarea brand-composer-textarea min-w-0 flex-1"
-          placeholder={disabled && disabledReason ? "Use the controls above to continue." : "Type a transfer instruction, for example: Pay Tom 5000 HKD."}
+          placeholder={disabled && disabledReason ? disabledReason : "Type a transfer instruction, for example: Pay Tom 5000 HKD."}
           value={value}
           onChange={(event) => setValue(event.target.value)}
           onKeyDown={(event) => {

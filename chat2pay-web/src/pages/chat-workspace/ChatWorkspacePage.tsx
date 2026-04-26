@@ -370,11 +370,15 @@ export function ChatWorkspacePage() {
     sendMessageMutation.isPending ||
     submitUiEventMutation.isPending ||
     startChatWithMessageMutation.isPending;
-  const readOnly = !activeSession || activeSession.status !== 'ACTIVE';
+  const completedSession = activeSession?.status === 'COMPLETED';
+  const readOnly = !activeSession || completedSession;
   const interactionLocksInput =
     Boolean(requiredInteraction)
     && requiredInteraction?.key !== textInputOverrideKey
     && !readOnly;
+  const completedSessionReason = completedSession
+    ? 'This instruction has been submitted successfully. Start a new chat if you need to make another request.'
+    : undefined;
   const pendingUserText = sendMessageMutation.isPending
     ? sendMessageMutation.variables
     : submitUiEventMutation.isPending
@@ -469,7 +473,7 @@ export function ChatWorkspacePage() {
               <ChatInputBar
                 disabled={readOnly || !sessionId || interactionLocksInput}
                 busy={busy}
-                disabledReason={interactionLocksInput ? requiredInteraction?.reason : undefined}
+                disabledReason={completedSessionReason ?? (interactionLocksInput ? requiredInteraction?.reason : undefined)}
                 onEnableTextInput={interactionLocksInput && requiredInteraction
                   ? () => setTextInputOverrideKey(requiredInteraction.key)
                   : undefined}
