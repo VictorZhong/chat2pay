@@ -287,6 +287,20 @@ public class DomesticPaymentJourneyService {
         ));
     }
 
+    /**
+     * Update only the payment date on the active draft. Used when the user picks a new date
+     * via the inline date picker on the confirmation card and clicks Confirm — we apply the
+     * change before executing so the downstream call uses the requested date.
+     */
+    public void updatePaymentDate(SessionRecord record, LocalDate paymentDate) {
+        PaymentDraft draft = record.session().activeDraft();
+        if (draft == null || paymentDate == null) return;
+        if (paymentDate.equals(draft.paymentDate())) return;
+        draft = stateMachine.updateDraft(draft, draft.payeeQueryText(), draft.selectedPayee(),
+                draft.amount(), paymentDate, draft.status(), draft.downstreamReference());
+        record.setSession(stateMachine.withDraft(record.session(), draft));
+    }
+
     public ChatMessage cancelPayment(SessionRecord record) {
         PaymentDraft draft = record.session().activeDraft();
         if (draft == null) {
@@ -376,15 +390,26 @@ public class DomesticPaymentJourneyService {
         stateMachine.transition(record, ConversationState.AWAITING_CONFIRMATION, ChatSessionStatus.ACTIVE);
         stateMachine.titleFromDraft(record, draft);
 
-        Map<String, Object> actions = Map.of("actions", List.of(
+        Map<String, Object> metadata = new HashMap<>();
+        metadata.put("actions", List.of(
                 Map.of("id", "CONFIRM_PAYMENT", "label", "Confirm payment"),
                 Map.of("id", "CANCEL_PAYMENT", "label", "Cancel", "tone", "secondary")
         ));
+        // Hint to the FE that the payment-date field can be edited inline. The FE renders a date
+        // picker for the matching field label, and on confirm sends the picked date alongside the
+        // CLICK_ACTION so the backend can update the draft before executing.
+        metadata.put("editableFields", List.of(Map.of(
+                "label", "Payment date",
+                "fieldId", "paymentDate",
+                "fieldType", "DATE",
+                "value", draft.paymentDate() == null ? "" : draft.paymentDate().toString(),
+                "minDate", LocalDate.now().toString()
+        )));
 
         return assistantMessage(record.session().sessionId(), List.of(
                 textBlock("Awaiting confirmation",
                         "Please confirm the payee, amount, and payment date before I submit the domestic payment."),
-                summaryBlock("Domestic payment summary", draftFields(draft), actions)
+                summaryBlock("Domestic payment summary", draftFields(draft), metadata)
         ));
     }
 

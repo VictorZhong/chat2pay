@@ -14,8 +14,16 @@ public class PaymentPolicyGuard {
             "\\b(confirm|confirmed|yes|okay|ok|go ahead|proceed|send it|approve)\\b",
             Pattern.CASE_INSENSITIVE);
 
+    private static final Pattern EXPLICIT_CANCELLATION = Pattern.compile(
+            "\\b(cancel|stop|never mind|don'?t|do not)\\b",
+            Pattern.CASE_INSENSITIVE);
+
     public boolean hasExplicitConfirmation(String latestUserText) {
         return latestUserText != null && EXPLICIT_CONFIRMATION.matcher(latestUserText).find();
+    }
+
+    public boolean isCancellation(String latestUserText) {
+        return latestUserText != null && EXPLICIT_CANCELLATION.matcher(latestUserText).find();
     }
 
     public PolicyDecision canConfirmDomesticPayment(SessionRecord record, String latestUserText) {

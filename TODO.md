@@ -201,6 +201,17 @@ Legend: `[ ]` open · `[x]` done · `[~]` in progress · `[-]` won't do (POC)
 
 ## Done
 
+- 2026-04-27: Stop letting regex hijack capability/meta questions. The tool-loop
+  no longer falls back to the deterministic intent path just because the user
+  mentions "send"/"payment"; we now trust the LLM's text response unless the
+  user is explicitly confirming/cancelling at AWAITING_CONFIRMATION. Tightened
+  the LLM prompts (reject "a new"/"another"/"someone" as payee names; explicitly
+  list out-of-scope items including new-payee creation and how-Chat2Pay-works
+  questions) and added a defensive `sanitizePayeeQuery` helper applied to LLM
+  tool-call arguments. Confirmation card now ships an editable-payment-date
+  control: backend emits `editableFields` metadata, FE renders an `<input
+  type="date">`, the picked value is sent in `formValues` on
+  CONFIRM_PAYMENT, and the orchestrator updates the draft before executing.
 - 2026-04-26: Completed P0, P1, P2, P4, plus `normalizeToolCalls` warn logging.
 - 2026-04-26: Completed P3 orchestrator split into `ChatBlockFactory`, `ConversationStateMachine`, and `PaymentToolRegistry`.
 - 2026-04-26: Started V2 refactor foundation: added `CapabilityRegistry`,

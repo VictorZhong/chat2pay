@@ -46,6 +46,17 @@ public class IntentInterpreter {
             Pattern.compile("do i have\\s+(.+?)\\s+(?:registered|as a payee)", Pattern.CASE_INSENSITIVE)
     );
 
+    // Filler phrases that should never be treated as a payee name even if a regex captures them
+    // (e.g. "may I send to a new payee?" used to extract "a new"). Anything matching here is
+    // dropped so the user gets a sensible response instead of a "payee 'a new' not found" reply.
+    private static final java.util.Set<String> NON_PAYEE_TOKENS = java.util.Set.of(
+            "a", "an", "the", "this", "that",
+            "new", "another", "other", "some", "someone", "anybody", "anyone",
+            "people", "person", "guy", "anything", "anyplace", "anywhere",
+            "a new", "an new", "the new", "another payee", "any payee",
+            "a payee", "the payee", "some payee", "someone new", "new one"
+    );
+
     private final LlmRouter router;
     private final Chat2PayProperties properties;
     private final ObjectMapper mapper;
@@ -300,6 +311,16 @@ public class IntentInterpreter {
     }
 
     private String sanitize(String raw) {
+        return sanitizePayeeQuery(raw);
+    }
+
+    /**
+     * Normalize a payee-name string, dropping filler phrases like "a new", "someone", or
+     * "another payee" that the user might type in a meta question. Returns null when there is
+     * no real name left, so the caller can ask for a real payee instead of doing a doomed
+     * lookup. Shared between the regex fallback here and the LLM-tool-call entry points.
+     */
+    public static String sanitizePayeeQuery(String raw) {
         if (raw == null) return null;
         if ("null".equalsIgnoreCase(raw.trim())) return null;
         String sanitized = raw.toLowerCase(Locale.ROOT)
@@ -307,7 +328,17 @@ public class IntentInterpreter {
                 .replaceAll("\\b(hkd|today|tomorrow|now|later|please|thanks|registered|payee|payees|accounts?|my)\\b", " ")
                 .replaceAll("\\s+", " ")
                 .trim();
-        return sanitized.isBlank() ? null : sanitized;
+        if (sanitized.isBlank()) return null;
+        if (NON_PAYEE_TOKENS.contains(sanitized)) return null;
+        // Reject if every token is a non-name filler word (e.g. "a new", "another one").
+        boolean hasName = false;
+        for (String token : sanitized.split(" ")) {
+            if (!NON_PAYEE_TOKENS.contains(token)) {
+                hasName = true;
+                break;
+            }
+        }
+        return hasName ? sanitized : null;
     }
 
     private static String asString(Object value) {

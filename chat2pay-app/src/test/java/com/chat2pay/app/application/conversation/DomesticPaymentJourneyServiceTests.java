@@ -147,6 +147,34 @@ class DomesticPaymentJourneyServiceTests {
     }
 
     @Test
+    void confirmationSummaryAdvertisesEditablePaymentDateForTheUiDatePicker() {
+        PaymentDraft draft = draft(selectedPayee(), new BigDecimal("125.50"), LocalDate.now().plusDays(1));
+        SessionRecord record = recordWithDraft(draft, ConversationState.COLLECTING_DETAILS);
+
+        ChatMessage response = service().continueDomesticPayment(record, domesticIntent(null, null, null));
+
+        ContentBlock.SummaryCardBlock block = (ContentBlock.SummaryCardBlock) response.contentBlocks().get(1);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> editableFields = (List<Map<String, Object>>) block.metadata().get("editableFields");
+        assertThat(editableFields).hasSize(1);
+        assertThat(editableFields.get(0)).containsEntry("label", "Payment date");
+        assertThat(editableFields.get(0)).containsEntry("fieldId", "paymentDate");
+        assertThat(editableFields.get(0)).containsEntry("fieldType", "DATE");
+        assertThat(editableFields.get(0)).containsEntry("value", LocalDate.now().plusDays(1).toString());
+    }
+
+    @Test
+    void updatePaymentDateMutatesActiveDraftWithoutEmittingMessage() {
+        PaymentDraft draft = draft(selectedPayee(), new BigDecimal("125.50"), LocalDate.now().plusDays(1));
+        SessionRecord record = recordWithDraft(draft, ConversationState.AWAITING_CONFIRMATION);
+        LocalDate picked = LocalDate.now().plusDays(3);
+
+        service().updatePaymentDate(record, picked);
+
+        assertThat(record.session().activeDraft().paymentDate()).isEqualTo(picked);
+    }
+
+    @Test
     void payeeSelectionCarriesStructuredPayeeMetadata() {
         SessionRecord record = recordWithDraft(draft(null, null, null), ConversationState.COLLECTING_DETAILS);
         when(payees.findByQuery("profile_1", "alice")).thenReturn(List.of(

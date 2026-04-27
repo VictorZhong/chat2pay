@@ -39,6 +39,35 @@ function blockStageActionList(block: SummaryCardBlock) {
     : [];
 }
 
+type EditableField = {
+  label: string;
+  fieldId: string;
+  fieldType: 'DATE';
+  value?: string | null;
+  minDate?: string | null;
+};
+
+function blockEditableFields(block: SummaryCardBlock): EditableField[] {
+  const raw = block.metadata?.editableFields;
+  if (!Array.isArray(raw)) return [];
+  const result: EditableField[] = [];
+  for (const item of raw) {
+    if (!isRecord(item)) continue;
+    const label = cleanText(item.label);
+    const fieldId = cleanText(item.fieldId);
+    const fieldType = cleanText(item.fieldType);
+    if (!label || !fieldId || fieldType !== 'DATE') continue;
+    result.push({
+      label,
+      fieldId,
+      fieldType: 'DATE',
+      value: cleanText(item.value),
+      minDate: cleanText(item.minDate),
+    });
+  }
+  return result;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -354,10 +383,20 @@ function SummaryCardView({
   disabled?: boolean;
 }) {
   const actions = blockStageActionList(block);
+  const editableFields = blockEditableFields(block);
+  const editableByLabel = new Map(editableFields.map((field) => [field.label, field]));
+  const [editValues, setEditValues] = useState<Record<string, string>>(() =>
+    Object.fromEntries(editableFields.map((field) => [field.fieldId, field.value ?? ''])),
+  );
 
   if (isPayeeResultsBlock(block)) {
     return <PayeeResultsCardList block={block} />;
   }
+
+  const formValuesForActions = (action: { id: string }) =>
+    action.id === 'CONFIRM_PAYMENT' && Object.keys(editValues).length
+      ? editValues
+      : undefined;
 
   return (
     <div className="brand-panel bg-[linear-gradient(180deg,#ffffff_0%,#fcfcfc_100%)] p-5">
@@ -368,6 +407,7 @@ function SummaryCardView({
       <div className="grid gap-3">
         {block.fields.map((field) => {
           const pending = isPendingValue(field.value);
+          const editable = editableByLabel.get(field.label) ?? null;
           return (
             <div
               key={`${field.label}-${field.value}`}
@@ -384,9 +424,25 @@ function SummaryCardView({
                   </span>
                 ) : null}
               </div>
-              <p className={cn('break-words text-sm font-medium', pending ? 'text-brand-red' : 'text-brand-black')}>
-                {field.value}
-              </p>
+              {editable && !pending ? (
+                <input
+                  type="date"
+                  className="brand-input w-fit min-w-[160px]"
+                  value={editValues[editable.fieldId] ?? ''}
+                  min={editable.minDate ?? undefined}
+                  disabled={disabled}
+                  onChange={(event) =>
+                    setEditValues((current) => ({
+                      ...current,
+                      [editable.fieldId]: event.target.value,
+                    }))
+                  }
+                />
+              ) : (
+                <p className={cn('break-words text-sm font-medium', pending ? 'text-brand-red' : 'text-brand-black')}>
+                  {field.value}
+                </p>
+              )}
             </div>
           );
         })}
@@ -404,6 +460,7 @@ function SummaryCardView({
                   sourceMessageId: messageId,
                   sourceBlockId: block.blockId,
                   actionValue: action.id,
+                  formValues: formValuesForActions(action),
                 })
               }
             >

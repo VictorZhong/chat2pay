@@ -406,10 +406,20 @@ function confirmationActions() {
 }
 
 function buildConfirmationBlocks(draft: PaymentDraft): ContentBlock[] {
+  const today = new Date().toISOString().slice(0, 10);
   return [
     buildTextBlock('Please confirm the payee, amount, and payment date before I submit the domestic payment.', 'Awaiting confirmation'),
     buildSummaryCard('Domestic payment summary', draftSummaryFields(draft), {
       actions: confirmationActions(),
+      editableFields: [
+        {
+          label: 'Payment date',
+          fieldId: 'paymentDate',
+          fieldType: 'DATE',
+          value: draft.paymentDate ?? '',
+          minDate: today,
+        },
+      ],
     }),
   ];
 }
@@ -966,6 +976,11 @@ function handleUiTurn(record: MockSessionRecord, request: UiEventRequest, userMe
     const action = request.actionValue;
 
     if (action === 'CONFIRM_PAYMENT') {
+      const pickedDate = request.formValues?.paymentDate?.trim();
+      if (pickedDate && record.session.activeDraft && /^\d{4}-\d{2}-\d{2}$/.test(pickedDate)) {
+        record.session.activeDraft.paymentDate = pickedDate;
+        updateDraftTimestamp(record.session.activeDraft);
+      }
       return executePayment(record, userMessage);
     }
 

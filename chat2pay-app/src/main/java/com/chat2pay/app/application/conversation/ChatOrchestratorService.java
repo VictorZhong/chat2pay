@@ -54,9 +54,6 @@ public class ChatOrchestratorService implements PaymentToolActions {
 
     private static final Logger log = LoggerFactory.getLogger(ChatOrchestratorService.class);
     private static final int MAX_TOOL_LOOP_ITERATIONS = 4;
-    private static final Pattern PAYMENT_RELATED = Pattern.compile(
-            "\\b(pay|payment|send|transfer|payee|registered|lookup|find|show|list|confirm|cancel|swift|wire|international|overseas|cross[- ]?border)\\b",
-            Pattern.CASE_INSENSITIVE);
     private static final Pattern PAYMENT_DOMAIN_TERMS = Pattern.compile(
             "\\b(pay|payment|transfer|payee|payees|registered|domestic|swift|wire|international|overseas|cross[- ]?border|confirm|cancel|hkd|amount)\\b",
             Pattern.CASE_INSENSITIVE);
@@ -287,11 +284,17 @@ public class ChatOrchestratorService implements PaymentToolActions {
     }
 
     private boolean shouldFallbackWhenNoTool(SessionRecord record, String latestUserText) {
-        if (record.session().state() == ConversationState.AWAITING_CONFIRMATION
-                && policyGuard.hasExplicitConfirmation(latestUserText)) {
-            return true;
+        // Only override the LLM with deterministic handling when the session is mid-flow and the
+        // user explicitly confirms or cancels — those state transitions must always succeed even
+        // if the LLM forgets to emit a tool call. For everything else, trust the LLM's text
+        // response so capability/meta questions ("may I send to a new payee?", "what is the
+        // payment rail behind?") don't get force-routed into the domestic-payment journey just
+        // because the message contains words like "send" or "payment".
+        if (record.session().state() == ConversationState.AWAITING_CONFIRMATION) {
+            return policyGuard.hasExplicitConfirmation(latestUserText)
+                    || policyGuard.isCancellation(latestUserText);
         }
-        return PAYMENT_RELATED.matcher(latestUserText).find();
+        return false;
     }
 
     private boolean isObviouslyUnrelated(String text) {
@@ -349,7 +352,8 @@ public class ChatOrchestratorService implements PaymentToolActions {
 
     @Override
     public PaymentToolExecution executeRegisteredPayeesTool(PaymentToolContext context) {
-        String query = firstString(context.args(), "name_query", "payeeQuery", "payee_name", "payeeName");
+        String query = IntentInterpreter.sanitizePayeeQuery(
+                firstString(context.args(), "name_query", "payeeQuery", "payee_name", "payeeName"));
         return domesticJourney.executeRegisteredPayeesTool(context, query);
     }
 
@@ -361,7 +365,8 @@ public class ChatOrchestratorService implements PaymentToolActions {
         ChatMessage response = domesticJourney.continueDomesticPayment(record, new IntentAnalysis(
                 IntentType.DOMESTIC_PAYMENT,
                 IntentAnalysis.toolNameFor(IntentType.DOMESTIC_PAYMENT),
-                firstString(args, "payeeQuery", "name_query", "payee_name", "payeeName"),
+                IntentInterpreter.sanitizePayeeQuery(
+                        firstString(args, "payeeQuery", "name_query", "payee_name", "payeeName")),
                 numberArg(args, "amount"),
                 dateArg(args, "paymentDate", "payment_date"),
                 "LLM_TOOL_LOOP"
@@ -448,10 +453,34 @@ public class ChatOrchestratorService implements PaymentToolActions {
 
     private ChatMessage handleClickAction(SessionRecord record, UiEventRequest request) {
         String action = request.actionValue();
-        if ("CONFIRM_PAYMENT".equals(action)) return domesticJourney.executePayment(record);
+        if ("CONFIRM_PAYMENT".equals(action)) {
+            applyInlineDraftEdits(record, request.formValues());
+            return domesticJourney.executePayment(record);
+        }
         if ("CANCEL_PAYMENT".equals(action)) return domesticJourney.cancelPayment(record);
         return assistantMessage(record.session().sessionId(), List.of(
                 infoBlock("Nothing changed", "That action is not available in the current conversation state.")));
+    }
+
+    /**
+     * Apply inline edits from interactive controls embedded in a summary/confirmation card
+     * (currently just the payment-date picker) before executing the action. Silently ignores
+     * unparseable or unchanged values so the confirm path stays robust.
+     */
+    private void applyInlineDraftEdits(SessionRecord record, Map<String, String> formValues) {
+        if (formValues == null || formValues.isEmpty()) return;
+        com.chat2pay.app.api.dto.ChatDtos.PaymentDraft draft = record.session().activeDraft();
+        if (draft == null) return;
+        String pickedDate = formValues.get("paymentDate");
+        if (pickedDate == null || pickedDate.isBlank()) return;
+        LocalDate parsed;
+        try {
+            parsed = LocalDate.parse(pickedDate.trim());
+        } catch (RuntimeException ex) {
+            return;
+        }
+        if (parsed.equals(draft.paymentDate())) return;
+        domesticJourney.updatePaymentDate(record, parsed);
     }
 
     private ChatMessage handleSubmitForm(SessionRecord record, UiEventRequest request) {

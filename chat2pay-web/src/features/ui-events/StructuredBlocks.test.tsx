@@ -128,6 +128,51 @@ describe('StructuredBlock', () => {
     expect(screen.getAllByText('Needed')).toHaveLength(2);
   });
 
+  it('renders a date picker for editable payment-date fields and submits the picked value on confirm', () => {
+    const onSubmit = vi.fn();
+    const block: ContentBlock = {
+      blockId: 'blk_summary_confirm',
+      type: 'SUMMARY_CARD',
+      title: 'Domestic payment summary',
+      fields: [
+        { label: 'Payee', value: 'Alice Chan' },
+        { label: 'Amount', value: 'HKD 100.00' },
+        { label: 'Payment date', value: '2026-04-27' },
+      ],
+      metadata: {
+        actions: [
+          { id: 'CONFIRM_PAYMENT', label: 'Confirm payment' },
+          { id: 'CANCEL_PAYMENT', label: 'Cancel', tone: 'secondary' },
+        ],
+        editableFields: [
+          {
+            label: 'Payment date',
+            fieldId: 'paymentDate',
+            fieldType: 'DATE',
+            value: '2026-04-27',
+            minDate: '2026-04-27',
+          },
+        ],
+      },
+    };
+
+    render(<StructuredBlock messageId="msg_1" block={block} onSubmit={onSubmit} />);
+
+    const dateInput = screen.getByDisplayValue('2026-04-27') as HTMLInputElement;
+    expect(dateInput.type).toBe('date');
+    fireEvent.change(dateInput, { target: { value: '2026-04-30' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm payment' }));
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      eventType: 'CLICK_ACTION',
+      sourceMessageId: 'msg_1',
+      sourceBlockId: 'blk_summary_confirm',
+      actionValue: 'CONFIRM_PAYMENT',
+      formValues: { paymentDate: '2026-04-30' },
+    });
+  });
+
   it('disables summary actions without showing a loading state', () => {
     const block: ContentBlock = {
       blockId: 'blk_summary_3',
