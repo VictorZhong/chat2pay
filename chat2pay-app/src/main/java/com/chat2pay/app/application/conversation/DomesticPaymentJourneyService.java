@@ -129,11 +129,14 @@ public class DomesticPaymentJourneyService {
         if (matches.isEmpty()) {
             stateMachine.transition(record, ConversationState.COLLECTING_DETAILS, ChatSessionStatus.ACTIVE);
             stateMachine.titleFromDraft(record, draft);
+            Map<String, Object> metadata = Map.of(
+                    "editableFields", List.of(editablePaymentDateField(draft, true))
+            );
             return assistantMessage(record.session().sessionId(), List.of(
                     infoBlock("Registered payee not found",
                             "I could not find a registered payee matching \"" + draft.payeeQueryText()
                                     + "\". Please try another payee name."),
-                    summaryBlock("Current draft", draftFields(draft), null)
+                    summaryBlock("Current draft", draftFields(draft), metadata)
             ));
         }
 
@@ -354,10 +357,29 @@ public class DomesticPaymentJourneyService {
                 : "I still need these details before I can prepare the domestic payment: "
                         + String.join(", ", missing) + ".";
 
+        // Same date-picker affordance on the Current draft card so the user can fill in the
+        // payment date by clicking the control instead of typing. submitOnChange=true means the
+        // FE auto-fires a SUBMIT_FORM event on pick, so the next assistant turn shows the date
+        // applied. The chat input still works for typing dates the LLM understands.
+        Map<String, Object> metadata = Map.of(
+                "editableFields", List.of(editablePaymentDateField(draft, true))
+        );
+
         return assistantMessage(record.session().sessionId(), List.of(
                 textBlock("Need more details", prompt),
-                summaryBlock("Current draft", draftFields(draft), null)
+                summaryBlock("Current draft", draftFields(draft), metadata)
         ));
+    }
+
+    private Map<String, Object> editablePaymentDateField(PaymentDraft draft, boolean submitOnChange) {
+        Map<String, Object> field = new HashMap<>();
+        field.put("label", "Payment date");
+        field.put("fieldId", "paymentDate");
+        field.put("fieldType", "DATE");
+        field.put("value", draft.paymentDate() == null ? "" : draft.paymentDate().toString());
+        field.put("minDate", LocalDate.now().toString());
+        field.put("submitOnChange", submitOnChange);
+        return field;
     }
 
     private static boolean isNewPayeeQuery(PaymentDraft draft, String payeeQuery) {
@@ -395,16 +417,10 @@ public class DomesticPaymentJourneyService {
                 Map.of("id", "CONFIRM_PAYMENT", "label", "Confirm payment"),
                 Map.of("id", "CANCEL_PAYMENT", "label", "Cancel", "tone", "secondary")
         ));
-        // Hint to the FE that the payment-date field can be edited inline. The FE renders a date
-        // picker for the matching field label, and on confirm sends the picked date alongside the
-        // CLICK_ACTION so the backend can update the draft before executing.
-        metadata.put("editableFields", List.of(Map.of(
-                "label", "Payment date",
-                "fieldId", "paymentDate",
-                "fieldType", "DATE",
-                "value", draft.paymentDate() == null ? "" : draft.paymentDate().toString(),
-                "minDate", LocalDate.now().toString()
-        )));
+        // Hint to the FE that the payment-date field can be edited inline. submitOnChange=false
+        // means the picked value is held locally and only sent on the CONFIRM_PAYMENT click, so
+        // the user does not generate noisy turns while reviewing the draft.
+        metadata.put("editableFields", List.of(editablePaymentDateField(draft, false)));
 
         return assistantMessage(record.session().sessionId(), List.of(
                 textBlock("Awaiting confirmation",

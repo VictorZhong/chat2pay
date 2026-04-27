@@ -10,3 +10,6 @@ chat2pay-web/vite.config.js
 chat2pay-web/vite.config.d.ts
 chat2pay-web/tailwind.config.js
 chat2pay-web/tailwind.config.d.ts
+
+.claude
+.idea

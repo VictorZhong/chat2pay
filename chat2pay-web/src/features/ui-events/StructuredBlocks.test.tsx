@@ -173,6 +173,49 @@ describe('StructuredBlock', () => {
     });
   });
 
+  it('renders a date picker for a pending payment-date field and auto-submits SUBMIT_FORM on change', () => {
+    const onSubmit = vi.fn();
+    const block: ContentBlock = {
+      blockId: 'blk_summary_pending',
+      type: 'SUMMARY_CARD',
+      title: 'Current draft',
+      fields: [
+        { label: 'Payee', value: 'Alice Chan' },
+        { label: 'Amount', value: 'HKD 100.00' },
+        { label: 'Payment date', value: 'Pending' },
+      ],
+      metadata: {
+        editableFields: [
+          {
+            label: 'Payment date',
+            fieldId: 'paymentDate',
+            fieldType: 'DATE',
+            value: '',
+            minDate: '2026-04-27',
+            submitOnChange: true,
+          },
+        ],
+      },
+    };
+
+    render(<StructuredBlock messageId="msg_1" block={block} onSubmit={onSubmit} />);
+
+    expect(screen.queryByText('Pending')).not.toBeInTheDocument();
+    expect(screen.queryByText('Needed')).not.toBeInTheDocument();
+    const dateInputs = screen.getAllByDisplayValue('');
+    const dateInput = dateInputs.find((node) => (node as HTMLInputElement).type === 'date') as HTMLInputElement;
+    expect(dateInput).toBeDefined();
+
+    fireEvent.change(dateInput, { target: { value: '2026-05-15' } });
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      eventType: 'SUBMIT_FORM',
+      sourceMessageId: 'msg_1',
+      sourceBlockId: 'blk_summary_pending',
+      formValues: { paymentDate: '2026-05-15' },
+    });
+  });
+
   it('disables summary actions without showing a loading state', () => {
     const block: ContentBlock = {
       blockId: 'blk_summary_3',

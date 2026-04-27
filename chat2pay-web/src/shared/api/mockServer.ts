@@ -378,8 +378,22 @@ function buildMissingDetailsBlocks(draft: PaymentDraft): ContentBlock[] {
 
   return [
     buildTextBlock(prompt, 'Need more details'),
-    buildSummaryCard('Current draft', draftSummaryFields(draft)),
+    buildSummaryCard('Current draft', draftSummaryFields(draft), {
+      editableFields: [editablePaymentDateField(draft, true)],
+    }),
   ];
+}
+
+function editablePaymentDateField(draft: PaymentDraft, submitOnChange: boolean) {
+  const today = new Date().toISOString().slice(0, 10);
+  return {
+    label: 'Payment date',
+    fieldId: 'paymentDate',
+    fieldType: 'DATE',
+    value: draft.paymentDate ?? '',
+    minDate: today,
+    submitOnChange,
+  };
 }
 
 function buildPayeeSelectionBlocks(query: string, matches: RegisteredPayee[]): ContentBlock[] {
@@ -406,20 +420,11 @@ function confirmationActions() {
 }
 
 function buildConfirmationBlocks(draft: PaymentDraft): ContentBlock[] {
-  const today = new Date().toISOString().slice(0, 10);
   return [
     buildTextBlock('Please confirm the payee, amount, and payment date before I submit the domestic payment.', 'Awaiting confirmation'),
     buildSummaryCard('Domestic payment summary', draftSummaryFields(draft), {
       actions: confirmationActions(),
-      editableFields: [
-        {
-          label: 'Payment date',
-          fieldId: 'paymentDate',
-          fieldType: 'DATE',
-          value: draft.paymentDate ?? '',
-          minDate: today,
-        },
-      ],
+      editableFields: [editablePaymentDateField(draft, false)],
     }),
   ];
 }
@@ -795,7 +800,9 @@ function applyDomesticPaymentSlots(
           'Registered payee not found',
           `I could not find a registered payee matching "${draft.payeeQueryText}". Please try another payee name.`,
         ),
-        buildSummaryCard('Current draft', draftSummaryFields(draft)),
+        buildSummaryCard('Current draft', draftSummaryFields(draft), {
+          editableFields: [editablePaymentDateField(draft, true)],
+        }),
       ]),
       userMessage,
     );

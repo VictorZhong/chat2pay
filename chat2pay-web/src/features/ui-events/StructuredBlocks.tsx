@@ -45,6 +45,7 @@ type EditableField = {
   fieldType: 'DATE';
   value?: string | null;
   minDate?: string | null;
+  submitOnChange: boolean;
 };
 
 function blockEditableFields(block: SummaryCardBlock): EditableField[] {
@@ -63,6 +64,7 @@ function blockEditableFields(block: SummaryCardBlock): EditableField[] {
       fieldType: 'DATE',
       value: cleanText(item.value),
       minDate: cleanText(item.minDate),
+      submitOnChange: item.submitOnChange === true,
     });
   }
   return result;
@@ -398,6 +400,18 @@ function SummaryCardView({
       ? editValues
       : undefined;
 
+  const handleEditableChange = (editable: EditableField, nextValue: string) => {
+    setEditValues((current) => ({ ...current, [editable.fieldId]: nextValue }));
+    if (editable.submitOnChange && nextValue) {
+      onSubmit({
+        eventType: 'SUBMIT_FORM',
+        sourceMessageId: messageId,
+        sourceBlockId: block.blockId,
+        formValues: { [editable.fieldId]: nextValue },
+      });
+    }
+  };
+
   return (
     <div className="brand-panel bg-[linear-gradient(180deg,#ffffff_0%,#fcfcfc_100%)] p-5">
       <div className="mb-5 flex items-center justify-between gap-4">
@@ -413,30 +427,25 @@ function SummaryCardView({
               key={`${field.label}-${field.value}`}
               className={cn(
                 'grid gap-1 border-b border-brand-line py-3 md:grid-cols-[160px_1fr]',
-                pending && 'border-l-4 border-l-brand-red bg-[#fff4f5] px-3',
+                pending && !editable && 'border-l-4 border-l-brand-red bg-[#fff4f5] px-3',
               )}
             >
               <div className="flex items-center gap-2">
                 <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-gray">{field.label}</p>
-                {pending ? (
+                {pending && !editable ? (
                   <span className="border border-[#e8a7ad] bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-brand-red">
                     Needed
                   </span>
                 ) : null}
               </div>
-              {editable && !pending ? (
+              {editable ? (
                 <input
                   type="date"
                   className="brand-input w-fit min-w-[160px]"
                   value={editValues[editable.fieldId] ?? ''}
                   min={editable.minDate ?? undefined}
                   disabled={disabled}
-                  onChange={(event) =>
-                    setEditValues((current) => ({
-                      ...current,
-                      [editable.fieldId]: event.target.value,
-                    }))
-                  }
+                  onChange={(event) => handleEditableChange(editable, event.target.value)}
                 />
               ) : (
                 <p className={cn('break-words text-sm font-medium', pending ? 'text-brand-red' : 'text-brand-black')}>
