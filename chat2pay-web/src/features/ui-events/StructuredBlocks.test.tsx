@@ -49,6 +49,89 @@ describe('StructuredBlock', () => {
     expect(screen.queryByText('DOMESTIC')).not.toBeInTheDocument();
   });
 
+  it('renders the hierarchical payee directory and disables International accounts on selection', () => {
+    const onSubmit = vi.fn();
+    const block: ContentBlock = {
+      blockId: 'blk_list_dir',
+      type: 'SELECTABLE_LIST',
+      title: 'Registered payee matches',
+      metadata: {
+        purpose: 'payee-account-selection',
+        payeeCount: 1,
+        payeePageSize: 10,
+        accountPageSize: 10,
+        payees: [
+          {
+            contactId: 'contact_lisa',
+            nickName: 'LISA CHEUNG',
+            contactFullName: 'CUSTOMER ID760770',
+            accountCount: 2,
+            accounts: [
+              {
+                addressId: 'addr_local_1',
+                bankCode: '004',
+                bankName: 'HSBC',
+                accountNumber: '118-085513-888',
+                accountProductType: 'HSBC HKD Savings',
+                payeeAccountLabel: 'Local',
+                accountLimit: '300000.00',
+                accountLimitCurrency: 'HKD',
+                effectiveRemittanceCurrency: 'HKD',
+                selectable: true,
+              },
+              {
+                addressId: 'addr_intl_1',
+                bankCode: '004',
+                bankName: 'HSBC',
+                accountNumber: '118-085513-888',
+                accountProductType: 'HSBC USD Savings',
+                payeeAccountLabel: 'International',
+                accountLimit: '300000.00',
+                accountLimitCurrency: 'HKD',
+                remittanceCurrencyCode: 'USD',
+                effectiveRemittanceCurrency: 'USD',
+                selectable: false,
+              },
+            ],
+          },
+        ],
+      },
+      items: [
+        {
+          itemId: 'addr_local_1',
+          label: 'LISA CHEUNG',
+          description: 'HSBC • HSBC HKD Savings - 118-085513-888',
+          metadata: {},
+        },
+        {
+          itemId: 'addr_intl_1',
+          label: 'LISA CHEUNG',
+          description: 'HSBC • HSBC USD Savings - 118-085513-888',
+          metadata: {},
+        },
+      ],
+    };
+
+    render(<StructuredBlock messageId="msg_dir" block={block} onSubmit={onSubmit} />);
+
+    // Single payee → expanded by default. Both badges visible, Local + International.
+    expect(screen.getByText('Local')).toBeInTheDocument();
+    expect(screen.getByText('International')).toBeInTheDocument();
+
+    const chooseButtons = screen.getAllByRole('button', { name: /choose/i });
+    expect(chooseButtons).toHaveLength(1);
+    const unavailable = screen.getByRole('button', { name: /unavailable/i });
+    expect(unavailable).toBeDisabled();
+
+    fireEvent.click(chooseButtons[0]);
+    expect(onSubmit).toHaveBeenCalledWith({
+      eventType: 'SELECT_ITEM',
+      sourceMessageId: 'msg_dir',
+      sourceBlockId: 'blk_list_dir',
+      selectedItemId: 'addr_local_1',
+    });
+  });
+
   it('renders payee selection cards and submits the selected item', () => {
     const onSubmit = vi.fn();
     const block: ContentBlock = {

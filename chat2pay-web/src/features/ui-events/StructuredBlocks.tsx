@@ -231,8 +231,13 @@ function PayeeCardContent({ payee }: { payee: PayeeCardData }) {
 }
 
 function PayeeResultsCardList({ block }: { block: SummaryCardBlock }) {
-  const payees = payeesFromSummaryBlock(block);
+  const directory = parsePayeeDirectory(block.metadata);
+  if (directory.length) {
+    return <PayeeDirectory title={block.title} payees={directory} mode="view" />;
+  }
 
+  // Legacy flat fallback for older payloads.
+  const payees = payeesFromSummaryBlock(block);
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-end justify-between gap-3 border-b border-brand-line pb-3">
@@ -255,6 +260,411 @@ function PayeeResultsCardList({ block }: { block: SummaryCardBlock }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Hierarchical payee directory (one payee with N accounts) with pagination at
+// both levels. Used both for the read-only registered-payee-results listing and
+// for the payee-account-selection card in the AWAITING_PAYEE_SELECTION state.
+// ---------------------------------------------------------------------------
+
+type PayeeAccountNode = {
+  addressId: string;
+  bankCode: string | null;
+  bankName: string | null;
+  accountNumber: string | null;
+  accountProductType: string | null;
+  payeeAccountLabel: string | null;
+  accountLimit: string | null;
+  accountLimitCurrency: string | null;
+  remittanceCurrencyCode: string | null;
+  effectiveRemittanceCurrency: string | null;
+  selectable: boolean;
+};
+
+type PayeeNode = {
+  contactId: string | null;
+  nickName: string | null;
+  contactFullName: string | null;
+  accounts: PayeeAccountNode[];
+};
+
+function parsePayeeDirectory(metadata: Record<string, unknown> | null | undefined): PayeeNode[] {
+  const raw = metadata?.payees;
+  if (!Array.isArray(raw)) return [];
+  const result: PayeeNode[] = [];
+  for (const item of raw) {
+    if (!isRecord(item)) continue;
+    const accountsRaw = item.accounts;
+    if (!Array.isArray(accountsRaw)) continue;
+    const accounts: PayeeAccountNode[] = [];
+    for (const a of accountsRaw) {
+      if (!isRecord(a)) continue;
+      const addressId = cleanText(a.addressId);
+      if (!addressId) continue;
+      accounts.push({
+        addressId,
+        bankCode: cleanText(a.bankCode),
+        bankName: cleanText(a.bankName),
+        accountNumber: cleanText(a.accountNumber),
+        accountProductType: cleanText(a.accountProductType),
+        payeeAccountLabel: cleanText(a.payeeAccountLabel),
+        accountLimit: cleanText(a.accountLimit),
+        accountLimitCurrency: cleanText(a.accountLimitCurrency),
+        remittanceCurrencyCode: cleanText(a.remittanceCurrencyCode),
+        effectiveRemittanceCurrency: cleanText(a.effectiveRemittanceCurrency),
+        selectable: a.selectable !== false,
+      });
+    }
+    if (accounts.length === 0) continue;
+    result.push({
+      contactId: cleanText(item.contactId),
+      nickName: cleanText(item.nickName),
+      contactFullName: cleanText(item.contactFullName),
+      accounts,
+    });
+  }
+  return result;
+}
+
+function payeeMetadataPageSize(metadata: Record<string, unknown> | null | undefined,
+                               key: string, fallback: number): number {
+  const raw = metadata?.[key];
+  if (typeof raw === 'number' && raw > 0 && Number.isFinite(raw)) return Math.floor(raw);
+  return fallback;
+}
+
+function PayeeDirectory({
+  title,
+  payees,
+  mode,
+  payeePageSize = 10,
+  accountPageSize = 10,
+  onSelectAccount,
+  disabled = false,
+}: {
+  title: string;
+  payees: PayeeNode[];
+  mode: 'view' | 'select';
+  payeePageSize?: number;
+  accountPageSize?: number;
+  onSelectAccount?: (addressId: string) => void;
+  disabled?: boolean;
+}) {
+  const [payeePage, setPayeePage] = useState(0);
+  const [expandedKey, setExpandedKey] = useState<string | null>(payees.length === 1 ? payeeKey(payees[0], 0) : null);
+
+  const totalAccounts = payees.reduce((acc, p) => acc + p.accounts.length, 0);
+  const totalPayeePages = Math.max(1, Math.ceil(payees.length / payeePageSize));
+  const safePage = Math.min(payeePage, totalPayeePages - 1);
+  const start = safePage * payeePageSize;
+  const visible = payees.slice(start, start + payeePageSize);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-end justify-between gap-3 border-b border-brand-line pb-3">
+        <h4 className="text-base font-semibold text-brand-black">{title}</h4>
+        <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-brand-gray">
+          {payees.length} {payees.length === 1 ? 'payee' : 'payees'} · {totalAccounts}{' '}
+          {totalAccounts === 1 ? 'account' : 'accounts'}
+        </span>
+      </div>
+
+      <div className="space-y-2">
+        {visible.map((payee, index) => {
+          const key = payeeKey(payee, start + index);
+          const expanded = expandedKey === key;
+          const selectableCount = payee.accounts.filter((a) => a.selectable).length;
+          return (
+            <PayeeRow
+              key={key}
+              payee={payee}
+              expanded={expanded}
+              onToggle={() => setExpandedKey(expanded ? null : key)}
+              mode={mode}
+              accountPageSize={accountPageSize}
+              onSelectAccount={onSelectAccount}
+              disabled={disabled}
+              selectableCount={selectableCount}
+            />
+          );
+        })}
+      </div>
+
+      {totalPayeePages > 1 ? (
+        <Pagination
+          page={safePage}
+          totalPages={totalPayeePages}
+          onPageChange={setPayeePage}
+          itemLabel="payees"
+          totalItems={payees.length}
+          pageSize={payeePageSize}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function payeeKey(payee: PayeeNode, index: number): string {
+  return payee.contactId
+    ?? `${payee.nickName ?? ''}|${payee.contactFullName ?? ''}|${index}`;
+}
+
+function PayeeRow({
+  payee,
+  expanded,
+  onToggle,
+  mode,
+  accountPageSize,
+  onSelectAccount,
+  disabled,
+  selectableCount,
+}: {
+  payee: PayeeNode;
+  expanded: boolean;
+  onToggle: () => void;
+  mode: 'view' | 'select';
+  accountPageSize: number;
+  onSelectAccount?: (addressId: string) => void;
+  disabled: boolean;
+  selectableCount: number;
+}) {
+  const showSelectable = mode === 'select';
+  const noSelectable = showSelectable && selectableCount === 0;
+  return (
+    <div className="border border-brand-line bg-white shadow-[0_10px_24px_rgba(17,17,17,0.06)]">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-start justify-between gap-3 p-4 text-left transition hover:bg-[#fff8f8]"
+      >
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-brand-gray">
+            {payee.nickName ? 'Nickname' : 'Payee'}
+          </p>
+          <h4 className="mt-1 break-words text-base font-semibold leading-6 text-brand-black">
+            {payee.nickName ?? payee.contactFullName ?? 'Unnamed payee'}
+          </h4>
+          {payee.contactFullName && payee.contactFullName !== payee.nickName ? (
+            <p className="mt-1 break-words text-sm text-brand-gray">{payee.contactFullName}</p>
+          ) : null}
+        </div>
+        <div className="flex flex-col items-end gap-2">
+          <span className="border border-brand-line bg-[#fafafa] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-brand-gray">
+            {payee.accounts.length} {payee.accounts.length === 1 ? 'account' : 'accounts'}
+          </span>
+          <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-brand-gray">
+            {expanded ? 'Hide' : 'Show'}
+          </span>
+        </div>
+      </button>
+
+      {expanded ? (
+        noSelectable ? (
+          <div className="border-t border-brand-line bg-[#fff4f5] px-4 py-3 text-sm text-brand-red">
+            No domestic-payable accounts. Cross-border payment is not supported in this POC.
+          </div>
+        ) : (
+          <PayeeAccountList
+            accounts={payee.accounts}
+            mode={mode}
+            pageSize={accountPageSize}
+            onSelect={onSelectAccount}
+            disabled={disabled}
+          />
+        )
+      ) : null}
+    </div>
+  );
+}
+
+function PayeeAccountList({
+  accounts,
+  mode,
+  pageSize,
+  onSelect,
+  disabled,
+}: {
+  accounts: PayeeAccountNode[];
+  mode: 'view' | 'select';
+  pageSize: number;
+  onSelect?: (addressId: string) => void;
+  disabled: boolean;
+}) {
+  const [page, setPage] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(accounts.length / pageSize));
+  const safePage = Math.min(page, totalPages - 1);
+  const start = safePage * pageSize;
+  const visible = accounts.slice(start, start + pageSize);
+  const showSelect = mode === 'select';
+
+  return (
+    <div className="border-t border-brand-line bg-[#fcfcfc]">
+      <div className="grid gap-2 p-4">
+        {visible.map((account) => (
+          <PayeeAccountCard
+            key={account.addressId}
+            account={account}
+            mode={mode}
+            disabled={disabled}
+            onSelect={showSelect ? onSelect : undefined}
+          />
+        ))}
+      </div>
+      {totalPages > 1 ? (
+        <div className="border-t border-brand-line px-4 pb-4">
+          <Pagination
+            page={safePage}
+            totalPages={totalPages}
+            onPageChange={setPage}
+            itemLabel="accounts"
+            totalItems={accounts.length}
+            pageSize={pageSize}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function PayeeAccountCard({
+  account,
+  mode,
+  disabled,
+  onSelect,
+}: {
+  account: PayeeAccountNode;
+  mode: 'view' | 'select';
+  disabled: boolean;
+  onSelect?: (addressId: string) => void;
+}) {
+  const limitDisplay =
+    account.accountLimit && account.accountLimitCurrency
+      ? `${account.accountLimitCurrency} ${formatNumber(account.accountLimit)}`
+      : account.accountLimit ?? null;
+  const currency = account.effectiveRemittanceCurrency ?? account.accountLimitCurrency;
+  const isInternational = account.payeeAccountLabel?.toLowerCase() === 'international';
+  const tooltip = isInternational
+    ? 'Cross-border payment is not supported in this POC.'
+    : undefined;
+
+  const card = (
+    <div className="grid gap-3 p-3 sm:grid-cols-[1fr_auto] sm:items-start">
+      <div className="grid gap-1">
+        <p className="break-all text-sm font-semibold text-brand-black">
+          {account.accountNumber ?? account.addressId}
+        </p>
+        <p className="text-xs text-brand-gray">
+          {account.accountProductType ?? '—'}
+          {account.bankName ? ` • ${account.bankName}` : ''}
+          {account.bankCode ? ` (${account.bankCode})` : ''}
+        </p>
+        <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
+          <PayeeLabelBadge label={account.payeeAccountLabel} />
+          {currency ? (
+            <span className="border border-brand-line bg-white px-2 py-0.5 font-semibold uppercase tracking-[0.12em] text-brand-gray">
+              {currency}
+            </span>
+          ) : null}
+          {limitDisplay ? (
+            <span className="text-[11px] text-brand-gray">Limit {limitDisplay}</span>
+          ) : null}
+        </div>
+      </div>
+      {mode === 'select' ? (
+        <BrandButton
+          variant={account.selectable ? 'primary' : 'secondary'}
+          disabled={disabled || !account.selectable}
+          onClick={() => onSelect?.(account.addressId)}
+        >
+          {account.selectable ? 'Choose' : 'Unavailable'}
+        </BrandButton>
+      ) : null}
+    </div>
+  );
+
+  return (
+    <div
+      className={cn(
+        'border border-brand-line bg-white',
+        !account.selectable && mode === 'select' ? 'opacity-70' : null,
+      )}
+      title={tooltip}
+    >
+      {card}
+    </div>
+  );
+}
+
+function PayeeLabelBadge({ label }: { label: string | null }) {
+  if (!label) return null;
+  const isInternational = label.toLowerCase() === 'international';
+  return (
+    <span
+      className={cn(
+        'border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em]',
+        isInternational
+          ? 'border-[#e8a7ad] bg-[#fff4f5] text-brand-red'
+          : 'border-[#8ecfca] bg-[#e4f3f1] text-[#00847f]',
+      )}
+    >
+      {label}
+    </span>
+  );
+}
+
+function Pagination({
+  page,
+  totalPages,
+  onPageChange,
+  itemLabel,
+  totalItems,
+  pageSize,
+}: {
+  page: number;
+  totalPages: number;
+  onPageChange: (next: number) => void;
+  itemLabel: string;
+  totalItems: number;
+  pageSize: number;
+}) {
+  const start = page * pageSize + 1;
+  const end = Math.min(totalItems, (page + 1) * pageSize);
+  return (
+    <div className="flex items-center justify-between gap-3 pt-3">
+      <span className="text-[11px] text-brand-gray">
+        Showing {start}–{end} of {totalItems} {itemLabel}
+      </span>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          className="border border-brand-line bg-white px-3 py-1 text-xs font-semibold text-brand-black disabled:opacity-50"
+          disabled={page === 0}
+          onClick={() => onPageChange(page - 1)}
+        >
+          Prev
+        </button>
+        <span className="text-[11px] text-brand-gray">
+          {page + 1} / {totalPages}
+        </span>
+        <button
+          type="button"
+          className="border border-brand-line bg-white px-3 py-1 text-xs font-semibold text-brand-black disabled:opacity-50"
+          disabled={page >= totalPages - 1}
+          onClick={() => onPageChange(page + 1)}
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function formatNumber(raw: string | null): string {
+  if (raw == null) return '';
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return raw;
+  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 function SelectableListCard({
   messageId,
   block,
@@ -267,6 +677,31 @@ function SelectableListCard({
   disabled?: boolean;
 }) {
   const isPayeeSelection = block.metadata?.purpose === 'payee-selection';
+  const isPayeeAccountSelection = block.metadata?.purpose === 'payee-account-selection';
+
+  if (isPayeeAccountSelection) {
+    const directory = parsePayeeDirectory(block.metadata);
+    if (directory.length) {
+      return (
+        <PayeeDirectory
+          title={block.title}
+          payees={directory}
+          mode="select"
+          payeePageSize={payeeMetadataPageSize(block.metadata, 'payeePageSize', 10)}
+          accountPageSize={payeeMetadataPageSize(block.metadata, 'accountPageSize', 10)}
+          disabled={disabled}
+          onSelectAccount={(addressId) =>
+            onSubmit({
+              eventType: 'SELECT_ITEM',
+              sourceMessageId: messageId,
+              sourceBlockId: block.blockId,
+              selectedItemId: addressId,
+            })
+          }
+        />
+      );
+    }
+  }
 
   return (
     <div className="space-y-3">

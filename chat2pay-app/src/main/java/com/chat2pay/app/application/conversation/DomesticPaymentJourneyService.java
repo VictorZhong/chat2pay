@@ -6,7 +6,6 @@ import com.chat2pay.app.api.dto.ChatDtos.PayeeSummary;
 import com.chat2pay.app.api.dto.ChatDtos.PaymentDraft;
 import com.chat2pay.app.api.dto.ContentBlock;
 import com.chat2pay.app.api.dto.ContentBlock.DisplayField;
-import com.chat2pay.app.api.dto.ContentBlock.SelectableItem;
 import com.chat2pay.app.application.conversation.intent.IntentAnalysis;
 import com.chat2pay.app.application.conversation.intent.IntentType;
 import com.chat2pay.app.application.conversation.tool.PaymentToolContext;
@@ -18,6 +17,8 @@ import com.chat2pay.app.integration.downstream.domestic.DomesticPaymentClient;
 import com.chat2pay.app.integration.downstream.domestic.DomesticPaymentClient.DomesticPaymentRequest;
 import com.chat2pay.app.integration.downstream.domestic.DomesticPaymentClient.PaymentConfirmationResult;
 import com.chat2pay.app.persistence.repository.PayeeStore;
+import com.chat2pay.app.persistence.repository.PayeeStore.PayeeAccountRef;
+import com.chat2pay.app.persistence.repository.PayeeStore.RegisteredAccount;
 import com.chat2pay.app.persistence.repository.PayeeStore.RegisteredPayee;
 import com.chat2pay.app.persistence.repository.ProfileStore;
 import com.chat2pay.app.persistence.repository.SessionStore.SessionRecord;
@@ -28,10 +29,10 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.HashMap;
 
 @Service
 public class DomesticPaymentJourneyService {
@@ -74,19 +75,23 @@ public class DomesticPaymentJourneyService {
             Map<String, Object> result = new HashMap<>();
             result.put("ok", true);
             if (query != null) result.put("query", query);
-            result.put("match_count", view.matches().size());
+            result.put("payee_count", view.matches().size());
+            result.put("account_count", view.matches().stream()
+                    .mapToInt(p -> p.accounts().size()).sum());
             result.put("payees", view.matches().stream()
                     .map(p -> Map.of(
-                            "payee_id", p.summary().payeeId(),
-                            "name", p.summary().name(),
-                            "bank_code", p.summary().bankCode(),
-                            "bank_name", p.summary().bankName(),
-                            "account_number", p.summary().accountNumber(),
-                            "display_label", p.summary().displayLabel()
+                            "nick_name", nullSafe(p.nickName()),
+                            "contact_full_name", nullSafe(p.contactFullName()),
+                            "account_count", p.accounts().size(),
+                            "accounts", p.accounts().stream().map(this::accountToToolMap).toList()
                     ))
                     .toList());
+            // Short-circuit: render the directory now so the LLM does not get a chance to also
+            // dump payee names in plain text on a follow-up turn (which is what produced the
+            // "Your registered payees are: ..." paragraph the user disliked).
+            ChatMessage terminal = assistantMessage(context.record().session().sessionId(), view.blocks());
             return new PaymentToolExecution(context.toolCall().id(), context.toolCall().name(),
-                    result, null, view.blocks());
+                    result, terminal, List.of());
         } catch (RuntimeException ex) {
             return new PaymentToolExecution(context.toolCall().id(), context.toolCall().name(),
                     Map.of("ok", false, "error", "registered_payee_lookup_failed",
@@ -140,45 +145,51 @@ public class DomesticPaymentJourneyService {
             ));
         }
 
-        if (matches.size() > 1) {
-            stateMachine.transition(record, ConversationState.AWAITING_PAYEE_SELECTION, ChatSessionStatus.ACTIVE);
-            stateMachine.titleFromDraft(record, draft);
-            List<SelectableItem> items = matches.stream().map(p ->
-                    new SelectableItem(p.summary().payeeId(), p.summary().name(),
-                            p.summary().bankName() + " • " + p.summary().displayLabel(),
-                            null, payeeMetadata(p.summary()))).toList();
-            return assistantMessage(record.session().sessionId(), List.of(
-                    textBlock("Choose payee",
-                            "I found more than one registered payee for \"" + draft.payeeQueryText()
-                                    + "\". Please choose the correct one."),
-                    blocks.selectableListBlock("Registered payee matches",
-                            items, Map.of("purpose", "payee-selection"))
-            ));
+        // Auto-select only when there is exactly one payee with exactly one selectable
+        // (Local) account. Anything more ambiguous (multiple payees, or multiple accounts on
+        // a single payee) must go through the explicit selection card below.
+        if (matches.size() == 1) {
+            RegisteredPayee onlyPayee = matches.get(0);
+            List<RegisteredAccount> selectable = selectableAccounts(onlyPayee);
+            if (selectable.isEmpty()) {
+                return noSelectableAccountsFound(record, onlyPayee);
+            }
+            if (selectable.size() == 1) {
+                draft = stateMachine.updateDraft(draft, draft.payeeQueryText(),
+                        PayeeStore.toSummary(onlyPayee, selectable.get(0)),
+                        draft.amount(), draft.paymentDate(), draft.status(), null);
+                record.setSession(stateMachine.withDraft(record.session(), draft));
+                if (draft.amount() == null || draft.paymentDate() == null) return askForMissingDetails(record, draft);
+                return prepareConfirmation(record, draft);
+            }
         }
 
-        draft = stateMachine.updateDraft(draft, draft.payeeQueryText(), matches.get(0).summary(),
-                draft.amount(), draft.paymentDate(), draft.status(), null);
-        record.setSession(stateMachine.withDraft(record.session(), draft));
-
-        if (draft.amount() == null || draft.paymentDate() == null) return askForMissingDetails(record, draft);
-        return prepareConfirmation(record, draft);
+        return askToChoosePayeeAccount(record, draft, matches);
     }
 
-    public ChatMessage selectPayee(SessionRecord record, String selectedId) {
-        if (selectedId == null) {
+    public ChatMessage selectPayee(SessionRecord record, String selectedAddressId) {
+        if (selectedAddressId == null) {
             return assistantMessage(record.session().sessionId(), List.of(
                     errorBlock("Invalid selection", "No item was selected.")));
         }
-        var payee = payees.findById(record.profileId(), selectedId).orElse(null);
+        PayeeAccountRef ref = payees.findAccount(record.profileId(), selectedAddressId).orElse(null);
         PaymentDraft draft = record.session().activeDraft();
-        if (payee == null || draft == null) {
+        if (ref == null || draft == null) {
             return assistantMessage(record.session().sessionId(), List.of(
-                    errorBlock("Selection expired", "The selected payee is no longer available.")));
+                    errorBlock("Selection expired", "The selected payee account is no longer available.")));
+        }
+        if (ref.account().isInternational()) {
+            return assistantMessage(record.session().sessionId(), List.of(
+                    infoBlock("Cross-border payment not supported",
+                            "The selected account is for cross-border / international payment, which "
+                                    + "is not supported in this POC. Please pick a Local account.")
+            ));
         }
 
+        PayeeSummary summary = PayeeStore.toSummary(ref.payee(), ref.account());
         boolean payeeChanged = draft.selectedPayee() != null
-                && !draft.selectedPayee().payeeId().equals(payee.summary().payeeId());
-        draft = stateMachine.updateDraft(draft, draft.payeeQueryText(), payee.summary(),
+                && !draft.selectedPayee().payeeId().equals(summary.payeeId());
+        draft = stateMachine.updateDraft(draft, draft.payeeQueryText(), summary,
                 payeeChanged ? null : draft.amount(),
                 payeeChanged ? null : draft.paymentDate(),
                 draft.status(), null);
@@ -429,6 +440,57 @@ public class DomesticPaymentJourneyService {
         ));
     }
 
+    private ChatMessage askToChoosePayeeAccount(SessionRecord record, PaymentDraft draft,
+                                                List<RegisteredPayee> matches) {
+        stateMachine.transition(record, ConversationState.AWAITING_PAYEE_SELECTION, ChatSessionStatus.ACTIVE);
+        stateMachine.titleFromDraft(record, draft);
+
+        // Build a flat selectable-item list (every account is a leaf the FE can SELECT_ITEM on)
+        // plus a hierarchical `payees` metadata so the FE can render two-level cards with
+        // pagination at both levels.
+        List<ContentBlock.SelectableItem> items = new ArrayList<>();
+        for (RegisteredPayee payee : matches) {
+            for (RegisteredAccount account : payee.accounts()) {
+                items.add(new ContentBlock.SelectableItem(
+                        account.addressId(),
+                        payee.displayName(),
+                        accountDescriptor(account),
+                        null,
+                        accountSelectionMetadata(payee, account)
+                ));
+            }
+        }
+        Map<String, Object> metadata = new HashMap<>();
+        metadata.put("purpose", "payee-account-selection");
+        metadata.put("payeeCount", matches.size());
+        metadata.put("payees", matches.stream()
+                .map(this::payeeHierarchyMetadata)
+                .toList());
+        metadata.put("payeePageSize", 10);
+        metadata.put("accountPageSize", 10);
+
+        String headline = matches.size() == 1
+                ? "I found one registered payee for \"" + draft.payeeQueryText()
+                        + "\" with multiple accounts. Please choose the account to pay."
+                : "I found " + matches.size() + " registered payees for \""
+                        + draft.payeeQueryText() + "\". Please choose the payee and account.";
+
+        return assistantMessage(record.session().sessionId(), List.of(
+                textBlock("Choose payee", headline),
+                blocks.selectableListBlock("Registered payee matches", items, metadata)
+        ));
+    }
+
+    private ChatMessage noSelectableAccountsFound(SessionRecord record, RegisteredPayee payee) {
+        stateMachine.transition(record, ConversationState.COLLECTING_DETAILS, ChatSessionStatus.ACTIVE);
+        return assistantMessage(record.session().sessionId(), List.of(
+                infoBlock("No domestic accounts available",
+                        "I found \"" + payee.displayName() + "\" but none of the linked accounts are "
+                                + "available for domestic payment. Cross-border accounts are not "
+                                + "supported in this POC.")
+        ));
+    }
+
     private PayeeLookupView buildPayeeLookupView(SessionRecord record, String query) {
         List<RegisteredPayee> matches = query != null
                 ? payees.findByQuery(record.profileId(), query)
@@ -447,29 +509,101 @@ public class DomesticPaymentJourneyService {
             ));
         }
 
-        List<DisplayField> fields = new ArrayList<>();
-        for (int i = 0; i < matches.size(); i++) {
-            PayeeSummary p = matches.get(i).summary();
-            fields.add(new DisplayField(
-                    matches.size() == 1 ? p.name() : "Match " + (i + 1),
-                    p.name() + " • " + p.bankName() + " • " + p.displayLabel()));
-        }
-
+        int totalAccounts = matches.stream().mapToInt(p -> p.accounts().size()).sum();
         String headline = query != null
                 ? "I found " + matches.size() + " registered payee" + (matches.size() == 1 ? "" : "s")
-                  + " matching \"" + query + "\"."
-                : "I found " + matches.size() + " registered payees for this profile.";
+                        + " (" + totalAccounts + " account" + (totalAccounts == 1 ? "" : "s")
+                        + ") matching \"" + query + "\"."
+                : "I found " + matches.size() + " registered payee" + (matches.size() == 1 ? "" : "s")
+                        + " with " + totalAccounts + " account" + (totalAccounts == 1 ? "" : "s")
+                        + " in total.";
+
+        Map<String, Object> metadata = new HashMap<>();
+        metadata.put("purpose", "registered-payee-results");
+        metadata.put("payeeCount", matches.size());
+        metadata.put("accountCount", totalAccounts);
+        metadata.put("payees", matches.stream().map(this::payeeHierarchyMetadata).toList());
+        metadata.put("payeePageSize", 10);
+        metadata.put("accountPageSize", 10);
 
         return new PayeeLookupView(matches, List.of(
                 textBlock("Registered payees", headline),
                 summaryBlock(matches.size() == 1 ? "Registered payee" : "Registered payee results",
-                        fields,
-                        Map.of(
-                                "purpose", "registered-payee-results",
-                                "payeeCount", matches.size(),
-                                "payees", matches.stream().map(p -> payeeMetadata(p.summary())).toList()
-                        ))
+                        // The fields list is intentionally empty — the FE renders the
+                        // hierarchical UI from metadata.payees. We keep an empty list so the
+                        // existing SUMMARY_CARD shape stays valid.
+                        List.of(),
+                        metadata)
         ));
+    }
+
+    private List<RegisteredAccount> selectableAccounts(RegisteredPayee payee) {
+        return payee.accounts().stream().filter(a -> !a.isInternational()).toList();
+    }
+
+    private String accountDescriptor(RegisteredAccount account) {
+        StringBuilder b = new StringBuilder();
+        if (account.bankName() != null && !account.bankName().isBlank()) {
+            b.append(account.bankName()).append(" • ");
+        }
+        b.append(account.displayLabel());
+        return b.toString();
+    }
+
+    private Map<String, Object> payeeHierarchyMetadata(RegisteredPayee payee) {
+        Map<String, Object> out = new HashMap<>();
+        putIfPresent(out, "contactId", payee.contactId());
+        putIfPresent(out, "nickName", payee.nickName());
+        putIfPresent(out, "contactFullName", payee.contactFullName());
+        out.put("accountCount", payee.accounts().size());
+        out.put("accounts", payee.accounts().stream().map(this::accountMetadata).toList());
+        return out;
+    }
+
+    private Map<String, Object> accountMetadata(RegisteredAccount account) {
+        Map<String, Object> out = new HashMap<>();
+        putIfPresent(out, "addressId", account.addressId());
+        putIfPresent(out, "bankCode", account.bankCode());
+        putIfPresent(out, "bankName", account.bankName());
+        putIfPresent(out, "accountNumber", account.accountNumber());
+        putIfPresent(out, "accountProductType", account.accountProductType());
+        putIfPresent(out, "accountProductCode", account.accountProductCode());
+        putIfPresent(out, "payeeAccountLabel", account.payeeAccountLabel());
+        if (account.accountLimit() != null) {
+            out.put("accountLimit", account.accountLimit().toPlainString());
+        }
+        putIfPresent(out, "accountLimitCurrency", account.accountLimitCurrency());
+        putIfPresent(out, "remittanceCurrencyCode", account.remittanceCurrencyCode());
+        putIfPresent(out, "effectiveRemittanceCurrency", account.effectiveRemittanceCurrency());
+        out.put("selectable", !account.isInternational());
+        return out;
+    }
+
+    private Map<String, Object> accountSelectionMetadata(RegisteredPayee payee, RegisteredAccount account) {
+        Map<String, Object> out = accountMetadata(account);
+        putIfPresent(out, "payeeNickName", payee.nickName());
+        putIfPresent(out, "payeeContactFullName", payee.contactFullName());
+        return out;
+    }
+
+    private Map<String, Object> accountToToolMap(RegisteredAccount account) {
+        Map<String, Object> out = new HashMap<>();
+        out.put("address_id", nullSafe(account.addressId()));
+        out.put("bank_code", nullSafe(account.bankCode()));
+        out.put("bank_name", nullSafe(account.bankName()));
+        out.put("account_number", nullSafe(account.accountNumber()));
+        out.put("account_product_type", nullSafe(account.accountProductType()));
+        out.put("payee_account_label", nullSafe(account.payeeAccountLabel()));
+        out.put("remittance_currency", nullSafe(account.effectiveRemittanceCurrency()));
+        if (account.accountLimit() != null) {
+            out.put("account_limit", account.accountLimit().toPlainString());
+        }
+        out.put("account_limit_currency", nullSafe(account.accountLimitCurrency()));
+        return out;
+    }
+
+    private static String nullSafe(String value) {
+        return value == null ? "" : value;
     }
 
     private ChatMessage payeeLookupFailed(SessionRecord record, RuntimeException ex) {
@@ -517,18 +651,6 @@ public class DomesticPaymentJourneyService {
 
     private List<DisplayField> draftFields(PaymentDraft d) {
         return blocks.draftFields(d);
-    }
-
-    private static Map<String, Object> payeeMetadata(PayeeSummary p) {
-        Map<String, Object> metadata = new HashMap<>();
-        putIfPresent(metadata, "payeeId", p.payeeId());
-        putIfPresent(metadata, "name", p.name());
-        putIfPresent(metadata, "payeeType", p.payeeType());
-        putIfPresent(metadata, "bankCode", p.bankCode());
-        putIfPresent(metadata, "bankName", p.bankName());
-        putIfPresent(metadata, "accountNumber", p.accountNumber());
-        putIfPresent(metadata, "displayLabel", p.displayLabel());
-        return metadata;
     }
 
     private static void putIfPresent(Map<String, Object> target, String key, String value) {

@@ -15,6 +15,8 @@ import com.chat2pay.app.domain.payment.PaymentType;
 import com.chat2pay.app.integration.downstream.domestic.DomesticPaymentClient;
 import com.chat2pay.app.integration.downstream.domestic.DomesticPaymentClient.PaymentConfirmationResult;
 import com.chat2pay.app.persistence.repository.PayeeStore;
+import com.chat2pay.app.persistence.repository.PayeeStore.PayeeAccountRef;
+import com.chat2pay.app.persistence.repository.PayeeStore.RegisteredAccount;
 import com.chat2pay.app.persistence.repository.PayeeStore.RegisteredPayee;
 import com.chat2pay.app.persistence.repository.ProfileStore;
 import com.chat2pay.app.persistence.repository.SessionStore.SessionRecord;
@@ -26,6 +28,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -104,16 +107,11 @@ class DomesticPaymentJourneyServiceTests {
     void changingPayeeClearsAmountAndDate() {
         PaymentDraft draft = draft(selectedPayee(), new BigDecimal("125.50"), LocalDate.now());
         SessionRecord record = recordWithDraft(draft, ConversationState.COLLECTING_DETAILS);
-        PayeeSummary bob = new PayeeSummary(
-                "payee_2",
-                "Bob Lee",
-                "DOMESTIC",
-                "004",
-                "Test Bank",
-                "998877",
-                "Savings - 998877"
-        );
-        when(payees.findByQuery("profile_1", "bob")).thenReturn(List.of(new RegisteredPayee(bob, List.of("bob"))));
+        RegisteredPayee bob = registeredPayee("contact_2", "Bob Lee",
+                List.of(localAccount("payee_2", "Bob Lee", "Test Bank", "998877", "Savings")));
+        when(payees.findByQuery("profile_1", "bob")).thenReturn(List.of(bob));
+        when(payees.findAccount("profile_1", "payee_2"))
+                .thenReturn(Optional.of(new PayeeAccountRef(bob, bob.accounts().get(0))));
 
         ChatMessage response = service().continueDomesticPayment(record, domesticIntent(
                 "bob", new BigDecimal("200"), LocalDate.now().plusDays(1)));
@@ -130,8 +128,10 @@ class DomesticPaymentJourneyServiceTests {
     void registeredPayeeLookupCarriesCardMetadataForTheUi() {
         SessionRecord record = recordWithDraft(draft(null, null, null), ConversationState.IDLE);
         when(payees.all("profile_1")).thenReturn(List.of(
-                new RegisteredPayee(selectedPayee(), List.of("alice")),
-                new RegisteredPayee(payee("payee_2", "Bob Lee", "Test Bank", "Savings - 998877"), List.of("bob"))
+                registeredPayee("contact_1", "Alice Chan",
+                        List.of(localAccount("payee_1", "Alice Chan", "Test Bank", "123456", "Current"))),
+                registeredPayee("contact_2", "Bob Lee",
+                        List.of(localAccount("payee_2", "Bob Lee", "Test Bank", "998877", "Savings")))
         ));
 
         ChatMessage response = service().handlePayeeLookup(record, null);
@@ -139,11 +139,20 @@ class DomesticPaymentJourneyServiceTests {
         ContentBlock.SummaryCardBlock block = (ContentBlock.SummaryCardBlock) response.contentBlocks().get(1);
         assertThat(block.metadata()).containsEntry("purpose", "registered-payee-results");
         assertThat(block.metadata()).containsEntry("payeeCount", 2);
+        assertThat(block.metadata()).containsEntry("accountCount", 2);
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> renderedPayees = (List<Map<String, Object>>) block.metadata().get("payees");
         assertThat(renderedPayees).hasSize(2);
-        assertThat(renderedPayees.get(0)).containsEntry("payeeId", "payee_1");
-        assertThat(renderedPayees.get(0)).containsEntry("bankName", "Test Bank");
+        assertThat(renderedPayees.get(0)).containsEntry("nickName", "Alice Chan");
+        assertThat(renderedPayees.get(0)).containsEntry("accountCount", 1);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> firstPayeeAccounts =
+                (List<Map<String, Object>>) renderedPayees.get(0).get("accounts");
+        assertThat(firstPayeeAccounts).hasSize(1);
+        assertThat(firstPayeeAccounts.get(0)).containsEntry("addressId", "payee_1");
+        assertThat(firstPayeeAccounts.get(0)).containsEntry("bankName", "Test Bank");
+        assertThat(firstPayeeAccounts.get(0)).containsEntry("payeeAccountLabel", "Local");
+        assertThat(firstPayeeAccounts.get(0)).containsEntry("selectable", true);
     }
 
     @Test
@@ -178,18 +187,50 @@ class DomesticPaymentJourneyServiceTests {
     void payeeSelectionCarriesStructuredPayeeMetadata() {
         SessionRecord record = recordWithDraft(draft(null, null, null), ConversationState.COLLECTING_DETAILS);
         when(payees.findByQuery("profile_1", "alice")).thenReturn(List.of(
-                new RegisteredPayee(selectedPayee(), List.of("alice")),
-                new RegisteredPayee(payee("payee_2", "Alice Savings", "Second Bank", "Savings - 223344"),
-                        List.of("alice"))
+                registeredPayee("contact_1", "Alice Chan",
+                        List.of(localAccount("payee_1", "Alice Chan", "Test Bank", "123456", "Current"))),
+                registeredPayee("contact_2", "Alice Savings",
+                        List.of(localAccount("payee_2", "Alice Savings", "Second Bank", "223344", "Savings")))
         ));
 
         ChatMessage response = service().continueDomesticPayment(record, domesticIntent("alice", null, null));
 
         ContentBlock.SelectableListBlock block = (ContentBlock.SelectableListBlock) response.contentBlocks().get(1);
-        assertThat(block.metadata()).containsEntry("purpose", "payee-selection");
+        assertThat(block.metadata()).containsEntry("purpose", "payee-account-selection");
+        assertThat(block.metadata()).containsEntry("payeeCount", 2);
         assertThat(block.items()).hasSize(2);
-        assertThat(block.items().get(0).metadata()).containsEntry("payeeId", "payee_1");
+        assertThat(block.items().get(0).itemId()).isEqualTo("payee_1");
+        assertThat(block.items().get(0).metadata()).containsEntry("addressId", "payee_1");
         assertThat(block.items().get(0).metadata()).containsEntry("accountNumber", "123456");
+        assertThat(block.items().get(0).metadata()).containsEntry("payeeAccountLabel", "Local");
+    }
+
+    @Test
+    void selectingInternationalAccountRejectsCrossBorderPayment() {
+        PaymentDraft draft = draft(null, null, null);
+        SessionRecord record = recordWithDraft(draft, ConversationState.AWAITING_PAYEE_SELECTION);
+        RegisteredAccount intlAccount = new RegisteredAccount(
+                "address_intl_1",
+                "2",
+                "004",
+                "Test Bank",
+                "999000111",
+                "USD Savings",
+                "USDAVSAV",
+                "International",
+                new BigDecimal("100000"),
+                "USD",
+                "USD"
+        );
+        RegisteredPayee payee = registeredPayee("contact_x", "Lisa Cheung", List.of(intlAccount));
+        when(payees.findAccount("profile_1", "address_intl_1"))
+                .thenReturn(Optional.of(new PayeeAccountRef(payee, intlAccount)));
+
+        ChatMessage response = service().selectPayee(record, "address_intl_1");
+
+        assertThat(record.session().activeDraft().selectedPayee()).isNull();
+        ContentBlock.InfoCardBlock block = (ContentBlock.InfoCardBlock) response.contentBlocks().get(0);
+        assertThat(block.title()).isEqualTo("Cross-border payment not supported");
     }
 
     private DomesticPaymentJourneyService service() {
@@ -278,6 +319,27 @@ class DomesticPaymentJourneyServiceTests {
                 bankName,
                 "998877",
                 displayLabel
+        );
+    }
+
+    private RegisteredPayee registeredPayee(String contactId, String displayName, List<RegisteredAccount> accounts) {
+        return new RegisteredPayee(contactId, displayName, displayName, List.of(displayName.toLowerCase()), accounts);
+    }
+
+    private RegisteredAccount localAccount(String addressId, String name, String bankName,
+                                           String accountNumber, String accountProductType) {
+        return new RegisteredAccount(
+                addressId,
+                "2",
+                "004",
+                bankName,
+                accountNumber,
+                accountProductType,
+                accountProductType.toUpperCase(),
+                "Local",
+                new BigDecimal("10000"),
+                "HKD",
+                "HKD"
         );
     }
 

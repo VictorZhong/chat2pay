@@ -21,6 +21,16 @@ import { createId } from '@/shared/lib/id';
 
 type RegisteredPayee = PayeeSummary & {
   aliases: string[];
+  // Mock fixtures group accounts under a contact via these fields. Production payloads come
+  // from the bank API in a hierarchical shape; here we keep the flat list for compatibility
+  // with the rest of the mock server but emit the directory metadata derived from it.
+  contactId: string;
+  contactFullName: string;
+  accountProductType: string;
+  payeeAccountLabel: 'Local' | 'International';
+  accountLimit: string;
+  accountLimitCurrency: string;
+  remittanceCurrencyCode?: string;
 };
 
 type MockSessionRecord = {
@@ -45,51 +55,103 @@ const REGISTERED_PAYEES: RegisteredPayee[] = [
   {
     payeeId: 'payee_bob_current',
     name: 'Bob Chan',
+    contactId: 'contact_bob',
+    contactFullName: 'CHAN TAI MING',
     payeeType: 'DOMESTIC_REGISTERED',
     bankCode: '004',
     bankName: 'HSBC Hong Kong',
     accountNumber: '123-456-789',
     displayLabel: 'CURRENT • 123-456-789',
+    accountProductType: 'HSBC HKD Current',
+    payeeAccountLabel: 'Local',
+    accountLimit: '50000.00',
+    accountLimitCurrency: 'HKD',
+    remittanceCurrencyCode: 'HKD',
     aliases: ['bob chan', 'bob'],
   },
   {
     payeeId: 'payee_bob_savings',
     name: 'Bob Chan',
+    contactId: 'contact_bob',
+    contactFullName: 'CHAN TAI MING',
     payeeType: 'DOMESTIC_REGISTERED',
     bankCode: '004',
     bankName: 'HSBC Hong Kong',
     accountNumber: '987-654-321',
     displayLabel: 'SAVINGS • 987-654-321',
+    accountProductType: 'HSBC HKD Savings',
+    payeeAccountLabel: 'Local',
+    accountLimit: '50000.00',
+    accountLimitCurrency: 'HKD',
+    remittanceCurrencyCode: 'HKD',
+    aliases: ['bob chan', 'bob'],
+  },
+  {
+    payeeId: 'payee_bob_intl',
+    name: 'Bob Chan',
+    contactId: 'contact_bob',
+    contactFullName: 'CHAN TAI MING',
+    payeeType: 'DOMESTIC_REGISTERED',
+    bankCode: '004',
+    bankName: 'HSBC Hong Kong',
+    accountNumber: '887-001-555',
+    displayLabel: 'USD SAVINGS • 887-001-555',
+    accountProductType: 'HSBC USD Savings',
+    payeeAccountLabel: 'International',
+    accountLimit: '20000.00',
+    accountLimitCurrency: 'USD',
+    remittanceCurrencyCode: 'USD',
     aliases: ['bob chan', 'bob'],
   },
   {
     payeeId: 'payee_sarah_salary',
     name: 'Sarah Wong',
+    contactId: 'contact_sarah',
+    contactFullName: 'WONG WAI MAN',
     payeeType: 'DOMESTIC_REGISTERED',
     bankCode: '012',
     bankName: 'Bank of China (Hong Kong)',
     accountNumber: '800-221-456',
     displayLabel: 'PAYROLL • 800-221-456',
+    accountProductType: 'BOCHK HKD Current',
+    payeeAccountLabel: 'Local',
+    accountLimit: '100000.00',
+    accountLimitCurrency: 'HKD',
+    remittanceCurrencyCode: 'HKD',
     aliases: ['sarah wong', 'sarah'],
   },
   {
     payeeId: 'payee_alex_ops',
     name: 'Alex Tan',
+    contactId: 'contact_alex',
+    contactFullName: 'TAN WEI HONG',
     payeeType: 'DOMESTIC_REGISTERED',
     bankCode: '024',
     bankName: 'Hang Seng Bank',
     accountNumber: '556-000-912',
     displayLabel: 'OPERATIONS • 556-000-912',
+    accountProductType: 'HSB HKD Current',
+    payeeAccountLabel: 'Local',
+    accountLimit: '30000.00',
+    accountLimitCurrency: 'HKD',
+    remittanceCurrencyCode: 'HKD',
     aliases: ['alex tan', 'alex'],
   },
   {
     payeeId: 'payee_michelle_vendor',
     name: 'Michelle Ng',
+    contactId: 'contact_michelle',
+    contactFullName: 'NG SIU LING',
     payeeType: 'DOMESTIC_REGISTERED',
     bankCode: '005',
     bankName: 'Citibank Hong Kong',
     accountNumber: '445-221-007',
     displayLabel: 'VENDOR • 445-221-007',
+    accountProductType: 'Citi HKD Current',
+    payeeAccountLabel: 'Local',
+    accountLimit: '15000.00',
+    accountLimitCurrency: 'HKD',
+    remittanceCurrencyCode: 'HKD',
     aliases: ['michelle ng', 'michelle'],
   },
 ];
@@ -397,17 +459,28 @@ function editablePaymentDateField(draft: PaymentDraft, submitOnChange: boolean) 
 }
 
 function buildPayeeSelectionBlocks(query: string, matches: RegisteredPayee[]): ContentBlock[] {
+  const contacts = groupPayeesByContact(matches);
+  const headline =
+    contacts.length === 1
+      ? `I found one registered payee for "${query}" with multiple accounts. Please choose the account to pay.`
+      : `I found ${contacts.length} registered payees for "${query}". Please choose the payee and account.`;
   return [
-    buildTextBlock(`I found more than one registered payee for "${query}". Please choose the correct one.`, 'Choose payee'),
+    buildTextBlock(headline, 'Choose payee'),
     buildSelectableList(
       'Registered payee matches',
-      matches.map((payee) => ({
-        itemId: payee.payeeId,
-        label: payee.name,
-        description: `${payee.bankName} • ${payee.displayLabel}`,
-        metadata: payeeCardMetadata(payee),
+      matches.map((account) => ({
+        itemId: account.payeeId,
+        label: account.name,
+        description: `${account.bankName} • ${account.displayLabel}`,
+        metadata: payeeAccountMetadata(account),
       })),
-      { purpose: 'payee-selection' },
+      {
+        purpose: 'payee-account-selection',
+        payeeCount: contacts.length,
+        payees: contacts.map(payeeContactMetadata),
+        payeePageSize: 10,
+        accountPageSize: 10,
+      },
     ),
   ];
 }
@@ -473,38 +546,31 @@ function buildLookupBlocks(query: string | null, matches: RegisteredPayee[]): Co
     ];
   }
 
+  const contacts = groupPayeesByContact(matches);
+  const totalAccounts = matches.length;
+  const headline = query
+    ? `I found ${contacts.length} registered payee${contacts.length === 1 ? '' : 's'} (${totalAccounts} ${
+        totalAccounts === 1 ? 'account' : 'accounts'
+      }) matching "${query}".`
+    : `I found ${contacts.length} registered payee${contacts.length === 1 ? '' : 's'} with ${totalAccounts} ${
+        totalAccounts === 1 ? 'account' : 'accounts'
+      } in total.`;
+
   return [
-    buildTextBlock(
-      query
-        ? `I found ${matches.length} registered payee${matches.length === 1 ? '' : 's'} matching "${query}".`
-        : `I found ${matches.length} registered payees for this profile.`,
-      'Registered payees',
-    ),
+    buildTextBlock(headline, 'Registered payees'),
     buildSummaryCard(
-      matches.length === 1 ? 'Registered payee' : 'Registered payee results',
-      matches.map((payee, index) => ({
-        label: matches.length === 1 ? payee.name : `Match ${index + 1}`,
-        value: `${payee.name} • ${payee.bankName} • ${payee.displayLabel}`,
-      })),
+      contacts.length === 1 ? 'Registered payee' : 'Registered payee results',
+      [],
       {
         purpose: 'registered-payee-results',
-        payeeCount: matches.length,
-        payees: matches.map(payeeCardMetadata),
+        payeeCount: contacts.length,
+        accountCount: totalAccounts,
+        payees: contacts.map(payeeContactMetadata),
+        payeePageSize: 10,
+        accountPageSize: 10,
       },
     ),
   ];
-}
-
-function payeeCardMetadata(payee: PayeeSummary): Record<string, string> {
-  return {
-    payeeId: payee.payeeId,
-    name: payee.name,
-    payeeType: payee.payeeType ?? '',
-    bankCode: payee.bankCode ?? '',
-    bankName: payee.bankName ?? '',
-    accountNumber: payee.accountNumber ?? '',
-    displayLabel: payee.displayLabel ?? '',
-  };
 }
 
 function extractAmount(text: string) {
@@ -584,10 +650,62 @@ function matchPayees(query: string | null) {
   return REGISTERED_PAYEES.filter(
     (payee) =>
       normalize(payee.name).includes(normalizedQuery) ||
+      normalize(payee.contactFullName).includes(normalizedQuery) ||
       payee.aliases.some(
         (alias) => alias.includes(normalizedQuery) || normalizedQuery.includes(alias),
       ),
   );
+}
+
+type MockPayeeContact = {
+  contactId: string;
+  nickName: string;
+  contactFullName: string;
+  accounts: RegisteredPayee[];
+};
+
+function groupPayeesByContact(payees: RegisteredPayee[]): MockPayeeContact[] {
+  const byContact = new Map<string, MockPayeeContact>();
+  for (const p of payees) {
+    let existing = byContact.get(p.contactId);
+    if (!existing) {
+      existing = {
+        contactId: p.contactId,
+        nickName: p.name,
+        contactFullName: p.contactFullName,
+        accounts: [],
+      };
+      byContact.set(p.contactId, existing);
+    }
+    existing.accounts.push(p);
+  }
+  return Array.from(byContact.values());
+}
+
+function payeeAccountMetadata(account: RegisteredPayee) {
+  return {
+    addressId: account.payeeId,
+    bankCode: account.bankCode ?? '',
+    bankName: account.bankName ?? '',
+    accountNumber: account.accountNumber ?? '',
+    accountProductType: account.accountProductType,
+    payeeAccountLabel: account.payeeAccountLabel,
+    accountLimit: account.accountLimit,
+    accountLimitCurrency: account.accountLimitCurrency,
+    remittanceCurrencyCode: account.remittanceCurrencyCode ?? account.accountLimitCurrency,
+    effectiveRemittanceCurrency: account.remittanceCurrencyCode ?? account.accountLimitCurrency,
+    selectable: account.payeeAccountLabel !== 'International',
+  };
+}
+
+function payeeContactMetadata(contact: MockPayeeContact) {
+  return {
+    contactId: contact.contactId,
+    nickName: contact.nickName,
+    contactFullName: contact.contactFullName,
+    accountCount: contact.accounts.length,
+    accounts: contact.accounts.map(payeeAccountMetadata),
+  };
 }
 
 function isInternationalIntent(text: string) {
@@ -952,7 +1070,20 @@ function handleUiTurn(record: MockSessionRecord, request: UiEventRequest, userMe
       return respond(
         record,
         buildAssistantMessage(record.session.sessionId, [
-          buildErrorCard('Selection expired', 'The selected payee is no longer available.'),
+          buildErrorCard('Selection expired', 'The selected payee account is no longer available.'),
+        ]),
+        userMessage,
+      );
+    }
+
+    if (selectedPayee.payeeAccountLabel === 'International') {
+      return respond(
+        record,
+        buildAssistantMessage(record.session.sessionId, [
+          buildInfoCard(
+            'Cross-border payment not supported',
+            'The selected account is for cross-border / international payment, which is not supported in this POC. Please pick a Local account.',
+          ),
         ]),
         userMessage,
       );

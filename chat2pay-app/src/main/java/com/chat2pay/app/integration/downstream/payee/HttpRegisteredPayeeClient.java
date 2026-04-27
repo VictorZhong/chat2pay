@@ -6,7 +6,6 @@ import com.chat2pay.app.persistence.repository.ProfileStore.SourceSystemContext;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
@@ -17,6 +16,7 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 
+import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -88,8 +88,8 @@ public class HttpRegisteredPayeeClient implements RegisteredPayeeClient {
         synchronized (cachedPayeesByProfile) {
             cachedPayeesByProfile.put(profileId, new CachedPayees(parsed, Instant.now()));
         }
-        log.debug("Downstream payee response parsed: profileId={} count={} payees={}",
-                profileId, parsed.size(), parsed);
+        log.debug("Downstream payee response parsed: profileId={} payeeCount={} accountCount={}",
+                profileId, parsed.size(), parsed.stream().mapToInt(p -> p.accounts().size()).sum());
         return parsed;
     }
 
@@ -124,169 +124,107 @@ public class HttpRegisteredPayeeClient implements RegisteredPayeeClient {
         return names;
     }
 
+    /**
+     * Parse the bank's payee response into a hierarchical (contact → account) structure.
+     * For each contact, walk financialAddressList. If a financial address has a non-empty
+     * subAccount array, the parent itself is treated as a wrapper (an "Integrated Account")
+     * and only the sub-accounts are kept as payable accounts. Otherwise the address itself
+     * becomes a payable account.
+     */
     private List<DownstreamPayee> parsePayees(JsonNode body) {
         if (body == null || body.isNull()) return List.of();
         List<DownstreamPayee> result = new ArrayList<>();
-        JsonNode financialAddressList = body.path("financialAddressDTOList");
-        if (financialAddressList.isArray()) {
-            parseFinancialAddressFormat(financialAddressList, result);
-        } else {
-            List<JsonNode> rawPayees = new ArrayList<>();
-            collectPayees(body, rawPayees);
-            for (JsonNode raw : rawPayees) addGenericPayee(raw, result);
+        JsonNode contacts = body.path("financialAddressDTOList");
+        if (!contacts.isArray()) return List.of();
+
+        for (JsonNode contact : contacts) {
+            String contactId = text(contact, "contactId");
+            String contactIdentifier = text(contact, "contactIdentifier");
+            String nickName = text(contact, "nickName");
+            String contactFullName = text(contact, "contactFullName");
+            String contactType = text(contact, "contactType");
+            String contactSource = text(contact, "contactSource");
+
+            JsonNode addresses = contact.path("financialAddressList");
+            if (!addresses.isArray()) continue;
+
+            List<DownstreamAccount> accounts = new ArrayList<>();
+            for (JsonNode address : addresses) {
+                JsonNode subAccounts = address.path("subAccount");
+                if (subAccounts.isArray() && subAccounts.size() > 0) {
+                    for (JsonNode sub : subAccounts) {
+                        DownstreamAccount account = parseAccount(sub, address);
+                        if (account != null) accounts.add(account);
+                    }
+                } else {
+                    DownstreamAccount account = parseAccount(address, null);
+                    if (account != null) accounts.add(account);
+                }
+            }
+
+            if (accounts.isEmpty()) continue;
+            // Skip contacts with no usable identity at all — defensive.
+            if (isBlank(nickName) && isBlank(contactFullName)) continue;
+
+            result.add(new DownstreamPayee(
+                    contactId,
+                    contactIdentifier,
+                    firstNonBlank(nickName, contactFullName),
+                    firstNonBlank(contactFullName, nickName),
+                    contactType,
+                    contactSource,
+                    accounts
+            ));
         }
         return List.copyOf(result);
     }
 
-    private void parseFinancialAddressFormat(JsonNode contacts, List<DownstreamPayee> result) {
-        for (JsonNode contact : contacts) {
-            String name = firstNonBlank(text(contact, "nickName"), text(contact, "contactFullName"));
-            JsonNode addresses = contact.path("financialAddressList");
-            if (!addresses.isArray()) continue;
-            for (JsonNode address : addresses) {
-                String identifierType = text(address, "identifierType");
-                String paymentType = text(address, "paymentType");
-                if (!("BACD".equals(identifierType) || "zzzzBA".equals(identifierType))
-                        || !"DOMESTIC".equals(paymentType)) {
-                    continue;
-                }
-                JsonNode subAccounts = address.path("subAccount");
-                if ("zzzzBA".equals(identifierType) && subAccounts.isArray() && subAccounts.size() > 0) {
-                    for (JsonNode sub : subAccounts) {
-                        addPayee(
-                                result,
-                                firstNonBlank(name, ""),
-                                firstNonBlank(text(sub, "payeeType"), text(address, "payeeType"), ""),
-                                firstNonBlank(text(sub, "identifierCode"), text(address, "identifierCode"), ""),
-                                firstNonBlank(text(sub, "bankName"), text(address, "bankName"), ""),
-                                firstNonBlank(text(sub, "identifierNumber"), text(sub, "formattedAccountNumber"),
-                                        text(address, "identifierNumber"), text(address, "formattedAccountNumber"), ""),
-                                firstNonBlank(text(sub, "accountProductType"), text(address, "accountProductType"), ""),
-                                firstNonBlank(text(sub, "accountProductCode"), text(address, "accountProductCode"), ""),
-                                firstNonBlank(text(sub, "remittanceCurrencyCode"), text(address, "remittanceCurrencyCode"), ""),
-                                firstNonBlank(text(sub, "addressId"), text(address, "addressId"))
-                        );
-                    }
-                } else {
-                    addPayee(
-                            result,
-                            firstNonBlank(name, ""),
-                            firstNonBlank(text(address, "payeeType"), ""),
-                            firstNonBlank(text(address, "identifierCode"), ""),
-                            firstNonBlank(text(address, "bankName"), ""),
-                            firstNonBlank(text(address, "identifierNumber"), text(address, "formattedAccountNumber"), ""),
-                            firstNonBlank(text(address, "accountProductType"), ""),
-                            firstNonBlank(text(address, "accountProductCode"), ""),
-                            firstNonBlank(text(address, "remittanceCurrencyCode"), ""),
-                            text(address, "addressId")
-                    );
-                }
-            }
-        }
-    }
-
-    private void collectPayees(JsonNode node, List<JsonNode> results) {
-        if (node == null || node.isNull()) return;
-        if (node.isArray()) {
-            for (JsonNode item : node) collectPayees(item, results);
-            return;
-        }
-        if (!node.isObject()) return;
-
-        JsonNode common = node.path("commonPayeeDetail");
-        if (common.isObject() && text(common, "name") != null) {
-            JsonNode subAccounts = firstArray(node, "subAccount", "subAccountList", "subAccounts");
-            if (subAccounts != null && subAccounts.size() > 0) {
-                for (JsonNode sub : subAccounts) {
-                    if (!sub.isObject()) continue;
-                    ObjectNode expanded = mapper.createObjectNode();
-                    expanded.set("commonPayeeDetail", common);
-                    expanded.set("individualPayeeDetail", sub);
-                    expanded.put("payeeIdIndex", firstNonBlank(text(sub, "addressId"), extractPayeeIdIndex(node), ""));
-                    results.add(expanded);
-                }
-            } else {
-                results.add(node);
-            }
-        }
-
-        for (Map.Entry<String, JsonNode> field : node.properties()) {
-            collectPayees(field.getValue(), results);
-        }
-    }
-
-    private void addGenericPayee(JsonNode node, List<DownstreamPayee> result) {
-        JsonNode common = node.path("commonPayeeDetail");
-        JsonNode individual = node.path("individualPayeeDetail");
-        addPayee(
-                result,
-                text(common, "name"),
-                firstNonBlank(text(common, "payeeType"), text(individual, "payeeType"), ""),
-                firstNonBlank(text(individual, "bankCode"), text(individual, "identifierCode"), ""),
-                firstNonBlank(text(individual, "bankName"), ""),
-                firstNonBlank(text(individual, "accountNumber"), text(individual, "identifierNumber"),
-                        text(individual, "formattedAccountNumber"), ""),
-                firstNonBlank(text(individual, "accountProductType"), ""),
-                firstNonBlank(text(individual, "accountProductCode"), ""),
-                firstNonBlank(text(individual, "remittanceCurrencyCode"), ""),
-                extractPayeeIdIndex(node)
+    private DownstreamAccount parseAccount(JsonNode primary, JsonNode fallback) {
+        String addressId = pickText(primary, fallback, "addressId");
+        if (isBlank(addressId)) return null;
+        return new DownstreamAccount(
+                addressId,
+                pickText(primary, fallback, "identifierType"),
+                pickText(primary, fallback, "identifierCode"),
+                pickText(primary, fallback, "identifierNumber"),
+                firstNonBlank(
+                        pickText(primary, fallback, "formattedAccountNumber"),
+                        pickText(primary, fallback, "identifierNumber"),
+                        ""),
+                pickText(primary, fallback, "bankCountryCode"),
+                pickText(primary, fallback, "bankName"),
+                pickText(primary, fallback, "addrFullName"),
+                pickText(primary, fallback, "accountProductType"),
+                pickText(primary, fallback, "accountProductCode"),
+                pickText(primary, fallback, "payeeType"),
+                pickText(primary, fallback, "paymentType"),
+                pickText(primary, fallback, "payeeAccountLabel"),
+                pickDecimal(primary, fallback, "accountLimit"),
+                pickText(primary, fallback, "accountLimitCurrency"),
+                pickText(primary, fallback, "remittanceCurrencyCode")
         );
     }
 
-    private void addPayee(List<DownstreamPayee> result,
-                          String name,
-                          String payeeType,
-                          String bankCode,
-                          String bankName,
-                          String accountNumber,
-                          String accountProductType,
-                          String accountProductCode,
-                          String remittanceCurrencyCode,
-                          String payeeIdIndex) {
-        if (isBlank(name) || isBlank(payeeIdIndex)) return;
-        if (result.stream().anyMatch(existing -> existing.payeeIdIndex().equals(payeeIdIndex))) return;
-        String displayLabel = isBlank(accountProductType)
-                ? firstNonBlank(accountNumber, "")
-                : accountProductType + (isBlank(accountNumber) ? "" : " - " + accountNumber);
-        result.add(new DownstreamPayee(
-                result.size() + 1,
-                payeeIdIndex,
-                name,
-                firstNonBlank(payeeType, ""),
-                firstNonBlank(bankCode, ""),
-                firstNonBlank(bankName, ""),
-                firstNonBlank(accountNumber, ""),
-                firstNonBlank(accountProductType, ""),
-                firstNonBlank(accountProductCode, ""),
-                firstNonBlank(remittanceCurrencyCode, ""),
-                displayLabel
-        ));
+    private static String pickText(JsonNode primary, JsonNode fallback, String field) {
+        String value = text(primary, field);
+        if (value != null) return value;
+        return fallback == null ? null : text(fallback, field);
     }
 
-    private JsonNode firstArray(JsonNode node, String... names) {
-        for (String name : names) {
-            JsonNode value = node.path(name);
-            if (value.isArray()) return value;
-        }
-        return null;
+    private static BigDecimal pickDecimal(JsonNode primary, JsonNode fallback, String field) {
+        BigDecimal value = decimal(primary, field);
+        if (value != null) return value;
+        return fallback == null ? null : decimal(fallback, field);
     }
 
-    private String extractPayeeIdIndex(JsonNode node) {
-        if (node == null || node.isNull()) return null;
-        String direct = firstNonBlank(text(node, "payeeIdIndex"), text(node, "addressId"));
-        if (direct != null) return direct;
-        if (node.isObject()) {
-            for (Map.Entry<String, JsonNode> field : node.properties()) {
-                String nested = extractPayeeIdIndex(field.getValue());
-                if (nested != null) return nested;
-            }
-        } else if (node.isArray()) {
-            for (JsonNode item : node) {
-                String nested = extractPayeeIdIndex(item);
-                if (nested != null) return nested;
-            }
+    private static BigDecimal decimal(JsonNode node, String field) {
+        String raw = text(node, field);
+        if (raw == null) return null;
+        try {
+            return new BigDecimal(raw.trim());
+        } catch (NumberFormatException ex) {
+            return null;
         }
-        return null;
     }
 
     private static String text(JsonNode node, String field) {

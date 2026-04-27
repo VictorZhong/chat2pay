@@ -3,7 +3,9 @@ package com.chat2pay.app.integration.downstream.domestic;
 import com.chat2pay.app.config.Chat2PayProperties;
 import com.chat2pay.app.integration.downstream.auth.DownstreamAuthService;
 import com.chat2pay.app.integration.downstream.payee.RegisteredPayeeClient;
+import com.chat2pay.app.integration.downstream.payee.RegisteredPayeeClient.DownstreamAccount;
 import com.chat2pay.app.integration.downstream.payee.RegisteredPayeeClient.DownstreamPayee;
+import com.chat2pay.app.integration.downstream.payee.RegisteredPayeeClient.PayeeAccountRef;
 import com.chat2pay.app.persistence.repository.ProfileStore;
 import com.chat2pay.app.persistence.repository.ProfileStore.RuntimeProfile;
 import com.chat2pay.app.persistence.repository.ProfileStore.SourceSystemContext;
@@ -75,10 +77,12 @@ public class HttpDomesticPaymentClient implements DomesticPaymentClient {
         }
 
         RuntimeProfile profile = profiles.runtimeProfile(request.profileId());
-        DownstreamPayee payee = payees.findByPayeeIdIndex(request.profileId(), request.payeeIdIndex())
+        PayeeAccountRef ref = payees.findAccountByAddressId(request.profileId(), request.payeeIdIndex())
                 .orElseThrow(() -> new IllegalArgumentException("payee_id_index is not recognized."));
+        DownstreamPayee payee = ref.payee();
+        DownstreamAccount account = ref.account();
         String samlToken = auth.login(request.profileId());
-        Map<String, Object> payload = buildPayload(request, payee, profile);
+        Map<String, Object> payload = buildPayload(request, account, profile);
         String url = confirmUrl();
         HttpHeaders headers = auth.authenticatedHeaders(
                 request.profileId(), samlToken, SourceSystemContext.DOMESTIC_PAYMENT_CONFIRM);
@@ -86,7 +90,7 @@ public class HttpDomesticPaymentClient implements DomesticPaymentClient {
                 request.profileId(),
                 url,
                 request.payeeIdIndex(),
-                firstNonBlank(request.payeeName(), payee.name()),
+                firstNonBlank(request.payeeName(), payee.nickName()),
                 request.amount(),
                 request.paymentDate(),
                 profile.requiredPaymentCurrency());
@@ -113,22 +117,26 @@ public class HttpDomesticPaymentClient implements DomesticPaymentClient {
         Map<String, Object> responseBody = parseResponse(response.getBody());
         log.debug("Downstream domestic confirm parsed response: profileId={} status={} responseKeys={} body={}",
                 request.profileId(), response.getStatusCode().value(), responseBody.keySet(), responseBody);
+        // Bank's confirm response carries the canonical reference under `transactionIdentifier`.
+        // Prefer that exact key; fall back to a generic reference/confirmation lookup for older
+        // shapes; only synthesize a placeholder if nothing usable is returned (which should not
+        // happen in real downstream).
         String reference = findReference(responseBody)
-                .orElse("DOM-" + LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE)
+                .orElseGet(() -> "DOM-" + LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE)
                         + "-" + UUID.randomUUID().toString().replace("-", "").substring(0, 6).toUpperCase());
         return new PaymentConfirmationResult(
                 true,
                 reference,
                 response.getStatusCode().value(),
                 responseBody,
-                "Payment confirmed for " + firstNonBlank(request.payeeName(), payee.name())
+                "Payment confirmed for " + firstNonBlank(request.payeeName(), payee.nickName())
                         + " (" + request.amount() + " "
                         + profile.requiredPaymentCurrency() + ")."
         );
     }
 
     private Map<String, Object> buildPayload(DomesticPaymentRequest request,
-                                             DownstreamPayee payee,
+                                             DownstreamAccount account,
                                              RuntimeProfile profile) {
         String currency = profile.requiredPaymentCurrency();
 
@@ -154,8 +162,8 @@ public class HttpDomesticPaymentClient implements DomesticPaymentClient {
                 "scheduledDate", scheduleDate.toString()
         ));
         payload.put("transactionMemo", Map.of());
-        payload.put("payeeType", payee.payeeType());
-        payload.put("pyeeIdIndex", payee.payeeIdIndex());
+        payload.put("payeeType", account.payeeType());
+        payload.put("pyeeIdIndex", account.addressId());
         payload.put("payeeSuspiciousIndicator", false);
         payload.put("creditAmount", Map.of("currencyCode", currency));
         return payload;
@@ -173,9 +181,14 @@ public class HttpDomesticPaymentClient implements DomesticPaymentClient {
     private Optional<String> findReference(Object value) {
         if (value instanceof Map<?, ?> map) {
             for (Map.Entry<?, ?> entry : map.entrySet()) {
-                String key = String.valueOf(entry.getKey()).toLowerCase();
+                String key = String.valueOf(entry.getKey());
+                String keyLower = key.toLowerCase();
                 Object raw = entry.getValue();
-                if ((key.contains("reference") || key.contains("confirmation"))
+                // Prefer the bank's `transactionIdentifier` field by exact name. Also accept
+                // any field whose name contains "transactionIdentifier"/"reference"/"confirmation".
+                if ((keyLower.contains("transactionidentifier")
+                                || keyLower.contains("reference")
+                                || keyLower.contains("confirmation"))
                         && raw instanceof String s && !s.isBlank()) {
                     return Optional.of(s);
                 }
