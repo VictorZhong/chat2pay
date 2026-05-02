@@ -197,21 +197,31 @@ public class CopilotPersonalLlmProvider implements LlmProvider {
                 url, providerType(), model, rawResponse);
         ChatCompletionResponse resp = readJson(rawResponse, ChatCompletionResponse.class);
 
-        Object rawContent = resp != null && resp.choices() != null && !resp.choices().isEmpty()
-                && resp.choices().get(0).message() != null
-                ? resp.choices().get(0).message().content() : null;
-        List<ToolCall> toolCalls = resp != null && resp.choices() != null && !resp.choices().isEmpty()
-                && resp.choices().get(0).message() != null
-                && resp.choices().get(0).message().toolCalls() != null
-                ? resp.choices().get(0).message().toolCalls().stream()
+        Choice choice = resp != null && resp.choices() != null && !resp.choices().isEmpty()
+                ? resp.choices().get(0)
+                : null;
+        ChoiceMessage message = choice != null ? choice.message() : null;
+        Object rawContent = message != null ? message.content() : null;
+        List<ToolCall> toolCalls = message != null && message.toolCalls() != null
+                ? message.toolCalls().stream()
                     .filter(tc -> tc.function() != null && tc.function().name() != null)
                     .map(tc -> new ToolCall(tc.id(), tc.function().name(), tc.function().arguments()))
                     .toList()
                 : List.of();
         String content = extractText(rawContent);
-        log.debug("LLM Copilot parsed response: model={} contentChars={} toolCalls={} toolCallDetails={}",
-                model, content == null ? 0 : content.length(), toolCalls.size(), toolCalls);
-        return new LlmCompletionResponse(LlmProviderType.COPILOT_PERSONAL, model, content, toolCalls);
+        String reasoningContent = extractText(message == null ? null : message.reasoningContent());
+        String finishReason = choice == null ? null : choice.finishReason();
+        log.debug("LLM Copilot parsed response: model={} finishReason={} contentChars={} reasoningChars={} toolCalls={} toolCallDetails={}",
+                model, finishReason, content == null ? 0 : content.length(),
+                reasoningContent == null ? 0 : reasoningContent.length(), toolCalls.size(), toolCalls);
+        return new LlmCompletionResponse(
+                LlmProviderType.COPILOT_PERSONAL,
+                model,
+                content,
+                toolCalls,
+                finishReason,
+                reasoningContent
+        );
     }
 
     // ---- token exchange ------------------------------------------------------
@@ -447,10 +457,15 @@ public class CopilotPersonalLlmProvider implements LlmProvider {
     record ChatCompletionResponse(List<Choice> choices) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    record Choice(ChoiceMessage message) {}
+    record Choice(@JsonAlias("finish_reason") String finishReason, ChoiceMessage message) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    record ChoiceMessage(String role, Object content, @JsonAlias("tool_calls") List<RawToolCall> toolCalls) {}
+    record ChoiceMessage(
+            String role,
+            Object content,
+            @JsonAlias("reasoning_content") Object reasoningContent,
+            @JsonAlias("tool_calls") List<RawToolCall> toolCalls
+    ) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     record RawToolCall(String id, RawFunction function) {}

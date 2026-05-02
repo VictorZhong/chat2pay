@@ -2,9 +2,11 @@ package com.chat2pay.app.application.conversation;
 
 import com.chat2pay.app.api.dto.ChatDtos.ChatMessage;
 import com.chat2pay.app.api.dto.ContentBlock;
+import com.chat2pay.app.domain.conversation.LlmProviderType;
 import com.chat2pay.app.domain.conversation.MessageRole;
 import com.chat2pay.app.integration.llm.LlmCompletionRequest;
 import com.chat2pay.app.integration.llm.LlmCompletionResponse;
+import com.chat2pay.app.integration.llm.LlmProvider;
 import com.chat2pay.app.integration.llm.LlmSelection;
 import com.chat2pay.app.integration.llm.LlmRouter;
 import com.chat2pay.app.integration.llm.LlmUseCase;
@@ -35,6 +37,7 @@ public class SessionTitleSuggester {
     private static final String DEFAULT_TITLE = "New conversation";
     private static final int MIN_USER_MESSAGES_BEFORE_SUGGEST = 2;
     private static final int MAX_TITLE_CHARS = 60;
+    private static final String FINISH_REASON_STOP = "stop";
 
     private final LlmRouter router;
     private final SessionStore sessions;
@@ -75,6 +78,30 @@ public class SessionTitleSuggester {
     }
 
     private String ask(LlmSelection selection, List<ChatMessage> messages) {
+        LlmCompletionRequest baseRequest = titleRequest(messages);
+        LlmCompletionRequest request = baseRequest.withModel(selection.modelOverride());
+        LlmCompletionResponse response;
+        try {
+            response = selection.provider().complete(request);
+        } catch (RuntimeException ex) {
+            if (selection.provider().providerType() != LlmProviderType.REMOTE_API) throw ex;
+            log.debug("Remote title suggestion failed; trying Personal Copilot fallback: {}", ex.getMessage());
+            return askCopilotFallback(baseRequest);
+        }
+
+        String suggested = clean(response.content());
+        if (selection.provider().providerType() == LlmProviderType.REMOTE_API
+                && !remoteTitleResponseUsable(response, suggested)) {
+            log.debug("Remote title suggestion incomplete; falling back to Personal Copilot: model={} finishReason={} contentChars={} reasoningChars={}",
+                    response.model(), response.finishReason(),
+                    response.content() == null ? 0 : response.content().length(),
+                    response.reasoningContent() == null ? 0 : response.reasoningContent().length());
+            return askCopilotFallback(baseRequest);
+        }
+        return suggested;
+    }
+
+    private LlmCompletionRequest titleRequest(List<ChatMessage> messages) {
         List<LlmCompletionRequest.Message> prompt = new ArrayList<>();
         prompt.add(new LlmCompletionRequest.Message(LlmCompletionRequest.Role.SYSTEM,
                 """
@@ -88,11 +115,22 @@ public class SessionTitleSuggester {
                 """));
         prompt.add(new LlmCompletionRequest.Message(LlmCompletionRequest.Role.USER,
                 "Transcript:\n" + transcript(messages)));
+        return new LlmCompletionRequest(prompt, 32, 0.0, List.of(), null);
+    }
 
-        LlmCompletionRequest request = new LlmCompletionRequest(prompt, 32, 0.0, List.of(), null)
-                .withModel(selection.modelOverride());
-        LlmCompletionResponse response = selection.provider().complete(request);
+    private String askCopilotFallback(LlmCompletionRequest request) {
+        Optional<LlmProvider> copilot = router.providerIfAvailable(LlmProviderType.COPILOT_PERSONAL);
+        if (copilot.isEmpty()) return null;
+        LlmCompletionResponse response = copilot.get().complete(request);
         return clean(response.content());
+    }
+
+    private static boolean remoteTitleResponseUsable(LlmCompletionResponse response, String suggested) {
+        return suggested != null && FINISH_REASON_STOP.equalsIgnoreCase(trimToEmpty(response.finishReason()));
+    }
+
+    private static String trimToEmpty(String value) {
+        return value == null ? "" : value.trim();
     }
 
     private static String transcript(List<ChatMessage> messages) {

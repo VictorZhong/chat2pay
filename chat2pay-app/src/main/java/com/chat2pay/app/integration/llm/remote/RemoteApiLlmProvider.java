@@ -125,7 +125,7 @@ public class RemoteApiLlmProvider implements LlmProvider {
         int maxTokens = request.maxTokens() != null
                 ? request.maxTokens()
                 : endpoint.maxTokensOr(defaultMaxTokens);
-        body.put("max_tokens", maxTokens);
+        body.put("max_completion_tokens", maxTokens);
         if (request.temperature() != null) body.put("temperature", request.temperature());
         body.put("messages", ChatCompletionPayloads.messages(request.messages()));
         if (request.tools() != null && !request.tools().isEmpty()) {
@@ -169,9 +169,10 @@ public class RemoteApiLlmProvider implements LlmProvider {
 
         ChatCompletionResponse resp = readJson(rawResponse, ChatCompletionResponse.class);
 
-        ChoiceMessage message = resp != null && resp.choices() != null && !resp.choices().isEmpty()
-                ? resp.choices().get(0).message()
+        Choice choice = resp != null && resp.choices() != null && !resp.choices().isEmpty()
+                ? resp.choices().get(0)
                 : null;
+        ChoiceMessage message = choice == null ? null : choice.message();
         List<ToolCall> toolCalls = message != null && message.toolCalls() != null
                 ? message.toolCalls().stream()
                     .filter(tc -> tc.function() != null && tc.function().name() != null)
@@ -179,9 +180,19 @@ public class RemoteApiLlmProvider implements LlmProvider {
                     .toList()
                 : List.of();
         String content = extractText(message == null ? null : message.content());
-        log.debug("LLM Remote parsed response: model={} contentChars={} toolCalls={} toolCallDetails={}",
-                model, content == null ? 0 : content.length(), toolCalls.size(), toolCalls);
-        return new LlmCompletionResponse(LlmProviderType.REMOTE_API, model, content, toolCalls);
+        String reasoningContent = extractText(message == null ? null : message.reasoningContent());
+        String finishReason = choice == null ? null : choice.finishReason();
+        log.debug("LLM Remote parsed response: model={} finishReason={} contentChars={} reasoningChars={} toolCalls={} toolCallDetails={}",
+                model, finishReason, content == null ? 0 : content.length(),
+                reasoningContent == null ? 0 : reasoningContent.length(), toolCalls.size(), toolCalls);
+        return new LlmCompletionResponse(
+                LlmProviderType.REMOTE_API,
+                model,
+                content,
+                toolCalls,
+                finishReason,
+                reasoningContent
+        );
     }
 
     private void applyHeaders(HttpHeaders h, Endpoint endpoint, String correlationId) {
@@ -371,10 +382,15 @@ public class RemoteApiLlmProvider implements LlmProvider {
     record ChatCompletionResponse(List<Choice> choices) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    record Choice(ChoiceMessage message) {}
+    record Choice(@JsonAlias("finish_reason") String finishReason, ChoiceMessage message) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    record ChoiceMessage(String role, Object content, @JsonAlias("tool_calls") List<RawToolCall> toolCalls) {}
+    record ChoiceMessage(
+            String role,
+            Object content,
+            @JsonAlias("reasoning_content") Object reasoningContent,
+            @JsonAlias("tool_calls") List<RawToolCall> toolCalls
+    ) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     record RawToolCall(String id, RawFunction function) {}

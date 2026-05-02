@@ -59,6 +59,19 @@ public class LlmRouter {
         return select(LlmUseCase.CHAT).map(LlmSelection::provider);
     }
 
+    /**
+     * Return a specific provider directly, bypassing use-case model overrides.
+     * Useful for hard-wired fallback paths such as "retry this lightweight
+     * title prompt on Copilot Personal".
+     */
+    public Optional<LlmProvider> providerIfAvailable(LlmProviderType providerType) {
+        if (providerType == null) return Optional.empty();
+        LlmProvider provider = providers.get(providerType);
+        return provider != null && provider.isAvailable()
+                ? Optional.of(provider)
+                : Optional.empty();
+    }
+
     // ---- per-use-case selection ---------------------------------------------
 
     /**
