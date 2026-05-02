@@ -52,7 +52,7 @@ import java.util.Map;
 public class RemoteApiLlmProvider implements LlmProvider {
 
     private static final Logger log = LoggerFactory.getLogger(RemoteApiLlmProvider.class);
-    private static final int DEFAULT_MAX_TOKENS = 2048;
+    private static final int DEFAULT_MAX_TOKENS = 4096;
     private static final String DEFAULT_MODEL = "gpt-5.4";
 
     private final RemoteProperties config;

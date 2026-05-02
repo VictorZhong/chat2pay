@@ -85,7 +85,7 @@ public class CopilotPersonalLlmProvider implements LlmProvider {
             @Value("${chat2pay.copilot.bootstrap-api-key:}") String bootstrapApiKey,
             @Value("${chat2pay.copilot.bootstrap-session-token:}") String bootstrapSessionToken,
             @Value("${chat2pay.copilot.model:gpt-5.4}") String configuredModel,
-            @Value("${chat2pay.copilot.max-completion-tokens:2048}") int maxCompletionTokens,
+            @Value("${chat2pay.copilot.max-completion-tokens:4096}") int maxCompletionTokens,
             @Value("${chat2pay.copilot.editor-version:1.114.0}") String editorVersion,
             @Value("${chat2pay.copilot.base-url:}") String configuredBaseUrl,
             @Value("${chat2pay.copilot.token-url:}") String tokenUrl,

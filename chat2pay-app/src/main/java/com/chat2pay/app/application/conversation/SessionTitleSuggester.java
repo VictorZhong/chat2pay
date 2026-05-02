@@ -36,7 +36,7 @@ public class SessionTitleSuggester {
     private static final Logger log = LoggerFactory.getLogger(SessionTitleSuggester.class);
     private static final String DEFAULT_TITLE = "New conversation";
     private static final int MIN_USER_MESSAGES_BEFORE_SUGGEST = 2;
-    private static final int MAX_TITLE_CHARS = 60;
+    private static final int MAX_TITLE_CHARS = 100;
     private static final String FINISH_REASON_STOP = "stop";
 
     private final LlmRouter router;
@@ -107,7 +107,7 @@ public class SessionTitleSuggester {
                 """
                 You name banking-assistant chat sessions.
                 Read the conversation transcript and answer with a SHORT title:
-                  - 4 to 6 words
+                  - 4 to 8 words
                   - Title Case (e.g. "Pay Bob 500 HKD")
                   - no punctuation other than spaces
                   - no quotes, no trailing period
@@ -115,7 +115,7 @@ public class SessionTitleSuggester {
                 """));
         prompt.add(new LlmCompletionRequest.Message(LlmCompletionRequest.Role.USER,
                 "Transcript:\n" + transcript(messages)));
-        return new LlmCompletionRequest(prompt, 32, 0.0, List.of(), null);
+        return new LlmCompletionRequest(prompt, null, 0.0, List.of(), null);
     }
 
     private String askCopilotFallback(LlmCompletionRequest request) {
