@@ -8,7 +8,6 @@ import com.chat2pay.app.application.journey.JourneyAgentPlanner;
 import com.chat2pay.app.application.journey.JourneyDraftUpdate;
 import com.chat2pay.app.application.journey.JourneyToolDefinition;
 import com.chat2pay.app.config.Chat2PayProperties;
-import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.util.List;
@@ -18,27 +17,28 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestClient;
 
 @Component
 @Primary
 public class LocalHttpLlmProvider implements JourneyAgentPlanner {
 
+    static final String USE_CASE = "journey-planner";
+
     private static final Logger LOGGER = LoggerFactory.getLogger(LocalHttpLlmProvider.class);
 
     private final Chat2PayProperties properties;
     private final HeuristicJourneyAgentPlanner fallbackPlanner;
-    private final RestClient restClient;
+    private final LlmRouter llmRouter;
     private final ObjectMapper objectMapper;
 
     public LocalHttpLlmProvider(
             Chat2PayProperties properties,
             HeuristicJourneyAgentPlanner fallbackPlanner,
-            RestClient.Builder restClientBuilder,
+            LlmRouter llmRouter,
             ObjectMapper objectMapper) {
         this.properties = properties;
         this.fallbackPlanner = fallbackPlanner;
-        this.restClient = restClientBuilder.baseUrl(properties.getLlm().getBaseUrl()).build();
+        this.llmRouter = llmRouter;
         this.objectMapper = objectMapper;
     }
 
@@ -50,12 +50,8 @@ public class LocalHttpLlmProvider implements JourneyAgentPlanner {
         }
 
         try {
-            LlmChatResponse response = restClient.post()
-                    .uri(properties.getLlm().getChatPath())
-                    .body(new LlmChatRequest(buildPrompt(context), null, List.of()))
-                    .retrieve()
-                    .body(LlmChatResponse.class);
-            JourneyAgentDecision parsed = parseResponse(response);
+            LlmCompletion completion = llmRouter.complete(USE_CASE, buildPrompt(context));
+            JourneyAgentDecision parsed = parseResponse(completion);
             if (parsed == null) {
                 return properties.getLlm().isFallbackToHeuristics()
                         ? fallback
@@ -67,8 +63,8 @@ public class LocalHttpLlmProvider implements JourneyAgentPlanner {
                                 JourneyDraftUpdate.empty());
             }
             return parsed.mergeWithFallback(fallback);
-        } catch (Exception exception) {
-            LOGGER.debug("Local LLM request failed, using heuristic fallback", exception);
+        } catch (LlmUnavailableException exception) {
+            LOGGER.debug("LLM request unavailable, using heuristic fallback", exception);
             return properties.getLlm().isFallbackToHeuristics()
                     ? fallback
                     : new JourneyAgentDecision(
@@ -164,12 +160,12 @@ public class LocalHttpLlmProvider implements JourneyAgentPlanner {
                 definition.constraints());
     }
 
-    private JourneyAgentDecision parseResponse(LlmChatResponse response) {
-        if (response == null || response.response() == null || response.response().isBlank()) {
+    private JourneyAgentDecision parseResponse(LlmCompletion completion) {
+        if (completion == null || completion.content() == null || completion.content().isBlank()) {
             return null;
         }
 
-        String body = response.response().trim();
+        String body = completion.content().trim();
         String jsonCandidate = extractJsonObject(body);
         if (jsonCandidate == null) {
             return null;
@@ -194,7 +190,7 @@ public class LocalHttpLlmProvider implements JourneyAgentPlanner {
                     parsed.requiredInputs() == null ? List.of() : parsed.requiredInputs(),
                     update);
         } catch (Exception exception) {
-            LOGGER.debug("Unable to parse structured local LLM response", exception);
+            LOGGER.debug("Unable to parse structured LLM response", exception);
             return null;
         }
     }
@@ -206,15 +202,6 @@ public class LocalHttpLlmProvider implements JourneyAgentPlanner {
             return null;
         }
         return responseText.substring(start, end + 1);
-    }
-
-    private record LlmChatRequest(
-            String message,
-            @JsonProperty("session_id") String sessionId,
-            List<String> attachments) {
-    }
-
-    private record LlmChatResponse(String response) {
     }
 
     private record LlmStructuredResponse(

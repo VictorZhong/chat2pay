@@ -4,7 +4,9 @@ import com.chat2pay.app.domain.JourneyType;
 import com.chat2pay.app.domain.ProfileStatus;
 import jakarta.validation.constraints.NotBlank;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
@@ -58,6 +60,10 @@ public class Chat2PayProperties {
         @NotBlank
         private String chatPath;
 
+        private final Remote remote = new Remote();
+
+        private Map<String, UseCaseConfig> useCases = new LinkedHashMap<>();
+
         public boolean isEnabled() {
             return enabled;
         }
@@ -88,6 +94,164 @@ public class Chat2PayProperties {
 
         public void setChatPath(String chatPath) {
             this.chatPath = chatPath;
+        }
+
+        public Remote getRemote() {
+            return remote;
+        }
+
+        public Map<String, UseCaseConfig> getUseCases() {
+            return useCases;
+        }
+
+        public void setUseCases(Map<String, UseCaseConfig> useCases) {
+            this.useCases = useCases == null ? new LinkedHashMap<>() : useCases;
+        }
+    }
+
+    public enum LlmProviderType {
+        COPILOT,
+        REMOTE
+    }
+
+    public static class Remote {
+
+        private boolean enabled = false;
+        private final RemoteAuth auth = new RemoteAuth();
+        private String defaultUser;
+        private List<RemoteModel> models = new ArrayList<>();
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public RemoteAuth getAuth() {
+            return auth;
+        }
+
+        public String getDefaultUser() {
+            return defaultUser;
+        }
+
+        public void setDefaultUser(String defaultUser) {
+            this.defaultUser = defaultUser;
+        }
+
+        public List<RemoteModel> getModels() {
+            return models;
+        }
+
+        public void setModels(List<RemoteModel> models) {
+            this.models = models == null ? new ArrayList<>() : models;
+        }
+    }
+
+    public static class RemoteAuth {
+
+        private String tokenUrl;
+        private String username;
+        private String password;
+        private long tokenTtlSeconds = 1800;
+
+        public String getTokenUrl() {
+            return tokenUrl;
+        }
+
+        public void setTokenUrl(String tokenUrl) {
+            this.tokenUrl = tokenUrl;
+        }
+
+        public String getUsername() {
+            return username;
+        }
+
+        public void setUsername(String username) {
+            this.username = username;
+        }
+
+        public String getPassword() {
+            return password;
+        }
+
+        public void setPassword(String password) {
+            this.password = password;
+        }
+
+        public long getTokenTtlSeconds() {
+            return tokenTtlSeconds;
+        }
+
+        public void setTokenTtlSeconds(long tokenTtlSeconds) {
+            this.tokenTtlSeconds = tokenTtlSeconds;
+        }
+    }
+
+    public static class RemoteModel {
+
+        @NotBlank
+        private String name;
+
+        @NotBlank
+        private String url;
+
+        public String getName() {
+            return name;
+        }
+
+        public void setName(String name) {
+            this.name = name;
+        }
+
+        public String getUrl() {
+            return url;
+        }
+
+        public void setUrl(String url) {
+            this.url = url;
+        }
+    }
+
+    public static class UseCaseConfig {
+
+        private LlmProviderType provider = LlmProviderType.COPILOT;
+        private String model;
+        private Integer maxTokens;
+        private LlmProviderType fallbackProvider;
+
+        public LlmProviderType getProvider() {
+            return provider;
+        }
+
+        public void setProvider(LlmProviderType provider) {
+            this.provider = provider == null ? LlmProviderType.COPILOT : provider;
+        }
+
+        public String getModel() {
+            return model;
+        }
+
+        public void setModel(String model) {
+            this.model = model;
+        }
+
+        public Integer getMaxTokens() {
+            return maxTokens;
+        }
+
+        public void setMaxTokens(Integer maxTokens) {
+            this.maxTokens = maxTokens;
+        }
+
+        public LlmProviderType getFallbackProvider() {
+            return fallbackProvider;
+        }
+
+        public void setFallbackProvider(LlmProviderType fallbackProvider) {
+            this.fallbackProvider = fallbackProvider;
         }
     }
 

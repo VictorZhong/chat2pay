@@ -22,6 +22,19 @@ chat2pay:
     base-url: http://localhost:8000
     chat-path: /api/chat
     fallback-to-heuristics: true
+    remote:
+      enabled: false
+      auth:
+        token-url: https://cmb-ib2b-dsp-pprod-ap.hk.zzzz:8443/dsp/rest-sts/DSP_iB2B/iB2B_tokenTranslator?_action=translate
+        username: ${CHAT2PAY_REMOTE_LLM_USERNAME:test-acct}
+        password: ${CHAT2PAY_REMOTE_LLM_PASSWORD:acctpwd}
+        token-ttl-seconds: 1800
+      default-user: UC0006040
+      models: []
+    use-cases:
+      journey-planner:
+        provider: COPILOT
+        max-tokens: 1500
   demo:
     default-source-account-id: acct_hk_primary_savings
     default-source-account-display: Primary Savings • 123-456-001
