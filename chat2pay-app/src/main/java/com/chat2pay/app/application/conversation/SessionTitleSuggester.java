@@ -5,8 +5,9 @@ import com.chat2pay.app.api.dto.ContentBlock;
 import com.chat2pay.app.domain.conversation.MessageRole;
 import com.chat2pay.app.integration.llm.LlmCompletionRequest;
 import com.chat2pay.app.integration.llm.LlmCompletionResponse;
-import com.chat2pay.app.integration.llm.LlmProvider;
+import com.chat2pay.app.integration.llm.LlmSelection;
 import com.chat2pay.app.integration.llm.LlmRouter;
+import com.chat2pay.app.integration.llm.LlmUseCase;
 import com.chat2pay.app.persistence.repository.SessionStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -59,11 +60,11 @@ public class SessionTitleSuggester {
         long userTurnCount = messages.stream().filter(m -> m.role() == MessageRole.USER).count();
         if (userTurnCount < MIN_USER_MESSAGES_BEFORE_SUGGEST) return;
 
-        Optional<LlmProvider> provider = router.currentIfAvailable();
-        if (provider.isEmpty()) return;
+        Optional<LlmSelection> selection = router.select(LlmUseCase.TITLE);
+        if (selection.isEmpty()) return;
 
         try {
-            String suggested = ask(provider.get(), messages);
+            String suggested = ask(selection.get(), messages);
             if (suggested == null) return;
             log.debug("Session title suggestion: profileId={} sessionId={} title=\"{}\"",
                     profileId, sessionId, suggested);
@@ -73,7 +74,7 @@ public class SessionTitleSuggester {
         }
     }
 
-    private String ask(LlmProvider provider, List<ChatMessage> messages) {
+    private String ask(LlmSelection selection, List<ChatMessage> messages) {
         List<LlmCompletionRequest.Message> prompt = new ArrayList<>();
         prompt.add(new LlmCompletionRequest.Message(LlmCompletionRequest.Role.SYSTEM,
                 """
@@ -88,9 +89,9 @@ public class SessionTitleSuggester {
         prompt.add(new LlmCompletionRequest.Message(LlmCompletionRequest.Role.USER,
                 "Transcript:\n" + transcript(messages)));
 
-        LlmCompletionResponse response = provider.complete(new LlmCompletionRequest(
-                prompt, 32, 0.0, List.of(), null
-        ));
+        LlmCompletionRequest request = new LlmCompletionRequest(prompt, 32, 0.0, List.of(), null)
+                .withModel(selection.modelOverride());
+        LlmCompletionResponse response = selection.provider().complete(request);
         return clean(response.content());
     }
 

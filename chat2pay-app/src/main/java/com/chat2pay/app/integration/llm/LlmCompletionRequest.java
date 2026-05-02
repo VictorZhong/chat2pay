@@ -6,16 +6,38 @@ import java.util.Map;
 /**
  * Provider-agnostic chat completion request used by the intent/tool decision
  * parser and future full tool-calling providers.
+ *
+ * <p>{@code model} is an optional per-call override. When non-null the provider
+ * will use it instead of its configured default model — for the remote
+ * provider this also picks the matching entry in
+ * {@code chat2pay.remote.models[]} (URL + auth mode). When null, the provider
+ * falls back to its globally configured model.
  */
 public record LlmCompletionRequest(
         List<Message> messages,
         Integer maxTokens,
         Double temperature,
         List<ToolDefinition> tools,
-        String toolChoice
+        String toolChoice,
+        String model
 ) {
     public LlmCompletionRequest(List<Message> messages, Integer maxTokens, Double temperature) {
-        this(messages, maxTokens, temperature, List.of(), null);
+        this(messages, maxTokens, temperature, List.of(), null, null);
+    }
+
+    public LlmCompletionRequest(
+            List<Message> messages,
+            Integer maxTokens,
+            Double temperature,
+            List<ToolDefinition> tools,
+            String toolChoice
+    ) {
+        this(messages, maxTokens, temperature, tools, toolChoice, null);
+    }
+
+    public LlmCompletionRequest withModel(String overrideModel) {
+        if (overrideModel == null || overrideModel.isBlank()) return this;
+        return new LlmCompletionRequest(messages, maxTokens, temperature, tools, toolChoice, overrideModel);
     }
 
     public record Message(

@@ -142,7 +142,8 @@ public class CopilotPersonalLlmProvider implements LlmProvider {
 
     @Override
     public LlmCompletionResponse complete(LlmCompletionRequest request) {
-        String model = configuredModel == null ? "gpt-5.4" : configuredModel;
+        String model = nullIfBlank(request.model());
+        if (model == null) model = configuredModel == null ? "gpt-5.4" : configuredModel;
         try {
             String token = ensureSessionToken();
             return sendCompletion(request, token, model);

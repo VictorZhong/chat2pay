@@ -10,10 +10,13 @@ import com.chat2pay.app.integration.llm.LlmCompletionRequest;
 import com.chat2pay.app.integration.llm.LlmCompletionResponse;
 import com.chat2pay.app.integration.llm.LlmCompletionResponse.ToolCall;
 import com.chat2pay.app.integration.llm.LlmProvider;
+import com.chat2pay.app.integration.llm.LlmSelection;
 import com.chat2pay.app.integration.llm.LlmRouter;
+import com.chat2pay.app.integration.llm.LlmUseCase;
 import com.chat2pay.app.persistence.repository.PayeeStore;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -36,6 +39,8 @@ class IntentInterpreterTests {
             "REMOTE_API",
             "HKD",
             new Chat2PayProperties.IntentProperties(true, 350, 0.0),
+            null,
+            null,
             null
     );
 
@@ -57,7 +62,8 @@ class IntentInterpreterTests {
                 }
                 """.formatted(paymentDate)
         ));
-        when(router.currentIfAvailable()).thenReturn(Optional.of(provider));
+        when(router.select(LlmUseCase.INTENT))
+                .thenReturn(Optional.of(new LlmSelection(provider, "Qwen3-32B-AWQ")));
         when(payees.findAliasInText("profile_1", "send 88.5 to sarah tomorrow")).thenReturn("sarah");
 
         IntentAnalysis analysis = interpreter().analyze(session(ConversationState.IDLE), "send 88.5 to sarah tomorrow", "profile_1");
@@ -68,7 +74,9 @@ class IntentInterpreterTests {
         assertThat(analysis.amount()).isEqualByComparingTo(new BigDecimal("88.5"));
         assertThat(analysis.paymentDate()).isEqualTo(paymentDate);
         assertThat(analysis.source()).isEqualTo("LLM:COPILOT_PERSONAL");
-        verify(provider).complete(any(LlmCompletionRequest.class));
+        ArgumentCaptor<LlmCompletionRequest> request = ArgumentCaptor.forClass(LlmCompletionRequest.class);
+        verify(provider).complete(request.capture());
+        assertThat(request.getValue().model()).isEqualTo("Qwen3-32B-AWQ");
     }
 
     @Test
@@ -88,7 +96,8 @@ class IntentInterpreterTests {
                         """.formatted(paymentDate)
                 ))
         ));
-        when(router.currentIfAvailable()).thenReturn(Optional.of(provider));
+        when(router.select(LlmUseCase.INTENT))
+                .thenReturn(Optional.of(new LlmSelection(provider, null)));
 
         IntentAnalysis analysis = interpreter().analyze(session(ConversationState.IDLE), "send 88.5 to sarah tomorrow", "profile_1");
 
@@ -101,7 +110,7 @@ class IntentInterpreterTests {
 
     @Test
     void fallsBackToLocalParserWhenNoProviderIsAvailable() {
-        when(router.currentIfAvailable()).thenReturn(Optional.empty());
+        when(router.select(LlmUseCase.INTENT)).thenReturn(Optional.empty());
         when(payees.findAliasInText("profile_1", "do i have bob registered?")).thenReturn("bob");
 
         IntentAnalysis analysis = interpreter().analyze(session(ConversationState.IDLE), "do i have bob registered?", "profile_1");
@@ -114,7 +123,7 @@ class IntentInterpreterTests {
 
     @Test
     void classifiesCrossBorderAsUnsupportedV1Capability() {
-        when(router.currentIfAvailable()).thenReturn(Optional.empty());
+        when(router.select(LlmUseCase.INTENT)).thenReturn(Optional.empty());
 
         IntentAnalysis analysis = interpreter().analyze(
                 session(ConversationState.IDLE),

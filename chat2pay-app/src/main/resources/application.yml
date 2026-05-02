@@ -41,6 +41,18 @@ logging:
 chat2pay:
   primary-provider: COPILOT_PERSONAL
   fallback-provider: REMOTE_API
+  use-cases:
+    # Optional per-call-site override. Leave blank to follow the global
+    # primary/fallback routing above.
+    chat:
+      provider: ${CHAT2PAY_USE_CASE_CHAT_PROVIDER:}
+      model: ${CHAT2PAY_USE_CASE_CHAT_MODEL:}
+    intent:
+      provider: ${CHAT2PAY_USE_CASE_INTENT_PROVIDER:}
+      model: ${CHAT2PAY_USE_CASE_INTENT_MODEL:}
+    title:
+      provider: ${CHAT2PAY_USE_CASE_TITLE_PROVIDER:}
+      model: ${CHAT2PAY_USE_CASE_TITLE_MODEL:}
   # Runtime payment currency is profile-owned; this legacy default is not used
   # for real downstream payment payloads.
   default-currency: HKD
@@ -59,13 +71,27 @@ chat2pay:
     # http://username:password@proxy-host:80. Leave blank to disable.
     proxy-url: ${LLM_PROXY_URL:}
   remote:
-    # Optional OpenAI-compatible Chat Completions provider for V2. When these
-    # values are present and primary/fallback routing selects REMOTE_API, the
-    # same backend tool loop is used as Copilot Personal.
+    # Optional remote Chat Completions provider. Legacy single-model config
+    # below still works. For multi-model routing, populate remote.models[] in
+    # yaml and then point chat2pay.use-cases.*.model at one of those names.
     base-url: ${REMOTE_LLM_BASE_URL:}
     api-key: ${REMOTE_LLM_API_KEY:}
     model: ${REMOTE_LLM_MODEL:gpt-5.4}
     max-completion-tokens: ${REMOTE_LLM_MAX_COMPLETION_TOKENS:2048}
+    ib2b:
+      token-url: ${REMOTE_LLM_IB2B_TOKEN_URL:}
+      username: ${REMOTE_LLM_IB2B_USERNAME:}
+      password: ${REMOTE_LLM_IB2B_PASSWORD:}
+      token-ttl-seconds: ${REMOTE_LLM_IB2B_TOKEN_TTL_SECONDS:600}
+    # Example model registry entry:
+    # models:
+    #   - name: Qwen3-32B-AWQ
+    #     url: https://cmb-ib2b-dsp-pprod-ap.hk.zzzz:8443/<chat-completions-path>
+    #     auth: IB2B   # BEARER or IB2B
+    #     api-key: ${REMOTE_LLM_API_KEY:}   # for auth: BEARER
+    #     user: UC0006040
+    #     max-completion-tokens: 150
+    models: []
   intent:
     # When true and an LLM provider is available, user intent + slot extraction
     # is delegated to the LLM. Regex helpers still run as fallback hints.

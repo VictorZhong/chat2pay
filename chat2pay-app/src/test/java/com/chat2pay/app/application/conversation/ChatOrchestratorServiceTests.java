@@ -15,11 +15,14 @@ import com.chat2pay.app.domain.conversation.LlmProviderType;
 import com.chat2pay.app.integration.llm.LlmCompletionRequest;
 import com.chat2pay.app.integration.llm.LlmCompletionResponse;
 import com.chat2pay.app.integration.llm.LlmProvider;
+import com.chat2pay.app.integration.llm.LlmSelection;
 import com.chat2pay.app.integration.llm.LlmRouter;
+import com.chat2pay.app.integration.llm.LlmUseCase;
 import com.chat2pay.app.persistence.repository.SessionStore;
 import com.chat2pay.app.persistence.repository.SessionStore.SessionRecord;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -45,6 +48,8 @@ class ChatOrchestratorServiceTests {
             "REMOTE_API",
             "HKD",
             new Chat2PayProperties.IntentProperties(true, 350, 0.0),
+            null,
+            null,
             null
     );
 
@@ -63,7 +68,7 @@ class ChatOrchestratorServiceTests {
                 .contentBlocks().get(0);
         assertThat(block.title()).isEqualTo("Chat2Pay payments only");
         assertThat(block.text()).contains("registered domestic payees");
-        verify(llmRouter, never()).currentIfAvailable();
+        verify(llmRouter, never()).select(LlmUseCase.CHAT);
     }
 
     @Test
@@ -76,7 +81,8 @@ class ChatOrchestratorServiceTests {
                 "Hi, I can help you find registered payees or prepare a domestic payment."
         ));
         givenApplyTurn(record);
-        when(llmRouter.currentIfAvailable()).thenReturn(Optional.of(provider));
+        when(llmRouter.select(LlmUseCase.CHAT))
+                .thenReturn(Optional.of(new LlmSelection(provider, "gpt-4.1-mini")));
 
         ChatTurnResponse response = service().handleUserMessage(
                 "profile_1",
@@ -87,7 +93,9 @@ class ChatOrchestratorServiceTests {
         ChatMessage assistant = response.assistantMessage();
         ContentBlock.TextBlock block = (ContentBlock.TextBlock) assistant.contentBlocks().get(0);
         assertThat(block.text()).contains("registered payees");
-        verify(provider).complete(any(LlmCompletionRequest.class));
+        ArgumentCaptor<LlmCompletionRequest> request = ArgumentCaptor.forClass(LlmCompletionRequest.class);
+        verify(provider).complete(request.capture());
+        assertThat(request.getValue().model()).isEqualTo("gpt-4.1-mini");
     }
 
     private ChatOrchestratorService service() {

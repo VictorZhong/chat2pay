@@ -26,8 +26,9 @@ import com.chat2pay.app.integration.llm.LlmCompletionRequest;
 import com.chat2pay.app.integration.llm.LlmCompletionRequest.Message;
 import com.chat2pay.app.integration.llm.LlmCompletionResponse;
 import com.chat2pay.app.integration.llm.LlmCompletionResponse.ToolCall;
-import com.chat2pay.app.integration.llm.LlmProvider;
+import com.chat2pay.app.integration.llm.LlmSelection;
 import com.chat2pay.app.integration.llm.LlmRouter;
+import com.chat2pay.app.integration.llm.LlmUseCase;
 import com.chat2pay.app.persistence.repository.SessionStore;
 import com.chat2pay.app.persistence.repository.SessionStore.SessionRecord;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -217,10 +218,10 @@ public class ChatOrchestratorService implements PaymentToolActions {
 
     private Optional<ChatMessage> handleWithLlmToolLoop(SessionRecord record, String text) {
         if (!properties.useLlmIntent()) return Optional.empty();
-        Optional<LlmProvider> provider = llmRouter.currentIfAvailable();
-        if (provider.isEmpty()) return Optional.empty();
+        Optional<LlmSelection> selection = llmRouter.select(LlmUseCase.CHAT);
+        if (selection.isEmpty()) return Optional.empty();
         try {
-            return runLlmToolLoop(provider.get(), record, text);
+            return runLlmToolLoop(selection.get(), record, text);
         } catch (RuntimeException ex) {
             log.warn("LLM tool loop failed; falling back to deterministic orchestrator: {}", ex.getMessage());
             log.debug("LLM tool loop failure details", ex);
@@ -228,7 +229,7 @@ public class ChatOrchestratorService implements PaymentToolActions {
         }
     }
 
-    private Optional<ChatMessage> runLlmToolLoop(LlmProvider provider, SessionRecord record, String latestUserText) {
+    private Optional<ChatMessage> runLlmToolLoop(LlmSelection selection, SessionRecord record, String latestUserText) {
         List<Message> messages = buildToolLoopMessages(record);
         List<ContentBlock> pendingBlocks = List.of();
 
@@ -239,8 +240,8 @@ public class ChatOrchestratorService implements PaymentToolActions {
                     properties.intentTemperature(),
                     capabilityRegistry.llmToolDefinitions(),
                     "auto"
-            );
-            LlmCompletionResponse response = provider.complete(request);
+            ).withModel(selection.modelOverride());
+            LlmCompletionResponse response = selection.provider().complete(request);
             List<ToolCall> toolCalls = normalizeToolCalls(response.toolCalls());
             log.debug("LLM tool loop response: sessionId={} iteration={} provider={} content={} toolCalls={}",
                     record.session().sessionId(), iteration, response.provider(), response.content(), toolCalls);

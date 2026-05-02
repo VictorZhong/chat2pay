@@ -9,8 +9,9 @@ import com.chat2pay.app.domain.conversation.ConversationState;
 import com.chat2pay.app.integration.llm.LlmCompletionRequest;
 import com.chat2pay.app.integration.llm.LlmCompletionResponse;
 import com.chat2pay.app.integration.llm.LlmCompletionResponse.ToolCall;
-import com.chat2pay.app.integration.llm.LlmProvider;
+import com.chat2pay.app.integration.llm.LlmSelection;
 import com.chat2pay.app.integration.llm.LlmRouter;
+import com.chat2pay.app.integration.llm.LlmUseCase;
 import com.chat2pay.app.persistence.repository.PayeeStore;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -81,21 +82,22 @@ public class IntentInterpreter {
             return fallback.withSource("REGEX_FALLBACK");
         }
 
-        Optional<LlmProvider> provider = router.currentIfAvailable();
-        if (provider.isEmpty()) {
+        Optional<LlmSelection> selection = router.select(LlmUseCase.INTENT);
+        if (selection.isEmpty()) {
             return fallback.withSource("REGEX_FALLBACK");
         }
 
         try {
-            IntentAnalysis llm = analyzeWithLlm(provider.get(), session, text);
-            return llm.mergeMissingSlotsFrom(fallback).withSource("LLM:" + provider.get().providerType().name());
+            IntentAnalysis llm = analyzeWithLlm(selection.get(), session, text);
+            return llm.mergeMissingSlotsFrom(fallback)
+                    .withSource("LLM:" + selection.get().provider().providerType().name());
         } catch (RuntimeException ex) {
             log.warn("LLM intent parsing failed; falling back to local parser: {}", ex.getMessage());
             return fallback.withSource("REGEX_FALLBACK");
         }
     }
 
-    private IntentAnalysis analyzeWithLlm(LlmProvider provider, ChatSessionDetail session, String text) {
+    private IntentAnalysis analyzeWithLlm(LlmSelection selection, ChatSessionDetail session, String text) {
         LlmCompletionRequest request = new LlmCompletionRequest(
                 java.util.List.of(
                         new LlmCompletionRequest.Message(LlmCompletionRequest.Role.SYSTEM, systemPrompt()),
@@ -105,8 +107,8 @@ public class IntentInterpreter {
                 properties.intentTemperature(),
                 capabilityRegistry.llmToolDefinitions(),
                 "auto"
-        );
-        LlmCompletionResponse response = provider.complete(request);
+        ).withModel(selection.modelOverride());
+        LlmCompletionResponse response = selection.provider().complete(request);
         if (response.toolCalls() != null && !response.toolCalls().isEmpty()) {
             return fromToolCall(response.toolCalls().get(0));
         }

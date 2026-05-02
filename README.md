@@ -191,13 +191,21 @@ export CHAT2PAY_PRIMARY_PROVIDER=COPILOT_PERSONAL
 export CHAT2PAY_FALLBACK_PROVIDER=REMOTE_API
 ```
 
+Per-use-case overrides are optional. For example, keep the main chat on
+Copilot but route title generation to a cheaper remote model:
+
+```bash
+export CHAT2PAY_USE_CASE_TITLE_PROVIDER=REMOTE_API
+export CHAT2PAY_USE_CASE_TITLE_MODEL=Qwen3-32B-AWQ
+```
+
 To disable LLM intent/tool handling and force local fallback parsing:
 
 ```bash
 export CHAT2PAY_INTENT_USE_LLM=false
 ```
 
-For a future OpenAI-compatible remote provider, configure:
+Legacy single-model remote fallback still works:
 
 ```bash
 export CHAT2PAY_PRIMARY_PROVIDER=REMOTE_API
@@ -205,6 +213,37 @@ export REMOTE_LLM_BASE_URL=https://<provider-host>/v1
 export REMOTE_LLM_API_KEY=<api-key>
 export REMOTE_LLM_MODEL=<model-name>
 ```
+
+For the corporate intranet remote LLM with IB2B auth, configure the model
+registry in yaml. Example:
+
+```yaml
+chat2pay:
+  primary-provider: COPILOT_PERSONAL
+  fallback-provider: REMOTE_API
+  use-cases:
+    title:
+      provider: REMOTE_API
+      model: Qwen3-32B-AWQ
+  remote:
+    ib2b:
+      token-url: https://cmb-ib2b-dsp-pprod-ap.hk.zzzz:8443/dsp/rest-sts/DSP_iB2B/iB2B_tokenTranslator?_action=translate
+      username: test-acct
+      password: acctpwd
+      token-ttl-seconds: 600
+    models:
+      - name: Qwen3-32B-AWQ
+        url: https://cmb-ib2b-dsp-pprod-ap.hk.zzzz:8443/<chat-completions-path>
+        auth: IB2B
+        user: UC0006040
+        max-completion-tokens: 150
+```
+
+`REMOTE_API` does not use `LLM_PROXY_URL`; it is expected to be reachable
+directly from the bank intranet. When `chat2pay.remote.models[]` is populated,
+the request-level `model` selects the matching entry's URL/auth settings. When
+`models[]` is empty or the model name is unknown, the legacy
+`REMOTE_LLM_BASE_URL` + `REMOTE_LLM_API_KEY` configuration remains the fallback.
 
 Both `COPILOT_PERSONAL` and `REMOTE_API` use the same backend LLM tool loop. Payment execution is still guarded by backend state, registered-payee validation, and explicit user confirmation.
 

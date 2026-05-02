@@ -101,7 +101,9 @@ class PaymentDownstreamAuthServiceTests {
                         sourceSystemId,
                         "device_1",
                         "agent_1"
-                )
+                ),
+                null,
+                null
         );
     }
 }

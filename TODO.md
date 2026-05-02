@@ -87,6 +87,50 @@ Legend: `[ ]` open · `[x]` done · `[~]` in progress · `[-]` won't do (POC)
 - [-] (Deferred) Real LLM token-level streaming — the SSE stream is currently
       synthesized post-hoc. Worth noting in the design doc.
 
+## P3.5 — Remote LLM (IB2B) + per-use-case model selection
+
+Goal: keep the existing Copilot path untouched, add a real "remote LLM" backend
+that lives on the corporate intranet (no proxy), make the provider+model
+selection configurable per use-case (chat-title vs intent vs main chat) so
+unimportant calls can use a cheaper local model, and keep a graceful fallback so
+operators can flip primary REMOTE↔COPILOT in `application.yml` without code
+changes.
+
+- [x] **Config surface in `application.yml` / `Chat2PayProperties`.**
+      Add `chat2pay.use-cases.{title,intent,chat}.{provider,model}` (each
+      optional, falls back to the global `primary-provider`/`fallback-provider`).
+      Add `chat2pay.remote.ib2b.{token-url,username,password,token-ttl-seconds}`
+      and `chat2pay.remote.models[]` (each entry has `name`, `url`, `auth`
+      (`BEARER`|`IB2B`), `api-key`, `user`, `max-completion-tokens`). Keep the
+      existing `chat2pay.remote.{base-url,api-key,model,max-completion-tokens}`
+      working as a single-model fallback when `models[]` is empty.
+- [x] **`IB2BTokenClient`.** POST the credential→JWT translator, cache the
+      `issued_token` for `token-ttl-seconds` (default 600s), expose
+      `currentToken()` + a forced refresh on 401. Add per-request
+      `X-zzzz-Request-Correlation-Id` UUID v4 helper.
+- [x] **`LlmUseCase` enum** (`CHAT`, `INTENT`, `TITLE`) and
+      `LlmRouter.select(LlmUseCase)` returning a `(LlmProvider, modelOverride)`
+      bundle. `current()`/`currentIfAvailable()` keep working unchanged
+      (CHAT is the default use case).
+- [x] **`LlmCompletionRequest.model`.** Add an optional `model` field; both
+      providers honor it when set, otherwise use their configured default.
+- [x] **`RemoteApiLlmProvider` refactor.** Resolve `(url, auth, apiKey, user,
+      maxTokens)` from the model registry by request model name. `auth=IB2B`
+      adds `X-zzzz-E2E-Trust-Token` (from `IB2BTokenClient`) +
+      `X-zzzz-Request-Correlation-Id`; `auth=BEARER` keeps current behavior.
+      Falls back to legacy single-model config if the model name is unknown.
+- [x] **Copilot model override.** `CopilotPersonalLlmProvider` honors
+      `request.model()` so per-use-case YAML can pick a different Copilot model
+      without changing the global default.
+- [x] **Wire call sites.** `SessionTitleSuggester` → `TITLE`, `IntentInterpreter`
+      → `INTENT`, `ChatOrchestratorService.handleWithLlmToolLoop` → `CHAT`. Each
+      passes the resolved `modelOverride` into `LlmCompletionRequest`.
+- [x] **Compile + smoke check.** `mvn -q compile` and `mvn -q test` both pass
+      locally without PostgreSQL or any remote service dependency. The Spring
+      Boot smoke test now runs with lazy init and DB/Flyway auto-config disabled,
+      while targeted unit tests cover chat/intent/title routing. YAML toggle
+      examples are documented in `README.md`.
+
 ## P4 — Docs
 
 - [x] **Move `docs/05-project_structure.md` into the root `README.md`** under a
