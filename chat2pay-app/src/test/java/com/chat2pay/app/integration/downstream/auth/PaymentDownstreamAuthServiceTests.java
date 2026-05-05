@@ -90,6 +90,7 @@ class PaymentDownstreamAuthServiceTests {
                 new Chat2PayProperties.DownstreamProperties(
                         false,
                         "https://example.test/login/{username}",
+                        "https://example.test/accounts",
                         "https://example.test/payees",
                         "https://example.test/confirm",
                         30000,

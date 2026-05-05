@@ -116,6 +116,7 @@ public record Chat2PayProperties(
     public record DownstreamProperties(
             Boolean mockEnabled,
             String loginUrlTemplate,
+            String accountUrl,
             String payeeUrl,
             String confirmUrl,
             Integer requestTimeoutMs,

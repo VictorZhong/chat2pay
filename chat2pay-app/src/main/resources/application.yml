@@ -103,6 +103,7 @@ chat2pay:
     # the sandbox login, payee lookup, and confirm endpoints are reachable.
     mock-enabled: ${PAYMENT_MOCK_ENABLED:true}
     login-url-template: ${PAYMENT_LOGIN_URL:https://testdataservices.apps.cf.wgdc-drn-03.cloud.uk.zzzz/dsp/entity/HK/{}/SAML3/30}
+    account-url: ${PAYMENT_ACCOUNT_URL:https://mmf-cust-accounts--hk-hbap-banking-1.zzzz-dsvc-papi-hk01-hbap-cert.svc.default.shp.ape1.pre-prod.aws.cloud.zzzz/accounts/domestic}
     payee-url: ${PAYMENT_PAYEE_URL:https://mmf-payee-management--hk-hbap-banking-1.zzzz-dsvc-papi-hk01-hbap-cert.svc.default.shp.ape1.pre-prod.aws.cloud.zzzz/payees}
     confirm-url: ${PAYMENT_CONFIRM_URL:https://dcc-hk-hbap-mvmny-domestic-payments-papi-3.zzzz-dsvc-papi-hk01-hbap-cert.svc.default.shp.ape1.pre-prod.aws.cloud.zzzz/confirm-domestic-payments}
     request-timeout-ms: ${PAYMENT_REQUEST_TIMEOUT_MS:30000}

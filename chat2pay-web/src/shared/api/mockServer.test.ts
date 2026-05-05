@@ -158,7 +158,7 @@ describe('mockServer domestic payment flow', () => {
     expect(turn.assistantMessage.contentBlocks?.some((block) => block.type === 'SUMMARY_CARD')).toBe(true);
   });
 
-  it('clears amount and date when the user changes payee', async () => {
+  it('preserves amount, date, and selected debit account when the user changes payee only', async () => {
     const user = await profileLogin({
       profileId: 'profile_victor',
       password: 'tb123',
@@ -174,24 +174,38 @@ describe('mockServer domestic payment flow', () => {
       throw new Error('Expected payee selection block.');
     }
 
-    await submitUiEvent(user.profileId, created.sessionId, {
+    const secondTurn = await submitUiEvent(user.profileId, created.sessionId, {
       eventType: 'SELECT_ITEM',
       sourceMessageId: firstTurn.assistantMessage.messageId,
       sourceBlockId: payeeList.blockId,
       selectedItemId: 'payee_bob_current',
     });
 
-    const changePayeeTurn = await sendChatMessage(user.profileId, created.sessionId, {
-      messageText: 'Pay Sarah 900 HKD tomorrow',
+    const accountList = secondTurn.assistantMessage.contentBlocks?.find((block) => block.type === 'SELECTABLE_LIST');
+
+    if (!accountList || accountList.type !== 'SELECTABLE_LIST') {
+      throw new Error('Expected debit account selection block.');
+    }
+
+    await submitUiEvent(user.profileId, created.sessionId, {
+      eventType: 'SELECT_ITEM',
+      sourceMessageId: secondTurn.assistantMessage.messageId,
+      sourceBlockId: accountList.blockId,
+      selectedItemId: 'acct_primary',
     });
 
-    expect(changePayeeTurn.session.state).toBe('COLLECTING_DETAILS');
+    const changePayeeTurn = await sendChatMessage(user.profileId, created.sessionId, {
+      messageText: 'Pay Sarah',
+    });
+
+    expect(changePayeeTurn.session.state).toBe('AWAITING_CONFIRMATION');
     expect(changePayeeTurn.activeDraft?.selectedPayee?.payeeId).toBe('payee_sarah_salary');
-    expect(changePayeeTurn.activeDraft?.amount).toBeNull();
-    expect(changePayeeTurn.activeDraft?.paymentDate).toBeNull();
+    expect(changePayeeTurn.activeDraft?.selectedDebitAccount?.accountId).toBe('acct_primary');
+    expect(changePayeeTurn.activeDraft?.amount).toBe(5000);
+    expect(changePayeeTurn.activeDraft?.paymentDate).toBeTruthy();
+    expect(changePayeeTurn.assistantMessage.contentBlocks?.[0]?.type).toBe('TEXT');
     if (changePayeeTurn.assistantMessage.contentBlocks?.[0]?.type === 'TEXT') {
-      expect(changePayeeTurn.assistantMessage.contentBlocks[0].text).toContain('amount');
-      expect(changePayeeTurn.assistantMessage.contentBlocks[0].text).toContain('payment date');
+      expect(changePayeeTurn.assistantMessage.contentBlocks[0].text).toContain('Please confirm');
     }
   });
 

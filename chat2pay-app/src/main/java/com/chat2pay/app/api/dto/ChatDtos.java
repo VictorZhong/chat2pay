@@ -97,8 +97,9 @@ public final class ChatDtos {
 
     public record DebitAccountSummary(
             String accountId,
-            String accountNumber,
+            String accountDisplay,
             String productCategoryCode,
+            String productDescription,
             String displayLabel,
             String currency
     ) {}

@@ -270,8 +270,9 @@ public class SessionStore {
         entity.setSelectedDisplayLabel(p == null ? null : p.displayLabel());
         DebitAccountSummary debit = d.selectedDebitAccount();
         entity.setSelectedDebitAccountId(debit == null ? null : debit.accountId());
-        entity.setSelectedDebitAccountNumber(debit == null ? null : debit.accountNumber());
+        entity.setSelectedDebitAccountDisplay(debit == null ? null : debit.accountDisplay());
         entity.setSelectedDebitProductCategoryCode(debit == null ? null : debit.productCategoryCode());
+        entity.setSelectedDebitProductDescription(debit == null ? null : debit.productDescription());
         entity.setSelectedDebitDisplayLabel(debit == null ? null : debit.displayLabel());
         entity.setSelectedDebitCurrency(debit == null ? null : debit.currency());
         entity.setAmount(d.amount() == null ? null : d.amount().setScale(2, RoundingMode.HALF_UP));
@@ -328,11 +329,12 @@ public class SessionStore {
             );
         }
         DebitAccountSummary debitAccount = null;
-        if (e.getSelectedDebitAccountId() != null || e.getSelectedDebitAccountNumber() != null) {
+        if (e.getSelectedDebitAccountId() != null || e.getSelectedDebitAccountDisplay() != null) {
             debitAccount = new DebitAccountSummary(
                     e.getSelectedDebitAccountId(),
-                    e.getSelectedDebitAccountNumber(),
+                    e.getSelectedDebitAccountDisplay(),
                     e.getSelectedDebitProductCategoryCode(),
+                    e.getSelectedDebitProductDescription(),
                     e.getSelectedDebitDisplayLabel(),
                     e.getSelectedDebitCurrency()
             );

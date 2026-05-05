@@ -13,13 +13,16 @@ import com.chat2pay.app.domain.conversation.ConversationState;
 import com.chat2pay.app.domain.conversation.LlmProviderType;
 import com.chat2pay.app.domain.payment.PaymentDraftStatus;
 import com.chat2pay.app.domain.payment.PaymentType;
+import com.chat2pay.app.integration.downstream.account.DomesticAccountClient;
+import com.chat2pay.app.integration.downstream.account.DomesticAccountClient.AccountGroup;
+import com.chat2pay.app.integration.downstream.account.DomesticAccountClient.ParentAccount;
+import com.chat2pay.app.integration.downstream.account.DomesticAccountClient.SelectableAccount;
 import com.chat2pay.app.integration.downstream.domestic.DomesticPaymentClient;
 import com.chat2pay.app.integration.downstream.domestic.DomesticPaymentClient.PaymentConfirmationResult;
 import com.chat2pay.app.persistence.repository.PayeeStore;
 import com.chat2pay.app.persistence.repository.PayeeStore.PayeeAccountRef;
 import com.chat2pay.app.persistence.repository.PayeeStore.RegisteredAccount;
 import com.chat2pay.app.persistence.repository.PayeeStore.RegisteredPayee;
-import com.chat2pay.app.persistence.repository.ProfileDebitAccountStore;
 import com.chat2pay.app.persistence.repository.ProfileStore;
 import com.chat2pay.app.persistence.repository.SessionStore.SessionRecord;
 import org.junit.jupiter.api.Test;
@@ -45,7 +48,7 @@ class DomesticPaymentJourneyServiceTests {
 
     private final PayeeStore payees = mock(PayeeStore.class);
     private final DomesticPaymentClient domesticPayments = mock(DomesticPaymentClient.class);
-    private final ProfileDebitAccountStore debitAccounts = mock(ProfileDebitAccountStore.class);
+    private final DomesticAccountClient debitAccounts = mock(DomesticAccountClient.class);
     private final ProfileStore profiles = mock(ProfileStore.class);
 
     @Test
@@ -108,24 +111,24 @@ class DomesticPaymentJourneyServiceTests {
     }
 
     @Test
-    void changingPayeeClearsAmountAndDate() {
+    void changingPayeePreservesExistingAmountDateAndDebitAccountWhenNotOverridden() {
         PaymentDraft draft = draft(selectedPayee(), new BigDecimal("125.50"), LocalDate.now());
         SessionRecord record = recordWithDraft(draft, ConversationState.COLLECTING_DETAILS);
         RegisteredPayee bob = registeredPayee("contact_2", "Bob Lee",
                 List.of(localAccount("payee_2", "Bob Lee", "Test Bank", "998877", "Savings")));
         when(payees.findByQuery("profile_1", "bob")).thenReturn(List.of(bob));
-        when(payees.findAccount("profile_1", "payee_2"))
-                .thenReturn(Optional.of(new PayeeAccountRef(bob, bob.accounts().get(0))));
+        when(debitAccounts.loadAccounts("profile_1")).thenReturn(List.of(accountGroup(primaryAccount())));
 
-        ChatMessage response = service().continueDomesticPayment(record, domesticIntent(
-                "bob", new BigDecimal("200"), LocalDate.now().plusDays(1)));
+        ChatMessage response = service().continueDomesticPayment(record, domesticIntent("bob", null, null));
 
         verify(payees).findByQuery("profile_1", "bob");
         assertThat(record.session().activeDraft().selectedPayee().payeeId()).isEqualTo("payee_2");
-        assertThat(record.session().activeDraft().amount()).isNull();
-        assertThat(record.session().activeDraft().paymentDate()).isNull();
+        assertThat(record.session().activeDraft().selectedDebitAccount().accountId()).isEqualTo("acct_primary");
+        assertThat(record.session().activeDraft().amount()).isEqualByComparingTo(new BigDecimal("125.50"));
+        assertThat(record.session().activeDraft().paymentDate()).isEqualTo(LocalDate.now());
+        assertThat(record.session().state()).isEqualTo(ConversationState.AWAITING_CONFIRMATION);
         ContentBlock.TextBlock block = (ContentBlock.TextBlock) response.contentBlocks().get(0);
-        assertThat(block.text()).contains("amount", "payment date");
+        assertThat(block.text()).contains("Please confirm");
     }
 
     @Test
@@ -163,7 +166,7 @@ class DomesticPaymentJourneyServiceTests {
     void confirmationSummaryAdvertisesEditablePaymentDateForTheUiDatePicker() {
         PaymentDraft draft = draft(selectedPayee(), new BigDecimal("125.50"), LocalDate.now().plusDays(1));
         SessionRecord record = recordWithDraft(draft, ConversationState.COLLECTING_DETAILS);
-        when(debitAccounts.list("profile_1")).thenReturn(List.of(primaryDebitAccount()));
+        when(debitAccounts.loadAccounts("profile_1")).thenReturn(List.of(accountGroup(primaryAccount())));
 
         ChatMessage response = service().continueDomesticPayment(record, domesticIntent(null, null, null));
 
@@ -242,9 +245,8 @@ class DomesticPaymentJourneyServiceTests {
     void completeDraftWithMultipleDebitAccountsAsksForAccountSelectionBeforeConfirmation() {
         PaymentDraft draft = draft(selectedPayee(), new BigDecimal("125.50"), LocalDate.now().plusDays(1), null);
         SessionRecord record = recordWithDraft(draft, ConversationState.COLLECTING_DETAILS);
-        when(debitAccounts.list("profile_1")).thenReturn(List.of(
-                primaryDebitAccount(),
-                secondaryDebitAccount()
+        when(debitAccounts.loadAccounts("profile_1")).thenReturn(List.of(
+                accountGroup(primaryAccount(), secondaryAccount())
         ));
 
         ChatMessage response = service().continueDomesticPayment(record, domesticIntent(null, null, null));
@@ -252,7 +254,12 @@ class DomesticPaymentJourneyServiceTests {
         assertThat(record.session().state()).isEqualTo(ConversationState.AWAITING_DEBIT_ACCOUNT_SELECTION);
         ContentBlock.SelectableListBlock block = (ContentBlock.SelectableListBlock) response.contentBlocks().get(1);
         assertThat(block.metadata()).containsEntry("purpose", "debit-account-selection");
+        assertThat(block.metadata()).containsEntry("groupCount", 1);
         assertThat(block.items()).hasSize(2);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> groups = (List<Map<String, Object>>) block.metadata().get("groups");
+        assertThat(groups).hasSize(1);
+        assertThat(groups.get(0)).containsEntry("accountDisplay", "118-067271-833");
     }
 
     private DomesticPaymentJourneyService service() {
@@ -342,9 +349,10 @@ class DomesticPaymentJourneyServiceTests {
     private DebitAccountSummary primaryDebitAccount() {
         return new DebitAccountSummary(
                 "acct_primary",
-                "123-000-001",
-                "CUR",
-                "HKD primary account • 123-000-001",
+                "118-067271-833",
+                "PVCUA",
+                "HKD Current",
+                "HKD Current • 118-067271-833",
                 "HKD"
         );
     }
@@ -352,9 +360,48 @@ class DomesticPaymentJourneyServiceTests {
     private DebitAccountSummary secondaryDebitAccount() {
         return new DebitAccountSummary(
                 "acct_secondary",
-                "123-000-002",
-                "SAV",
-                "HKD savings account • 123-000-002",
+                "118-067271-833",
+                "PVSAV",
+                "HKD Savings",
+                "HKD Savings • 118-067271-833",
+                "HKD"
+        );
+    }
+
+    private AccountGroup accountGroup(SelectableAccount... accounts) {
+        return new AccountGroup(
+                "acct_master_1",
+                new ParentAccount("acct_master_1", "118-067271-833", "zzzz One"),
+                List.of(accounts)
+        );
+    }
+
+    private SelectableAccount primaryAccount() {
+        return new SelectableAccount(
+                "acct_primary",
+                "acct_master_1",
+                "118-067271-833",
+                "PVCUA",
+                "HKD Current",
+                "HKD Current • 118-067271-833",
+                "HKD",
+                "BALANCE_AVAILABLE",
+                new BigDecimal("999999999"),
+                "HKD"
+        );
+    }
+
+    private SelectableAccount secondaryAccount() {
+        return new SelectableAccount(
+                "acct_secondary",
+                "acct_master_1",
+                "118-067271-833",
+                "PVSAV",
+                "HKD Savings",
+                "HKD Savings • 118-067271-833",
+                "HKD",
+                "BALANCE_AVAILABLE",
+                new BigDecimal("888888888"),
                 "HKD"
         );
     }

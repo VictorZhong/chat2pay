@@ -35,10 +35,23 @@ type RegisteredPayee = PayeeSummary & {
 
 type MockDebitAccount = {
   accountId: string;
-  accountNumber: string;
+  parentAccountId: string;
+  accountDisplay: string;
   productCategoryCode: string;
+  productDescription: string;
   displayLabel: string;
-  currency: string;
+  currency?: string | null;
+  ledgerBalanceIndicator: string;
+  ledgerBalanceAmount?: string | null;
+  ledgerBalanceCurrency?: string | null;
+};
+
+type MockDebitAccountGroup = {
+  groupId: string;
+  parentAccountId: string;
+  accountDisplay: string;
+  productDescription: string;
+  subAccounts: MockDebitAccount[];
 };
 
 type MockSessionRecord = {
@@ -164,20 +177,70 @@ const REGISTERED_PAYEES: RegisteredPayee[] = [
   },
 ];
 
-const DEBIT_ACCOUNTS: MockDebitAccount[] = [
+const DEBIT_ACCOUNT_GROUPS: MockDebitAccountGroup[] = [
   {
-    accountId: 'acct_primary',
-    accountNumber: '123-000-001',
-    productCategoryCode: 'CUR',
-    displayLabel: 'HKD primary account • 123-000-001',
-    currency: 'HKD',
+    groupId: 'acct_master_1',
+    parentAccountId: 'acct_master_1',
+    accountDisplay: '118-067271-833',
+    productDescription: 'zzzz One',
+    subAccounts: [
+      {
+        accountId: 'acct_primary',
+        parentAccountId: 'acct_master_1',
+        accountDisplay: '118-067271-833',
+        productCategoryCode: 'PVCUA',
+        productDescription: 'HKD Current',
+        displayLabel: 'HKD Current • 118-067271-833',
+        currency: 'HKD',
+        ledgerBalanceIndicator: 'BALANCE_AVAILABLE',
+        ledgerBalanceAmount: '999999999',
+        ledgerBalanceCurrency: 'HKD',
+      },
+      {
+        accountId: 'acct_savings',
+        parentAccountId: 'acct_master_1',
+        accountDisplay: '118-067271-833',
+        productCategoryCode: 'PVSAV',
+        productDescription: 'HKD Savings',
+        displayLabel: 'HKD Savings • 118-067271-833',
+        currency: 'HKD',
+        ledgerBalanceIndicator: 'BALANCE_AVAILABLE',
+        ledgerBalanceAmount: '888888888',
+        ledgerBalanceCurrency: 'HKD',
+      },
+      {
+        accountId: 'acct_notice',
+        parentAccountId: 'acct_master_1',
+        accountDisplay: '118-067271-833',
+        productCategoryCode: 'PVNTA',
+        productDescription: 'USD Savings',
+        displayLabel: 'USD Savings • 118-067271-833',
+        currency: null,
+        ledgerBalanceIndicator: 'NO_BALANCE',
+        ledgerBalanceAmount: null,
+        ledgerBalanceCurrency: null,
+      },
+    ],
   },
   {
-    accountId: 'acct_savings',
-    accountNumber: '123-000-002',
-    productCategoryCode: 'SAV',
-    displayLabel: 'HKD savings account • 123-000-002',
-    currency: 'HKD',
+    groupId: 'acct_master_2',
+    parentAccountId: 'acct_master_2',
+    accountDisplay: '128-000991-001',
+    productDescription: 'zzzz One',
+    subAccounts: [
+      {
+        accountId: 'acct_aud',
+        parentAccountId: 'acct_master_2',
+        accountDisplay: '128-000991-001',
+        productCategoryCode: 'PVSAV',
+        productDescription: 'AUD Savings',
+        displayLabel: 'AUD Savings • 128-000991-001',
+        currency: 'AUD',
+        ledgerBalanceIndicator: 'BALANCE_AVAILABLE',
+        ledgerBalanceAmount: '100000000',
+        ledgerBalanceCurrency: 'AUD',
+      },
+    ],
   },
 ];
 
@@ -422,7 +485,11 @@ function draftSummaryFields(draft: PaymentDraft): DisplayField[] {
     { label: 'Bank', value: draft.selectedPayee?.bankName ?? 'Pending' },
     {
       label: 'Debit account',
-      value: draft.selectedDebitAccount?.displayLabel ?? draft.selectedDebitAccount?.accountNumber ?? 'Pending',
+      value:
+        draft.selectedDebitAccount?.displayLabel
+        ?? draft.selectedDebitAccount?.productDescription
+        ?? draft.selectedDebitAccount?.accountDisplay
+        ?? 'Pending',
     },
     {
       label: 'Amount',
@@ -467,9 +534,13 @@ function buildMissingDetailsBlocks(draft: PaymentDraft): ContentBlock[] {
     missing.length === 1
       ? `I still need the ${missing[0]} before I can prepare the domestic payment.`
       : `I still need these details before I can prepare the domestic payment: ${missing.join(', ')}.`;
+  const withAccountHint =
+    draft.selectedPayee && !draft.selectedDebitAccount
+      ? `${prompt} Once those are set, I will show the eligible debit accounts for you to choose from.`
+      : prompt;
 
   return [
-    buildTextBlock(prompt, 'Need more details'),
+    buildTextBlock(withAccountHint, 'Need more details'),
     buildSummaryCard('Current draft', draftSummaryFields(draft), {
       editableFields: [editablePaymentDateField(draft, true)],
     }),
@@ -518,14 +589,35 @@ function buildPayeeSelectionBlocks(query: string, matches: RegisteredPayee[]): C
 function debitAccountMetadata(account: MockDebitAccount) {
   return {
     accountId: account.accountId,
-    accountNumber: account.accountNumber,
+    parentAccountId: account.parentAccountId,
+    accountDisplay: account.accountDisplay,
     productCategoryCode: account.productCategoryCode,
+    productDescription: account.productDescription,
     displayLabel: account.displayLabel,
     currency: account.currency,
+    ledgerBalanceIndicator: account.ledgerBalanceIndicator,
+    ledgerBalanceAmount: account.ledgerBalanceAmount,
+    ledgerBalanceCurrency: account.ledgerBalanceCurrency,
   };
 }
 
-function buildDebitAccountSelectionBlocks(accounts: MockDebitAccount[]): ContentBlock[] {
+function debitAccountGroupMetadata(group: MockDebitAccountGroup) {
+  return {
+    groupId: group.groupId,
+    parentAccountId: group.parentAccountId,
+    accountDisplay: group.accountDisplay,
+    productDescription: group.productDescription,
+    subAccountCount: group.subAccounts.length,
+    subAccounts: group.subAccounts.map(debitAccountMetadata),
+  };
+}
+
+function allDebitAccounts() {
+  return DEBIT_ACCOUNT_GROUPS.flatMap((group) => group.subAccounts);
+}
+
+function buildDebitAccountSelectionBlocks(groups: MockDebitAccountGroup[]): ContentBlock[] {
+  const accounts = groups.flatMap((group) => group.subAccounts);
   return [
     buildTextBlock(
       'Please choose the debit account to fund this domestic payment.',
@@ -536,20 +628,26 @@ function buildDebitAccountSelectionBlocks(accounts: MockDebitAccount[]): Content
       accounts.map((account) => ({
         itemId: account.accountId,
         label: account.displayLabel,
-        description: `${account.currency} • ${account.productCategoryCode}`,
+        description:
+          account.ledgerBalanceIndicator === 'BALANCE_AVAILABLE'
+            ? `${account.productDescription} • ${account.ledgerBalanceCurrency ?? account.currency} ${account.ledgerBalanceAmount ?? ''}`.trim()
+            : `${account.productDescription} • ${account.ledgerBalanceIndicator}`,
         metadata: debitAccountMetadata(account),
       })),
       {
         purpose: 'debit-account-selection',
+        groupCount: groups.length,
         accountCount: accounts.length,
-        pageSize: 10,
-        accounts: accounts.map(debitAccountMetadata),
+        groupPageSize: 10,
+        subAccountPageSize: 10,
+        groups: groups.map(debitAccountGroupMetadata),
       },
     ),
   ];
 }
 
-function buildDebitAccountLookupBlocks(accounts: MockDebitAccount[]): ContentBlock[] {
+function buildDebitAccountLookupBlocks(groups: MockDebitAccountGroup[]): ContentBlock[] {
+  const accounts = groups.flatMap((group) => group.subAccounts);
   if (accounts.length === 0) {
     return [
       buildInfoCard('No debit accounts available', 'I could not find any debit accounts for this profile.'),
@@ -558,14 +656,16 @@ function buildDebitAccountLookupBlocks(accounts: MockDebitAccount[]): ContentBlo
 
   return [
     buildTextBlock(
-      `I found ${accounts.length} debit account${accounts.length === 1 ? '' : 's'} you can use for domestic payments.`,
+      `I found ${accounts.length} debit account${accounts.length === 1 ? '' : 's'} across ${groups.length} account group${groups.length === 1 ? '' : 's'} you can use for domestic payments.`,
       'My debit accounts',
     ),
     buildSummaryCard('Available debit accounts', [], {
       purpose: 'debit-account-results',
+      groupCount: groups.length,
       accountCount: accounts.length,
-      pageSize: 10,
-      accounts: accounts.map(debitAccountMetadata),
+      groupPageSize: 10,
+      subAccountPageSize: 10,
+      groups: groups.map(debitAccountGroupMetadata),
     }),
   ];
 }
@@ -824,14 +924,15 @@ function isCancellation(text: string) {
 
 function selectedDebitAccountById(accountId: string | null | undefined) {
   if (!accountId) return null;
-  const found = DEBIT_ACCOUNTS.find((account) => account.accountId === accountId);
+  const found = allDebitAccounts().find((account) => account.accountId === accountId);
   return found
     ? {
         accountId: found.accountId,
-        accountNumber: found.accountNumber,
+        accountDisplay: found.accountDisplay,
         productCategoryCode: found.productCategoryCode,
+        productDescription: found.productDescription,
         displayLabel: found.displayLabel,
-        currency: found.currency,
+        currency: found.currency ?? null,
       }
     : null;
 }
@@ -914,7 +1015,8 @@ function resolveDebitAccountAndPrepareConfirmation(
   draft: PaymentDraft,
   userMessage?: ChatMessage | null,
 ) {
-  if (DEBIT_ACCOUNTS.length === 0) {
+  const availableAccounts = allDebitAccounts();
+  if (availableAccounts.length === 0) {
     touchSession(record, 'COLLECTING_DETAILS');
     setSessionStatus(record, 'ACTIVE');
     return respond(
@@ -930,7 +1032,7 @@ function resolveDebitAccountAndPrepareConfirmation(
   }
 
   if (draft.selectedDebitAccount?.accountId) {
-    const stillAvailable = DEBIT_ACCOUNTS.some(
+    const stillAvailable = availableAccounts.some(
       (account) => account.accountId === draft.selectedDebitAccount?.accountId,
     );
     if (stillAvailable) {
@@ -940,8 +1042,8 @@ function resolveDebitAccountAndPrepareConfirmation(
     updateDraftTimestamp(draft);
   }
 
-  if (DEBIT_ACCOUNTS.length === 1) {
-    draft.selectedDebitAccount = selectedDebitAccountById(DEBIT_ACCOUNTS[0].accountId);
+  if (availableAccounts.length === 1) {
+    draft.selectedDebitAccount = selectedDebitAccountById(availableAccounts[0].accountId);
     updateDraftTimestamp(draft);
     return prepareConfirmation(record, draft, userMessage);
   }
@@ -951,7 +1053,7 @@ function resolveDebitAccountAndPrepareConfirmation(
   maybeUpdateTitleFromDraft(record, draft);
   return respond(
     record,
-    buildAssistantMessage(record.session.sessionId, buildDebitAccountSelectionBlocks(DEBIT_ACCOUNTS)),
+    buildAssistantMessage(record.session.sessionId, buildDebitAccountSelectionBlocks(DEBIT_ACCOUNT_GROUPS)),
     userMessage,
   );
 }
@@ -1034,21 +1136,17 @@ function applyDomesticPaymentSlots(
   const payeeChanged = isNewPayeeQuery(draft, slots.payeeQuery);
 
   if (slots.payeeQuery) {
-    if (payeeChanged) {
-      draft.amount = null;
-      draft.paymentDate = null;
-    }
     draft.payeeQueryText = slots.payeeQuery;
     if (payeeChanged) {
       draft.selectedPayee = null;
     }
   }
 
-  if (!payeeChanged && slots.amount !== null) {
+  if (slots.amount !== null) {
     draft.amount = slots.amount;
   }
 
-  if (!payeeChanged && slots.paymentDate) {
+  if (slots.paymentDate) {
     draft.paymentDate = slots.paymentDate;
   }
 
@@ -1153,7 +1251,7 @@ function handleDebitAccountLookup(record: MockSessionRecord, userMessage?: ChatM
   setSessionTitle(record, 'My debit accounts');
   return respond(
     record,
-    buildAssistantMessage(record.session.sessionId, buildDebitAccountLookupBlocks(DEBIT_ACCOUNTS)),
+    buildAssistantMessage(record.session.sessionId, buildDebitAccountLookupBlocks(DEBIT_ACCOUNT_GROUPS)),
     userMessage,
   );
 }
@@ -1306,10 +1404,6 @@ function handleUiTurn(record: MockSessionRecord, request: UiEventRequest, userMe
         record.session.activeDraft.selectedPayee.payeeId !== selectedPayee.payeeId,
     );
     record.session.activeDraft.selectedPayee = clone(selectedPayee);
-    if (payeeChanged) {
-      record.session.activeDraft.amount = null;
-      record.session.activeDraft.paymentDate = null;
-    }
     updateDraftTimestamp(record.session.activeDraft);
     if (
       record.session.activeDraft.amount === null ||

@@ -217,7 +217,10 @@ public class IntentInterpreter {
         boolean detailOnlyForDraft = hasDraft && (payeeQuery != null || amount != null || date != null)
                 && (state == ConversationState.COLLECTING_DETAILS
                     || state == ConversationState.IDLE
-                    || state == ConversationState.FAILED);
+                    || state == ConversationState.FAILED
+                    || state == ConversationState.AWAITING_PAYEE_SELECTION
+                    || state == ConversationState.AWAITING_DEBIT_ACCOUNT_SELECTION
+                    || state == ConversationState.AWAITING_CONFIRMATION);
 
         if (PAYMENT_INTENT.matcher(text).find() || detailOnlyForDraft) {
             return analysis(IntentType.DOMESTIC_PAYMENT, payeeQuery, amount, date);

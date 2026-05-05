@@ -174,20 +174,42 @@ describe('StructuredBlock', () => {
       metadata: {
         purpose: 'debit-account-results',
         accountCount: 2,
-        accounts: [
+        groupCount: 1,
+        groupPageSize: 10,
+        subAccountPageSize: 10,
+        groups: [
           {
-            accountId: 'acct_1',
-            accountNumber: '123-000-001',
-            productCategoryCode: 'CUR',
-            displayLabel: 'HKD primary account • 123-000-001',
-            currency: 'HKD',
-          },
-          {
-            accountId: 'acct_2',
-            accountNumber: '123-000-002',
-            productCategoryCode: 'SAV',
-            displayLabel: 'HKD savings account • 123-000-002',
-            currency: 'HKD',
+            groupId: 'acct_master_1',
+            parentAccountId: 'acct_master_1',
+            accountDisplay: '118-067271-833',
+            productDescription: 'zzzz One',
+            subAccountCount: 2,
+            subAccounts: [
+              {
+                accountId: 'acct_1',
+                parentAccountId: 'acct_master_1',
+                accountDisplay: '118-067271-833',
+                productCategoryCode: 'PVCUA',
+                productDescription: 'HKD Current',
+                displayLabel: 'HKD Current • 118-067271-833',
+                currency: 'HKD',
+                ledgerBalanceIndicator: 'BALANCE_AVAILABLE',
+                ledgerBalanceAmount: '999999999',
+                ledgerBalanceCurrency: 'HKD',
+              },
+              {
+                accountId: 'acct_2',
+                parentAccountId: 'acct_master_1',
+                accountDisplay: '118-067271-833',
+                productCategoryCode: 'PVSAV',
+                productDescription: 'HKD Savings',
+                displayLabel: 'HKD Savings • 118-067271-833',
+                currency: 'HKD',
+                ledgerBalanceIndicator: 'NO_BALANCE',
+                ledgerBalanceAmount: null,
+                ledgerBalanceCurrency: null,
+              },
+            ],
           },
         ],
       },
@@ -196,9 +218,11 @@ describe('StructuredBlock', () => {
     render(<StructuredBlock messageId="msg_accounts" block={block} onSubmit={vi.fn()} />);
 
     expect(screen.getByText('Available debit accounts')).toBeInTheDocument();
-    expect(screen.getByText('2 accounts')).toBeInTheDocument();
-    expect(screen.getByText('HKD primary account • 123-000-001')).toBeInTheDocument();
-    expect(screen.getAllByText('HKD')).toHaveLength(2);
+    expect(screen.getByText('1 group · 2 accounts')).toBeInTheDocument();
+    expect(screen.getAllByText('118-067271-833').length).toBeGreaterThan(0);
+    expect(screen.getByText('zzzz One')).toBeInTheDocument();
+    expect(screen.getByText('HKD Current')).toBeInTheDocument();
+    expect(screen.getByText('NO_BALANCE')).toBeInTheDocument();
   });
 
   it('renders debit account selection cards and submits the selected account', () => {
@@ -210,35 +234,61 @@ describe('StructuredBlock', () => {
       metadata: {
         purpose: 'debit-account-selection',
         accountCount: 2,
-        pageSize: 10,
-        accounts: [
+        groupCount: 1,
+        groupPageSize: 10,
+        subAccountPageSize: 10,
+        groups: [
           {
-            accountId: 'acct_1',
-            accountNumber: '123-000-001',
-            productCategoryCode: 'CUR',
-            displayLabel: 'HKD primary account • 123-000-001',
-            currency: 'HKD',
-          },
-          {
-            accountId: 'acct_2',
-            accountNumber: '123-000-002',
-            productCategoryCode: 'SAV',
-            displayLabel: 'HKD savings account • 123-000-002',
-            currency: 'HKD',
+            groupId: 'acct_master_1',
+            parentAccountId: 'acct_master_1',
+            accountDisplay: '118-067271-833',
+            productDescription: 'zzzz One',
+            subAccountCount: 2,
+            subAccounts: [
+              {
+                accountId: 'acct_1',
+                parentAccountId: 'acct_master_1',
+                accountDisplay: '118-067271-833',
+                productCategoryCode: 'PVCUA',
+                productDescription: 'HKD Current',
+                displayLabel: 'HKD Current • 118-067271-833',
+                currency: 'HKD',
+                ledgerBalanceIndicator: 'BALANCE_AVAILABLE',
+                ledgerBalanceAmount: '999999999',
+                ledgerBalanceCurrency: 'HKD',
+              },
+              {
+                accountId: 'acct_2',
+                parentAccountId: 'acct_master_1',
+                accountDisplay: '118-067271-833',
+                productCategoryCode: 'PVSAV',
+                productDescription: 'HKD Savings',
+                displayLabel: 'HKD Savings • 118-067271-833',
+                currency: 'HKD',
+                ledgerBalanceIndicator: 'BALANCE_AVAILABLE',
+                ledgerBalanceAmount: '888888888',
+                ledgerBalanceCurrency: 'HKD',
+              },
+            ],
           },
         ],
       },
       items: [
         {
           itemId: 'acct_1',
-          label: 'HKD primary account • 123-000-001',
-          description: 'HKD • CUR',
+          label: 'HKD Current • 118-067271-833',
+          description: 'HKD Current • HKD 999999999',
           metadata: {
             accountId: 'acct_1',
-            accountNumber: '123-000-001',
-            productCategoryCode: 'CUR',
-            displayLabel: 'HKD primary account • 123-000-001',
+            parentAccountId: 'acct_master_1',
+            accountDisplay: '118-067271-833',
+            productCategoryCode: 'PVCUA',
+            productDescription: 'HKD Current',
+            displayLabel: 'HKD Current • 118-067271-833',
             currency: 'HKD',
+            ledgerBalanceIndicator: 'BALANCE_AVAILABLE',
+            ledgerBalanceAmount: '999999999',
+            ledgerBalanceCurrency: 'HKD',
           },
         },
       ],

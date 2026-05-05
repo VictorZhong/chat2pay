@@ -72,16 +72,21 @@ public class ChatBlockFactory {
                 new DisplayField("Account", d.selectedPayee() != null ? d.selectedPayee().displayLabel() : "Pending"),
                 new DisplayField("Bank", d.selectedPayee() != null ? d.selectedPayee().bankName() : "Pending"),
                 new DisplayField("Debit account", d.selectedDebitAccount() != null
-                        ? firstNonBlank(d.selectedDebitAccount().displayLabel(), d.selectedDebitAccount().accountNumber())
+                        ? firstNonBlank(
+                                d.selectedDebitAccount().displayLabel(),
+                                d.selectedDebitAccount().productDescription(),
+                                d.selectedDebitAccount().accountDisplay())
                         : "Pending"),
                 new DisplayField("Amount", amount),
                 new DisplayField("Payment date", d.paymentDate() != null ? d.paymentDate().toString() : "Pending")
         );
     }
 
-    private static String firstNonBlank(String first, String second) {
-        if (first != null && !first.isBlank()) return first;
-        return second != null && !second.isBlank() ? second : null;
+    private static String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank()) return value;
+        }
+        return null;
     }
 
     public static String newMessageId() {

@@ -139,14 +139,12 @@ public class HttpDomesticPaymentClient implements DomesticPaymentClient {
     private Map<String, Object> buildPayload(DomesticPaymentRequest request,
                                              DownstreamAccount account,
                                              RuntimeProfile profile) {
-        DebitAccountSummary debitAccountSummary = resolvedDebitAccount(request, profile);
+        DebitAccountSummary debitAccountSummary = resolvedDebitAccount(request);
         String currency = firstNonBlank(debitAccountSummary.currency(), profile.requiredPaymentCurrency());
 
         Map<String, Object> debitAccountIdentifier = Map.of(
-                "accountNumber", debitAccountSummary.accountNumber(),
-                "productCategoryCode", firstNonBlank(
-                        debitAccountSummary.productCategoryCode(),
-                        profile.requiredDebitProductCategoryCode())
+                "accountNumber", debitAccountSummary.accountId(),
+                "productCategoryCode", debitAccountSummary.productCategoryCode()
         );
         Map<String, Object> debitAccount = Map.of(
                 "debitAccountIdentifier", debitAccountIdentifier,
@@ -173,19 +171,13 @@ public class HttpDomesticPaymentClient implements DomesticPaymentClient {
         return payload;
     }
 
-    private DebitAccountSummary resolvedDebitAccount(DomesticPaymentRequest request, RuntimeProfile profile) {
+    private DebitAccountSummary resolvedDebitAccount(DomesticPaymentRequest request) {
         if (request.selectedDebitAccount() != null
-                && request.selectedDebitAccount().accountNumber() != null
-                && !request.selectedDebitAccount().accountNumber().isBlank()) {
+                && request.selectedDebitAccount().accountId() != null
+                && !request.selectedDebitAccount().accountId().isBlank()) {
             return request.selectedDebitAccount();
         }
-        return new DebitAccountSummary(
-                null,
-                profile.requiredDebitAccountNumber(),
-                profile.requiredDebitProductCategoryCode(),
-                profile.requiredDebitAccountNumber(),
-                profile.requiredPaymentCurrency()
-        );
+        throw new IllegalArgumentException("selected_debit_account is required.");
     }
 
     private Map<String, Object> parseResponse(String body) {
@@ -240,9 +232,13 @@ public class HttpDomesticPaymentClient implements DomesticPaymentClient {
             throw new IllegalArgumentException("payee_id_index is required.");
         }
         if (request.selectedDebitAccount() == null
-                || request.selectedDebitAccount().accountNumber() == null
-                || request.selectedDebitAccount().accountNumber().isBlank()) {
+                || request.selectedDebitAccount().accountId() == null
+                || request.selectedDebitAccount().accountId().isBlank()) {
             throw new IllegalArgumentException("selected_debit_account is required.");
+        }
+        if (request.selectedDebitAccount().productCategoryCode() == null
+                || request.selectedDebitAccount().productCategoryCode().isBlank()) {
+            throw new IllegalArgumentException("selected_debit_account.product_category_code is required.");
         }
         if (request.amount() == null || request.amount().signum() <= 0) {
             throw new IllegalArgumentException("amount must be a positive number.");

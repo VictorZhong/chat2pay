@@ -287,12 +287,25 @@ type PayeeNode = {
   accounts: PayeeAccountNode[];
 };
 
-type DebitAccountCardData = {
+type DebitSubAccountNode = {
   accountId: string;
-  accountNumber: string | null;
+  parentAccountId: string | null;
+  accountDisplay: string | null;
   productCategoryCode: string | null;
+  productDescription: string | null;
   displayLabel: string | null;
   currency: string | null;
+  ledgerBalanceIndicator: string | null;
+  ledgerBalanceAmount: string | null;
+  ledgerBalanceCurrency: string | null;
+};
+
+type DebitAccountGroupNode = {
+  groupId: string;
+  parentAccountId: string | null;
+  accountDisplay: string | null;
+  productDescription: string | null;
+  subAccounts: DebitSubAccountNode[];
 };
 
 function parsePayeeDirectory(metadata: Record<string, unknown> | null | undefined): PayeeNode[] {
@@ -340,36 +353,73 @@ function payeeMetadataPageSize(metadata: Record<string, unknown> | null | undefi
   return fallback;
 }
 
-function parseDebitAccounts(metadata: Record<string, unknown> | null | undefined): DebitAccountCardData[] {
-  const raw = metadata?.accounts;
+function parseDebitAccountGroups(metadata: Record<string, unknown> | null | undefined): DebitAccountGroupNode[] {
+  const raw = metadata?.groups;
   if (!Array.isArray(raw)) return [];
-  const result: DebitAccountCardData[] = [];
+  const result: DebitAccountGroupNode[] = [];
   for (const item of raw) {
     if (!isRecord(item)) continue;
-    const accountId = cleanText(item.accountId);
-    if (!accountId) continue;
+    const subAccountsRaw = item.subAccounts;
+    if (!Array.isArray(subAccountsRaw)) continue;
+    const subAccounts: DebitSubAccountNode[] = [];
+    for (const sub of subAccountsRaw) {
+      if (!isRecord(sub)) continue;
+      const accountId = cleanText(sub.accountId);
+      if (!accountId) continue;
+      subAccounts.push({
+        accountId,
+        parentAccountId: cleanText(sub.parentAccountId),
+        accountDisplay: cleanText(sub.accountDisplay),
+        productCategoryCode: cleanText(sub.productCategoryCode),
+        productDescription: cleanText(sub.productDescription),
+        displayLabel: cleanText(sub.displayLabel),
+        currency: cleanText(sub.currency),
+        ledgerBalanceIndicator: cleanText(sub.ledgerBalanceIndicator),
+        ledgerBalanceAmount: cleanText(sub.ledgerBalanceAmount),
+        ledgerBalanceCurrency: cleanText(sub.ledgerBalanceCurrency),
+      });
+    }
+    if (subAccounts.length === 0) continue;
     result.push({
-      accountId,
-      accountNumber: cleanText(item.accountNumber),
-      productCategoryCode: cleanText(item.productCategoryCode),
-      displayLabel: cleanText(item.displayLabel),
-      currency: cleanText(item.currency),
+      groupId: cleanText(item.groupId) ?? `group-${result.length + 1}`,
+      parentAccountId: cleanText(item.parentAccountId),
+      accountDisplay: cleanText(item.accountDisplay),
+      productDescription: cleanText(item.productDescription),
+      subAccounts,
     });
   }
   return result;
 }
 
-function debitAccountFromSelectableItem(item: SelectableListBlock['items'][number]): DebitAccountCardData | null {
+function debitAccountFromSelectableItem(item: SelectableListBlock['items'][number]): DebitSubAccountNode | null {
   const metadata = isRecord(item.metadata) ? item.metadata : null;
   const accountId = cleanText(item.itemId) ?? cleanText(metadata?.accountId);
   if (!accountId) return null;
   return {
     accountId,
-    accountNumber: cleanText(metadata?.accountNumber),
+    parentAccountId: cleanText(metadata?.parentAccountId),
+    accountDisplay: cleanText(metadata?.accountDisplay),
     productCategoryCode: cleanText(metadata?.productCategoryCode),
+    productDescription: cleanText(metadata?.productDescription),
     displayLabel: cleanText(metadata?.displayLabel) ?? cleanText(item.label),
     currency: cleanText(metadata?.currency),
+    ledgerBalanceIndicator: cleanText(metadata?.ledgerBalanceIndicator),
+    ledgerBalanceAmount: cleanText(metadata?.ledgerBalanceAmount),
+    ledgerBalanceCurrency: cleanText(metadata?.ledgerBalanceCurrency),
   };
+}
+
+function fallbackDebitAccountGroups(accounts: DebitSubAccountNode[]): DebitAccountGroupNode[] {
+  if (accounts.length === 0) return [];
+  return [
+    {
+      groupId: 'fallback-group',
+      parentAccountId: null,
+      accountDisplay: 'Available accounts',
+      productDescription: null,
+      subAccounts: accounts,
+    },
+  ];
 }
 
 function isDebitAccountResultsBlock(block: SummaryCardBlock) {
@@ -655,39 +705,136 @@ function PayeeLabelBadge({ label }: { label: string | null }) {
   );
 }
 
-function DebitAccountCardContent({ account }: { account: DebitAccountCardData }) {
-  return (
-    <div className="grid gap-3">
-      <div>
-        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-brand-gray">
-          Debit account
-        </p>
-        <h4 className="mt-1 break-words text-base font-semibold leading-6 text-brand-black">
-          {account.displayLabel ?? account.accountNumber ?? 'Unnamed account'}
-        </h4>
-      </div>
-      <div className="grid gap-2">
-        <PayeeDetail label="Number" value={account.accountNumber} />
-        <PayeeDetail label="Product" value={account.productCategoryCode} />
-        <PayeeDetail label="Currency" value={account.currency} />
-      </div>
-    </div>
-  );
-}
-
-function DebitAccountList({
+function DebitAccountDirectory({
   title,
-  accounts,
+  groups,
   mode,
-  pageSize = 10,
+  groupPageSize = 10,
+  subAccountPageSize = 10,
   disabled = false,
   onSelectAccount,
 }: {
   title: string;
-  accounts: DebitAccountCardData[];
+  groups: DebitAccountGroupNode[];
   mode: 'view' | 'select';
-  pageSize?: number;
+  groupPageSize?: number;
+  subAccountPageSize?: number;
   disabled?: boolean;
+  onSelectAccount?: (accountId: string) => void;
+}) {
+  const [groupPage, setGroupPage] = useState(0);
+  const [expandedGroup, setExpandedGroup] = useState<string | null>(groups.length === 1 ? groups[0].groupId : null);
+  const totalAccounts = groups.reduce((acc, group) => acc + group.subAccounts.length, 0);
+  const totalPages = Math.max(1, Math.ceil(groups.length / groupPageSize));
+  const safePage = Math.min(groupPage, totalPages - 1);
+  const start = safePage * groupPageSize;
+  const visible = groups.slice(start, start + groupPageSize);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-end justify-between gap-3 border-b border-brand-line pb-3">
+        <h4 className="text-base font-semibold text-brand-black">{title}</h4>
+        <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-brand-gray">
+          {groups.length} {groups.length === 1 ? 'group' : 'groups'} · {totalAccounts}{' '}
+          {totalAccounts === 1 ? 'account' : 'accounts'}
+        </span>
+      </div>
+      <div className="space-y-2">
+        {visible.map((group) => (
+          <DebitAccountGroupRow
+            key={group.groupId}
+            group={group}
+            expanded={expandedGroup === group.groupId}
+            onToggle={() => setExpandedGroup(expandedGroup === group.groupId ? null : group.groupId)}
+            mode={mode}
+            pageSize={subAccountPageSize}
+            disabled={disabled}
+            onSelectAccount={onSelectAccount}
+          />
+        ))}
+      </div>
+      {totalPages > 1 ? (
+        <Pagination
+          page={safePage}
+          totalPages={totalPages}
+          onPageChange={setGroupPage}
+          itemLabel="groups"
+          totalItems={groups.length}
+          pageSize={groupPageSize}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function DebitAccountGroupRow({
+  group,
+  expanded,
+  onToggle,
+  mode,
+  pageSize,
+  disabled,
+  onSelectAccount,
+}: {
+  group: DebitAccountGroupNode;
+  expanded: boolean;
+  onToggle: () => void;
+  mode: 'view' | 'select';
+  pageSize: number;
+  disabled: boolean;
+  onSelectAccount?: (accountId: string) => void;
+}) {
+  return (
+    <div className="border border-brand-line bg-white shadow-[0_10px_24px_rgba(17,17,17,0.06)]">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-start justify-between gap-3 p-4 text-left transition hover:bg-[#fff8f8]"
+      >
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-brand-gray">
+            Master account
+          </p>
+          <h4 className="mt-1 break-words text-base font-semibold leading-6 text-brand-black">
+            {group.accountDisplay ?? 'Account group'}
+          </h4>
+          {group.productDescription ? (
+            <p className="mt-1 break-words text-sm text-brand-gray">{group.productDescription}</p>
+          ) : null}
+        </div>
+        <div className="flex flex-col items-end gap-2">
+          <span className="border border-brand-line bg-[#fafafa] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-brand-gray">
+            {group.subAccounts.length} {group.subAccounts.length === 1 ? 'sub account' : 'sub accounts'}
+          </span>
+          <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-brand-gray">
+            {expanded ? 'Hide' : 'Show'}
+          </span>
+        </div>
+      </button>
+      {expanded ? (
+        <DebitSubAccountList
+          accounts={group.subAccounts}
+          mode={mode}
+          pageSize={pageSize}
+          disabled={disabled}
+          onSelectAccount={onSelectAccount}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function DebitSubAccountList({
+  accounts,
+  mode,
+  pageSize,
+  disabled,
+  onSelectAccount,
+}: {
+  accounts: DebitSubAccountNode[];
+  mode: 'view' | 'select';
+  pageSize: number;
+  disabled: boolean;
   onSelectAccount?: (accountId: string) => void;
 }) {
   const [page, setPage] = useState(0);
@@ -695,42 +842,84 @@ function DebitAccountList({
   const safePage = Math.min(page, totalPages - 1);
   const start = safePage * pageSize;
   const visible = accounts.slice(start, start + pageSize);
-
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-end justify-between gap-3 border-b border-brand-line pb-3">
-        <h4 className="text-base font-semibold text-brand-black">{title}</h4>
-        <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-brand-gray">
-          {accounts.length} {accounts.length === 1 ? 'account' : 'accounts'}
-        </span>
-      </div>
-      <div className="grid gap-3 sm:grid-cols-2">
+    <div className="border-t border-brand-line bg-[#fcfcfc]">
+      <div className="grid gap-2 p-4">
         {visible.map((account) => (
-          <article
+          <DebitSubAccountCard
             key={account.accountId}
-            className="border border-brand-line bg-white p-4 shadow-[0_10px_24px_rgba(17,17,17,0.06)]"
-          >
-            <DebitAccountCardContent account={account} />
-            {mode === 'select' ? (
-              <div className="mt-4 flex justify-end border-t border-brand-line pt-3">
-                <BrandButton disabled={disabled} onClick={() => onSelectAccount?.(account.accountId)}>
-                  Choose
-                </BrandButton>
-              </div>
-            ) : null}
-          </article>
+            account={account}
+            mode={mode}
+            disabled={disabled}
+            onSelectAccount={onSelectAccount}
+          />
         ))}
       </div>
       {totalPages > 1 ? (
-        <Pagination
-          page={safePage}
-          totalPages={totalPages}
-          onPageChange={setPage}
-          itemLabel="accounts"
-          totalItems={accounts.length}
-          pageSize={pageSize}
-        />
+        <div className="border-t border-brand-line px-4 pb-4">
+          <Pagination
+            page={safePage}
+            totalPages={totalPages}
+            onPageChange={setPage}
+            itemLabel="accounts"
+            totalItems={accounts.length}
+            pageSize={pageSize}
+          />
+        </div>
       ) : null}
+    </div>
+  );
+}
+
+function debitBalanceLabel(account: DebitSubAccountNode) {
+  const indicator = account.ledgerBalanceIndicator;
+  if (!indicator) return null;
+  if (indicator === 'BALANCE_AVAILABLE') {
+    const amount = account.ledgerBalanceAmount ? formatNumber(account.ledgerBalanceAmount) : null;
+    const currency = account.ledgerBalanceCurrency ?? account.currency;
+    if (!amount) return indicator;
+    return currency ? `${currency} ${amount}` : amount;
+  }
+  return indicator;
+}
+
+function DebitSubAccountCard({
+  account,
+  mode,
+  disabled,
+  onSelectAccount,
+}: {
+  account: DebitSubAccountNode;
+  mode: 'view' | 'select';
+  disabled: boolean;
+  onSelectAccount?: (accountId: string) => void;
+}) {
+  const balanceLabel = debitBalanceLabel(account);
+  return (
+    <div className="border border-brand-line bg-white p-3">
+      <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-start">
+        <div className="grid gap-1">
+          <p className="break-all text-sm font-semibold text-brand-black">
+            {account.accountDisplay ?? account.displayLabel ?? account.accountId}
+          </p>
+          <p className="text-xs text-brand-gray">{account.productDescription ?? '—'}</p>
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-brand-gray">
+            {balanceLabel ? (
+              <span className="border border-brand-line bg-white px-2 py-0.5 font-semibold uppercase tracking-[0.12em] text-brand-gray">
+                {balanceLabel}
+              </span>
+            ) : null}
+            {account.productCategoryCode ? (
+              <span className="text-[11px] text-brand-gray">{account.productCategoryCode}</span>
+            ) : null}
+          </div>
+        </div>
+        {mode === 'select' ? (
+          <BrandButton disabled={disabled} onClick={() => onSelectAccount?.(account.accountId)}>
+            Choose
+          </BrandButton>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -829,19 +1018,22 @@ function SelectableListCard({
   }
 
   if (isDebitAccountSelection) {
-    const accountsFromMetadata = parseDebitAccounts(block.metadata);
-    const accounts = accountsFromMetadata.length
-      ? accountsFromMetadata
-      : block.items
-          .map(debitAccountFromSelectableItem)
-          .filter((item): item is DebitAccountCardData => item !== null);
-    if (accounts.length) {
+    const groupsFromMetadata = parseDebitAccountGroups(block.metadata);
+    const groups = groupsFromMetadata.length
+      ? groupsFromMetadata
+      : fallbackDebitAccountGroups(
+          block.items
+            .map(debitAccountFromSelectableItem)
+            .filter((item): item is DebitSubAccountNode => item !== null),
+        );
+    if (groups.length) {
       return (
-        <DebitAccountList
+        <DebitAccountDirectory
           title={block.title}
-          accounts={accounts}
+          groups={groups}
           mode="select"
-          pageSize={payeeMetadataPageSize(block.metadata, 'pageSize', 10)}
+          groupPageSize={payeeMetadataPageSize(block.metadata, 'groupPageSize', 10)}
+          subAccountPageSize={payeeMetadataPageSize(block.metadata, 'subAccountPageSize', 10)}
           disabled={disabled}
           onSelectAccount={(accountId) =>
             onSubmit({
@@ -983,14 +1175,15 @@ function SummaryCardView({
     return <PayeeResultsCardList block={block} />;
   }
   if (isDebitAccountResultsBlock(block)) {
-    const accounts = parseDebitAccounts(block.metadata);
-    if (accounts.length) {
+    const groups = parseDebitAccountGroups(block.metadata);
+    if (groups.length) {
       return (
-        <DebitAccountList
+        <DebitAccountDirectory
           title={block.title}
-          accounts={accounts}
+          groups={groups}
           mode="view"
-          pageSize={payeeMetadataPageSize(block.metadata, 'pageSize', 10)}
+          groupPageSize={payeeMetadataPageSize(block.metadata, 'groupPageSize', 10)}
+          subAccountPageSize={payeeMetadataPageSize(block.metadata, 'subAccountPageSize', 10)}
         />
       );
     }

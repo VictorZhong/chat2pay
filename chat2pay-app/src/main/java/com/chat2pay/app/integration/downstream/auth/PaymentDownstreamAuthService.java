@@ -109,7 +109,7 @@ public class PaymentDownstreamAuthService implements DownstreamAuthService {
 
     private Chat2PayProperties.DownstreamProperties downstream() {
         return properties.downstream() == null
-                ? new Chat2PayProperties.DownstreamProperties(null, null, null, null,
+                ? new Chat2PayProperties.DownstreamProperties(null, null, null, null, null,
                         null, null, null, null, null, null, null, null, null)
                 : properties.downstream();
     }

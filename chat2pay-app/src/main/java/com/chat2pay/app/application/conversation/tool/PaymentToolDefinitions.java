@@ -40,8 +40,9 @@ public final class PaymentToolDefinitions {
                 - If the user wants to pay someone, call prepare_domestic_payment with any available payeeQuery, amount, and paymentDate. Only pass a real human/business name as payeeQuery — never pass words like "a new", "new", "someone", "anyone".
                 - If payment date wording is relative, convert it using the current date in the conversation context.
                 - If more than one registered payee matches, the backend will ask the user to choose one.
-                - If payment details are complete but the user has multiple debit accounts, the backend will ask the user to choose the source account before confirmation.
-                - Once a single payee, amount, and payment date are known, the backend will ask for explicit confirmation.
+                - If payment details are complete but the user has multiple debit accounts, the backend will show grouped master/sub accounts and ask the user to choose a selectable sub-account before confirmation.
+                - Keep already known draft details unless the user explicitly changes that field. If the user changes payee, do not assume amount, payment date, or debit account were cleared.
+                - Once a single payee, amount, and payment date are known, the backend may ask the user to choose a debit account and then ask for explicit confirmation.
                 - Never call confirm_domestic_payment until the latest user message explicitly confirms the pending payment.
                 - Never expose opaque downstream identifiers, internal ids, or tool arguments to the user.
                 """;
@@ -83,7 +84,7 @@ public final class PaymentToolDefinitions {
                 }
 
                 The backend validates every tool call. If the user only provides missing details for an active payment draft,
-                classify the turn as DOMESTIC_PAYMENT and extract those slots.
+                or updates one field while keeping the rest of the draft, classify the turn as DOMESTIC_PAYMENT and extract those slots.
                 """;
     }
 }

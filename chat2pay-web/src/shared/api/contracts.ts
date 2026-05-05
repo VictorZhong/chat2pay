@@ -166,8 +166,9 @@ export interface PayeeSummary {
 
 export interface DebitAccountSummary {
   accountId: string;
-  accountNumber?: string | null;
+  accountDisplay?: string | null;
   productCategoryCode?: string | null;
+  productDescription?: string | null;
   displayLabel?: string | null;
   currency?: string | null;
 }
