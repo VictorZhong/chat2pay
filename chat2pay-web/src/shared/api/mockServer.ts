@@ -33,6 +33,14 @@ type RegisteredPayee = PayeeSummary & {
   remittanceCurrencyCode?: string;
 };
 
+type MockDebitAccount = {
+  accountId: string;
+  accountNumber: string;
+  productCategoryCode: string;
+  displayLabel: string;
+  currency: string;
+};
+
 type MockSessionRecord = {
   profileId: string;
   session: ChatSessionDetail;
@@ -153,6 +161,23 @@ const REGISTERED_PAYEES: RegisteredPayee[] = [
     accountLimitCurrency: 'HKD',
     remittanceCurrencyCode: 'HKD',
     aliases: ['michelle ng', 'michelle'],
+  },
+];
+
+const DEBIT_ACCOUNTS: MockDebitAccount[] = [
+  {
+    accountId: 'acct_primary',
+    accountNumber: '123-000-001',
+    productCategoryCode: 'CUR',
+    displayLabel: 'HKD primary account • 123-000-001',
+    currency: 'HKD',
+  },
+  {
+    accountId: 'acct_savings',
+    accountNumber: '123-000-002',
+    productCategoryCode: 'SAV',
+    displayLabel: 'HKD savings account • 123-000-002',
+    currency: 'HKD',
   },
 ];
 
@@ -369,6 +394,7 @@ function ensureDomesticDraft(record: MockSessionRecord) {
     status: 'DRAFT',
     payeeQueryText: null,
     selectedPayee: null,
+    selectedDebitAccount: null,
     amount: null,
     currency: 'HKD',
     paymentDate: null,
@@ -394,6 +420,10 @@ function draftSummaryFields(draft: PaymentDraft): DisplayField[] {
     { label: 'Payee', value: draft.selectedPayee?.name ?? draft.payeeQueryText ?? 'Pending' },
     { label: 'Account', value: draft.selectedPayee?.displayLabel ?? 'Pending' },
     { label: 'Bank', value: draft.selectedPayee?.bankName ?? 'Pending' },
+    {
+      label: 'Debit account',
+      value: draft.selectedDebitAccount?.displayLabel ?? draft.selectedDebitAccount?.accountNumber ?? 'Pending',
+    },
     {
       label: 'Amount',
       value:
@@ -485,6 +515,61 @@ function buildPayeeSelectionBlocks(query: string, matches: RegisteredPayee[]): C
   ];
 }
 
+function debitAccountMetadata(account: MockDebitAccount) {
+  return {
+    accountId: account.accountId,
+    accountNumber: account.accountNumber,
+    productCategoryCode: account.productCategoryCode,
+    displayLabel: account.displayLabel,
+    currency: account.currency,
+  };
+}
+
+function buildDebitAccountSelectionBlocks(accounts: MockDebitAccount[]): ContentBlock[] {
+  return [
+    buildTextBlock(
+      'Please choose the debit account to fund this domestic payment.',
+      'Choose debit account',
+    ),
+    buildSelectableList(
+      'Available debit accounts',
+      accounts.map((account) => ({
+        itemId: account.accountId,
+        label: account.displayLabel,
+        description: `${account.currency} • ${account.productCategoryCode}`,
+        metadata: debitAccountMetadata(account),
+      })),
+      {
+        purpose: 'debit-account-selection',
+        accountCount: accounts.length,
+        pageSize: 10,
+        accounts: accounts.map(debitAccountMetadata),
+      },
+    ),
+  ];
+}
+
+function buildDebitAccountLookupBlocks(accounts: MockDebitAccount[]): ContentBlock[] {
+  if (accounts.length === 0) {
+    return [
+      buildInfoCard('No debit accounts available', 'I could not find any debit accounts for this profile.'),
+    ];
+  }
+
+  return [
+    buildTextBlock(
+      `I found ${accounts.length} debit account${accounts.length === 1 ? '' : 's'} you can use for domestic payments.`,
+      'My debit accounts',
+    ),
+    buildSummaryCard('Available debit accounts', [], {
+      purpose: 'debit-account-results',
+      accountCount: accounts.length,
+      pageSize: 10,
+      accounts: accounts.map(debitAccountMetadata),
+    }),
+  ];
+}
+
 function confirmationActions() {
   return [
     { id: 'CONFIRM_PAYMENT', label: 'Confirm payment' },
@@ -494,7 +579,10 @@ function confirmationActions() {
 
 function buildConfirmationBlocks(draft: PaymentDraft): ContentBlock[] {
   return [
-    buildTextBlock('Please confirm the payee, amount, and payment date before I submit the domestic payment.', 'Awaiting confirmation'),
+    buildTextBlock(
+      'Please confirm the payee, debit account, amount, and payment date before I submit the domestic payment.',
+      'Awaiting confirmation',
+    ),
     buildSummaryCard('Domestic payment summary', draftSummaryFields(draft), {
       actions: confirmationActions(),
       editableFields: [editablePaymentDateField(draft, false)],
@@ -716,6 +804,12 @@ function isPayeeLookupIntent(text: string) {
   return /\b(payee|registered|lookup|look up|find|show)\b/i.test(text) || /do i have/i.test(text);
 }
 
+function isDebitAccountLookupIntent(text: string) {
+  return /\b(list|show|view|check)\s+my\s+(accounts?|debit accounts?|source accounts?)\b/i.test(text)
+    || /\bmy\s+(accounts?|debit accounts?|source accounts?)\b/i.test(text)
+    || /\b(debit account|source account)\b/i.test(text);
+}
+
 function isPaymentIntent(text: string) {
   return /\b(pay|send|transfer)\b/i.test(text);
 }
@@ -726,6 +820,20 @@ function isPositiveConfirmation(text: string) {
 
 function isCancellation(text: string) {
   return /\b(cancel|stop|never mind|don'?t|do not)\b/i.test(text);
+}
+
+function selectedDebitAccountById(accountId: string | null | undefined) {
+  if (!accountId) return null;
+  const found = DEBIT_ACCOUNTS.find((account) => account.accountId === accountId);
+  return found
+    ? {
+        accountId: found.accountId,
+        accountNumber: found.accountNumber,
+        productCategoryCode: found.productCategoryCode,
+        displayLabel: found.displayLabel,
+        currency: found.currency,
+      }
+    : null;
 }
 
 function getRecord(profileId: string, sessionId: string) {
@@ -801,10 +909,63 @@ function prepareConfirmation(record: MockSessionRecord, draft: PaymentDraft, use
   return respond(record, buildAssistantMessage(record.session.sessionId, buildConfirmationBlocks(draft)), userMessage);
 }
 
+function resolveDebitAccountAndPrepareConfirmation(
+  record: MockSessionRecord,
+  draft: PaymentDraft,
+  userMessage?: ChatMessage | null,
+) {
+  if (DEBIT_ACCOUNTS.length === 0) {
+    touchSession(record, 'COLLECTING_DETAILS');
+    setSessionStatus(record, 'ACTIVE');
+    return respond(
+      record,
+      buildAssistantMessage(record.session.sessionId, [
+        buildErrorCard(
+          'No debit accounts available',
+          'I could not find any debit accounts to fund this payment.',
+        ),
+      ]),
+      userMessage,
+    );
+  }
+
+  if (draft.selectedDebitAccount?.accountId) {
+    const stillAvailable = DEBIT_ACCOUNTS.some(
+      (account) => account.accountId === draft.selectedDebitAccount?.accountId,
+    );
+    if (stillAvailable) {
+      return prepareConfirmation(record, draft, userMessage);
+    }
+    draft.selectedDebitAccount = null;
+    updateDraftTimestamp(draft);
+  }
+
+  if (DEBIT_ACCOUNTS.length === 1) {
+    draft.selectedDebitAccount = selectedDebitAccountById(DEBIT_ACCOUNTS[0].accountId);
+    updateDraftTimestamp(draft);
+    return prepareConfirmation(record, draft, userMessage);
+  }
+
+  touchSession(record, 'AWAITING_DEBIT_ACCOUNT_SELECTION');
+  setSessionStatus(record, 'ACTIVE');
+  maybeUpdateTitleFromDraft(record, draft);
+  return respond(
+    record,
+    buildAssistantMessage(record.session.sessionId, buildDebitAccountSelectionBlocks(DEBIT_ACCOUNTS)),
+    userMessage,
+  );
+}
+
 function executePayment(record: MockSessionRecord, userMessage?: ChatMessage | null) {
   const draft = record.session.activeDraft;
 
-  if (!draft || !draft.selectedPayee || draft.amount === null || !draft.paymentDate) {
+  if (
+    !draft ||
+    !draft.selectedPayee ||
+    !draft.selectedDebitAccount ||
+    draft.amount === null ||
+    !draft.paymentDate
+  ) {
     return respond(
       record,
       buildAssistantMessage(record.session.sessionId, [
@@ -898,7 +1059,7 @@ function applyDomesticPaymentSlots(
       return askForMissingDetails(record, draft, userMessage);
     }
 
-    return prepareConfirmation(record, draft, userMessage);
+    return resolveDebitAccountAndPrepareConfirmation(record, draft, userMessage);
   }
 
   if (!draft.payeeQueryText) {
@@ -947,7 +1108,7 @@ function applyDomesticPaymentSlots(
     return askForMissingDetails(record, draft, userMessage);
   }
 
-  return prepareConfirmation(record, draft, userMessage);
+  return resolveDebitAccountAndPrepareConfirmation(record, draft, userMessage);
 }
 
 function isNewPayeeQuery(draft: PaymentDraft, payeeQuery: string | null) {
@@ -986,6 +1147,17 @@ function handlePayeeLookup(record: MockSessionRecord, text: string, userMessage?
   );
 }
 
+function handleDebitAccountLookup(record: MockSessionRecord, userMessage?: ChatMessage | null) {
+  touchSession(record, 'IDLE');
+  setSessionStatus(record, 'ACTIVE');
+  setSessionTitle(record, 'My debit accounts');
+  return respond(
+    record,
+    buildAssistantMessage(record.session.sessionId, buildDebitAccountLookupBlocks(DEBIT_ACCOUNTS)),
+    userMessage,
+  );
+}
+
 function handleTextTurn(record: MockSessionRecord, text: string, userMessage?: ChatMessage | null) {
   const trimmedText = text.trim();
   const currentState = record.session.state;
@@ -1003,6 +1175,25 @@ function handleTextTurn(record: MockSessionRecord, text: string, userMessage?: C
     if (isCancellation(trimmedText)) {
       return cancelPayment(record, userMessage);
     }
+  }
+
+  if (
+    currentState === 'AWAITING_DEBIT_ACCOUNT_SELECTION' &&
+    record.session.activeDraft &&
+    !isPaymentIntent(trimmedText) &&
+    !isDebitAccountLookupIntent(trimmedText) &&
+    !hasDraftDetails
+  ) {
+    return respond(
+      record,
+      buildAssistantMessage(record.session.sessionId, [
+        buildInfoCard(
+          'Select a debit account',
+          'Please choose one of the available debit accounts before I continue.',
+        ),
+      ]),
+      userMessage,
+    );
   }
 
   if (
@@ -1028,6 +1219,10 @@ function handleTextTurn(record: MockSessionRecord, text: string, userMessage?: C
     touchSession(record, 'IDLE');
     setSessionStatus(record, 'ACTIVE');
     return respond(record, buildAssistantMessage(record.session.sessionId, buildUnsupportedBlocks()), userMessage);
+  }
+
+  if (isDebitAccountLookupIntent(trimmedText)) {
+    return handleDebitAccountLookup(record, userMessage);
   }
 
   if (isPaymentIntent(trimmedText) || hasDraftDetails) {
@@ -1062,6 +1257,23 @@ function handleUiTurn(record: MockSessionRecord, request: UiEventRequest, userMe
         ]),
         userMessage,
       );
+    }
+
+    if (record.session.state === 'AWAITING_DEBIT_ACCOUNT_SELECTION' && record.session.activeDraft) {
+      const selectedDebitAccount = selectedDebitAccountById(selectedId);
+      if (!selectedDebitAccount) {
+        return respond(
+          record,
+          buildAssistantMessage(record.session.sessionId, [
+            buildErrorCard('Selection expired', 'The selected debit account is no longer available.'),
+          ]),
+          userMessage,
+        );
+      }
+
+      record.session.activeDraft.selectedDebitAccount = selectedDebitAccount;
+      updateDraftTimestamp(record.session.activeDraft);
+      return prepareConfirmation(record, record.session.activeDraft, userMessage);
     }
 
     const selectedPayee = REGISTERED_PAYEES.find((payee) => payee.payeeId === selectedId);
@@ -1107,7 +1319,7 @@ function handleUiTurn(record: MockSessionRecord, request: UiEventRequest, userMe
       return askForMissingDetails(record, record.session.activeDraft, userMessage);
     }
 
-    return prepareConfirmation(record, record.session.activeDraft, userMessage);
+    return resolveDebitAccountAndPrepareConfirmation(record, record.session.activeDraft, userMessage);
   }
 
   if (request.eventType === 'CLICK_ACTION') {

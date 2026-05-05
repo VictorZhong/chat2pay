@@ -67,6 +67,21 @@ public class PaymentDraftEntity {
     @Column(name = "selected_display_label", columnDefinition = "text")
     private String selectedDisplayLabel;
 
+    @Column(name = "selected_debit_account_id", length = 64)
+    private String selectedDebitAccountId;
+
+    @Column(name = "selected_debit_account_number", columnDefinition = "text")
+    private String selectedDebitAccountNumber;
+
+    @Column(name = "selected_debit_product_category_code", length = 32)
+    private String selectedDebitProductCategoryCode;
+
+    @Column(name = "selected_debit_display_label", columnDefinition = "text")
+    private String selectedDebitDisplayLabel;
+
+    @Column(name = "selected_debit_currency", length = 3)
+    private String selectedDebitCurrency;
+
     @Column(precision = 18, scale = 2)
     private BigDecimal amount;
 

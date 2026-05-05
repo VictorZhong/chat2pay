@@ -47,6 +47,10 @@ public class PaymentPolicyGuard {
             return PolicyDecision.blocked("payee_required",
                     "The payment draft needs a selected payee before it can be submitted.");
         }
+        if (draft.selectedDebitAccount() == null) {
+            return PolicyDecision.blocked("debit_account_required",
+                    "The payment draft needs a selected debit account before it can be submitted.");
+        }
         if (draft.amount() == null || draft.amount().signum() <= 0) {
             return PolicyDecision.blocked("amount_required",
                     "The payment draft needs a positive amount before it can be submitted.");

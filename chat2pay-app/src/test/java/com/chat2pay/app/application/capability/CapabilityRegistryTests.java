@@ -18,7 +18,8 @@ class CapabilityRegistryTests {
                 .toList();
 
         assertThat(llmToolNames)
-                .contains("get_registered_payees",
+                .contains("get_my_debit_accounts",
+                        "get_registered_payees",
                         "prepare_domestic_payment",
                         "confirm_domestic_payment",
                         "cancel_payment",

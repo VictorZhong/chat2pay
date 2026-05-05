@@ -37,6 +37,7 @@ public record IntentAnalysis(
 
     public static String toolNameFor(IntentType intent) {
         return switch (intent) {
+            case ACCOUNT_LOOKUP -> "get_my_debit_accounts";
             case DOMESTIC_PAYMENT -> "prepare_domestic_payment";
             case PAYEE_LOOKUP -> "get_registered_payees";
             case CONFIRM_PAYMENT -> "confirm_domestic_payment";

@@ -1,6 +1,7 @@
 package com.chat2pay.app.application.conversation;
 
 import com.chat2pay.app.api.dto.ChatDtos.ChatMessage;
+import com.chat2pay.app.api.dto.ChatDtos.DebitAccountSummary;
 import com.chat2pay.app.api.dto.ChatDtos.ErrorSummary;
 import com.chat2pay.app.api.dto.ChatDtos.PayeeSummary;
 import com.chat2pay.app.api.dto.ChatDtos.PaymentDraft;
@@ -20,6 +21,7 @@ import com.chat2pay.app.persistence.repository.PayeeStore;
 import com.chat2pay.app.persistence.repository.PayeeStore.PayeeAccountRef;
 import com.chat2pay.app.persistence.repository.PayeeStore.RegisteredAccount;
 import com.chat2pay.app.persistence.repository.PayeeStore.RegisteredPayee;
+import com.chat2pay.app.persistence.repository.ProfileDebitAccountStore;
 import com.chat2pay.app.persistence.repository.ProfileStore;
 import com.chat2pay.app.persistence.repository.SessionStore.SessionRecord;
 import org.slf4j.Logger;
@@ -33,6 +35,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 
 @Service
 public class DomesticPaymentJourneyService {
@@ -41,6 +44,7 @@ public class DomesticPaymentJourneyService {
 
     private final PayeeStore payees;
     private final DomesticPaymentClient domesticPayments;
+    private final ProfileDebitAccountStore debitAccounts;
     private final ProfileStore profiles;
     private final ChatBlockFactory blocks;
     private final ConversationStateMachine stateMachine;
@@ -48,16 +52,43 @@ public class DomesticPaymentJourneyService {
 
     public DomesticPaymentJourneyService(PayeeStore payees,
                                          DomesticPaymentClient domesticPayments,
+                                         ProfileDebitAccountStore debitAccounts,
                                          ProfileStore profiles,
                                          ChatBlockFactory blocks,
                                          ConversationStateMachine stateMachine,
                                          PaymentPolicyGuard policyGuard) {
         this.payees = payees;
         this.domesticPayments = domesticPayments;
+        this.debitAccounts = debitAccounts;
         this.profiles = profiles;
         this.blocks = blocks;
         this.stateMachine = stateMachine;
         this.policyGuard = policyGuard;
+    }
+
+    public ChatMessage handleDebitAccountLookup(SessionRecord record) {
+        List<DebitAccountSummary> accounts = debitAccounts.list(record.profileId());
+        stateMachine.transition(record, ConversationState.IDLE, ChatSessionStatus.ACTIVE);
+        stateMachine.setTitle(record, "My debit accounts");
+        if (accounts.isEmpty()) {
+            return assistantMessage(record.session().sessionId(), List.of(
+                    infoBlock("No debit accounts available",
+                            "I could not find any debit accounts for this profile.")
+            ));
+        }
+        return assistantMessage(record.session().sessionId(), buildDebitAccountLookupBlocks(accounts));
+    }
+
+    public PaymentToolExecution executeListDebitAccountsTool(PaymentToolContext context) {
+        List<DebitAccountSummary> accounts = debitAccounts.list(context.record().profileId());
+        Map<String, Object> result = new HashMap<>();
+        result.put("ok", true);
+        result.put("account_count", accounts.size());
+        result.put("accounts", accounts.stream().map(this::debitAccountToolMap).toList());
+        ChatMessage terminal = assistantMessage(context.record().session().sessionId(),
+                buildDebitAccountLookupBlocks(accounts));
+        return new PaymentToolExecution(context.toolCall().id(), context.toolCall().name(),
+                result, terminal, List.of());
     }
 
     public ChatMessage handlePayeeLookup(SessionRecord record, String query) {
@@ -120,7 +151,7 @@ public class DomesticPaymentJourneyService {
 
         if (draft.selectedPayee() != null) {
             if (draft.amount() == null || draft.paymentDate() == null) return askForMissingDetails(record, draft);
-            return prepareConfirmation(record, draft);
+            return resolveDebitAccountAndPrepareConfirmation(record, draft);
         }
 
         if (draft.payeeQueryText() == null) return askForMissingDetails(record, draft);
@@ -160,7 +191,7 @@ public class DomesticPaymentJourneyService {
                         draft.amount(), draft.paymentDate(), draft.status(), null);
                 record.setSession(stateMachine.withDraft(record.session(), draft));
                 if (draft.amount() == null || draft.paymentDate() == null) return askForMissingDetails(record, draft);
-                return prepareConfirmation(record, draft);
+                return resolveDebitAccountAndPrepareConfirmation(record, draft);
             }
         }
 
@@ -195,6 +226,22 @@ public class DomesticPaymentJourneyService {
                 draft.status(), null);
         record.setSession(stateMachine.withDraft(record.session(), draft));
         if (draft.amount() == null || draft.paymentDate() == null) return askForMissingDetails(record, draft);
+        return resolveDebitAccountAndPrepareConfirmation(record, draft);
+    }
+
+    public ChatMessage selectDebitAccount(SessionRecord record, String selectedAccountId) {
+        if (selectedAccountId == null) {
+            return assistantMessage(record.session().sessionId(), List.of(
+                    errorBlock("Invalid selection", "No debit account was selected.")));
+        }
+        PaymentDraft draft = record.session().activeDraft();
+        DebitAccountSummary selected = debitAccounts.find(record.profileId(), selectedAccountId).orElse(null);
+        if (draft == null || selected == null) {
+            return assistantMessage(record.session().sessionId(), List.of(
+                    errorBlock("Selection expired", "The selected debit account is no longer available.")));
+        }
+        draft = stateMachine.updateSelectedDebitAccount(draft, selected);
+        record.setSession(stateMachine.withDraft(record.session(), draft));
         return prepareConfirmation(record, draft);
     }
 
@@ -251,6 +298,7 @@ public class DomesticPaymentJourneyService {
                     record.profileId(),
                     draft.selectedPayee().payeeId(),
                     draft.selectedPayee().name(),
+                    draft.selectedDebitAccount(),
                     draft.amount(),
                     draft.paymentDate()
             ));
@@ -435,7 +483,7 @@ public class DomesticPaymentJourneyService {
 
         return assistantMessage(record.session().sessionId(), List.of(
                 textBlock("Awaiting confirmation",
-                        "Please confirm the payee, amount, and payment date before I submit the domestic payment."),
+                        "Please confirm the payee, debit account, amount, and payment date before I submit the domestic payment."),
                 summaryBlock("Domestic payment summary", draftFields(draft), metadata)
         ));
     }
@@ -478,6 +526,57 @@ public class DomesticPaymentJourneyService {
         return assistantMessage(record.session().sessionId(), List.of(
                 textBlock("Choose payee", headline),
                 blocks.selectableListBlock("Registered payee matches", items, metadata)
+        ));
+    }
+
+    private ChatMessage resolveDebitAccountAndPrepareConfirmation(SessionRecord record, PaymentDraft draft) {
+        List<DebitAccountSummary> accounts = debitAccounts.list(record.profileId());
+        if (accounts.isEmpty()) {
+            stateMachine.transition(record, ConversationState.COLLECTING_DETAILS, ChatSessionStatus.ACTIVE);
+            return assistantMessage(record.session().sessionId(), List.of(
+                    errorBlock("No debit accounts available",
+                            "I could not find any debit accounts to fund this payment.")
+            ));
+        }
+        if (draft.selectedDebitAccount() != null) {
+            String selectedAccountId = draft.selectedDebitAccount().accountId();
+            boolean stillAvailable = accounts.stream()
+                    .anyMatch(account -> Objects.equals(account.accountId(), selectedAccountId));
+            if (stillAvailable) return prepareConfirmation(record, draft);
+            draft = stateMachine.updateSelectedDebitAccount(draft, null);
+            record.setSession(stateMachine.withDraft(record.session(), draft));
+        }
+        if (accounts.size() == 1) {
+            draft = stateMachine.updateSelectedDebitAccount(draft, accounts.get(0));
+            record.setSession(stateMachine.withDraft(record.session(), draft));
+            return prepareConfirmation(record, draft);
+        }
+        return askToChooseDebitAccount(record, draft, accounts);
+    }
+
+    private ChatMessage askToChooseDebitAccount(SessionRecord record, PaymentDraft draft,
+                                                List<DebitAccountSummary> accounts) {
+        stateMachine.transition(record, ConversationState.AWAITING_DEBIT_ACCOUNT_SELECTION, ChatSessionStatus.ACTIVE);
+        stateMachine.titleFromDraft(record, draft);
+        List<ContentBlock.SelectableItem> items = accounts.stream()
+                .map(account -> new ContentBlock.SelectableItem(
+                        account.accountId(),
+                        firstNonBlank(account.displayLabel(), account.accountNumber()),
+                        accountDescriptor(account),
+                        null,
+                        debitAccountMetadata(account)
+                ))
+                .toList();
+        Map<String, Object> metadata = new HashMap<>();
+        metadata.put("purpose", "debit-account-selection");
+        metadata.put("accountCount", accounts.size());
+        metadata.put("accounts", accounts.stream().map(this::debitAccountMetadata).toList());
+        metadata.put("pageSize", 10);
+
+        return assistantMessage(record.session().sessionId(), List.of(
+                textBlock("Choose debit account",
+                        "Please choose the debit account to fund this domestic payment."),
+                blocks.selectableListBlock("Available debit accounts", items, metadata)
         ));
     }
 
@@ -600,6 +699,61 @@ public class DomesticPaymentJourneyService {
         }
         out.put("account_limit_currency", nullSafe(account.accountLimitCurrency()));
         return out;
+    }
+
+    private List<ContentBlock> buildDebitAccountLookupBlocks(List<DebitAccountSummary> accounts) {
+        if (accounts.isEmpty()) {
+            return List.of(infoBlock("No debit accounts available",
+                    "I could not find any debit accounts for this profile."));
+        }
+        Map<String, Object> metadata = new HashMap<>();
+        metadata.put("purpose", "debit-account-results");
+        metadata.put("accountCount", accounts.size());
+        metadata.put("accounts", accounts.stream().map(this::debitAccountMetadata).toList());
+        metadata.put("pageSize", 10);
+        String headline = "I found " + accounts.size() + " debit account"
+                + (accounts.size() == 1 ? "" : "s") + " you can use for domestic payments.";
+        return List.of(
+                textBlock("My debit accounts", headline),
+                summaryBlock("Available debit accounts", List.of(), metadata)
+        );
+    }
+
+    private Map<String, Object> debitAccountMetadata(DebitAccountSummary account) {
+        Map<String, Object> out = new HashMap<>();
+        putIfPresent(out, "accountId", account.accountId());
+        putIfPresent(out, "accountNumber", account.accountNumber());
+        putIfPresent(out, "productCategoryCode", account.productCategoryCode());
+        putIfPresent(out, "displayLabel", account.displayLabel());
+        putIfPresent(out, "currency", account.currency());
+        return out;
+    }
+
+    private Map<String, Object> debitAccountToolMap(DebitAccountSummary account) {
+        Map<String, Object> out = new HashMap<>();
+        out.put("account_id", nullSafe(account.accountId()));
+        out.put("account_number", nullSafe(account.accountNumber()));
+        out.put("product_category_code", nullSafe(account.productCategoryCode()));
+        out.put("display_label", nullSafe(account.displayLabel()));
+        out.put("currency", nullSafe(account.currency()));
+        return out;
+    }
+
+    private String accountDescriptor(DebitAccountSummary account) {
+        StringBuilder builder = new StringBuilder();
+        if (account.currency() != null && !account.currency().isBlank()) {
+            builder.append(account.currency());
+        }
+        if (account.productCategoryCode() != null && !account.productCategoryCode().isBlank()) {
+            if (builder.length() > 0) builder.append(" • ");
+            builder.append(account.productCategoryCode());
+        }
+        return builder.length() == 0 ? account.accountNumber() : builder.toString();
+    }
+
+    private static String firstNonBlank(String first, String second) {
+        if (first != null && !first.isBlank()) return first;
+        return second != null && !second.isBlank() ? second : null;
     }
 
     private static String nullSafe(String value) {

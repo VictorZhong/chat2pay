@@ -1,6 +1,7 @@
 package com.chat2pay.app.application.conversation;
 
 import com.chat2pay.app.api.dto.ChatDtos.ChatSessionDetail;
+import com.chat2pay.app.api.dto.ChatDtos.DebitAccountSummary;
 import com.chat2pay.app.api.dto.ChatDtos.ErrorSummary;
 import com.chat2pay.app.api.dto.ChatDtos.PayeeSummary;
 import com.chat2pay.app.api.dto.ChatDtos.PaymentDraft;
@@ -29,7 +30,7 @@ public class ConversationStateMachine {
         PaymentDraft draft = new PaymentDraft(
                 "draft_" + UUID.randomUUID().toString().replace("-", "").substring(0, 10),
                 record.session().sessionId(), PaymentType.DOMESTIC_PAYMENT, PaymentDraftStatus.DRAFT,
-                null, null, null, resolvedCurrency(currency), null, null, null, null, Instant.now()
+                null, null, null, null, resolvedCurrency(currency), null, null, null, null, Instant.now()
         );
         record.setSession(withDraft(record.session(), draft));
         return draft;
@@ -51,10 +52,25 @@ public class ConversationStateMachine {
                                     BigDecimal amount, LocalDate date, PaymentDraftStatus status,
                                     String reference, ErrorSummary lastError,
                                     Map<String, Object> context) {
+        return updateDraft(d, payeeQuery, selected, d.selectedDebitAccount(), amount, date, status, reference,
+                lastError, context);
+    }
+
+    public PaymentDraft updateDraft(PaymentDraft d, String payeeQuery, PayeeSummary selected,
+                                    DebitAccountSummary selectedDebitAccount,
+                                    BigDecimal amount, LocalDate date, PaymentDraftStatus status,
+                                    String reference, ErrorSummary lastError,
+                                    Map<String, Object> context) {
         BigDecimal scaled = amount == null ? null : amount.setScale(2, RoundingMode.HALF_UP);
         return new PaymentDraft(d.draftId(), d.sessionId(), d.paymentType(), status,
-                payeeQuery, selected, scaled, resolvedCurrency(d.currency()),
+                payeeQuery, selected, selectedDebitAccount, scaled, resolvedCurrency(d.currency()),
                 date, reference, lastError, context, Instant.now());
+    }
+
+    public PaymentDraft updateSelectedDebitAccount(PaymentDraft draft, DebitAccountSummary selectedDebitAccount) {
+        return updateDraft(draft, draft.payeeQueryText(), draft.selectedPayee(), selectedDebitAccount,
+                draft.amount(), draft.paymentDate(), draft.status(), draft.downstreamReference(),
+                draft.lastError(), draft.context());
     }
 
     public ChatSessionDetail withDraft(ChatSessionDetail session, PaymentDraft draft) {

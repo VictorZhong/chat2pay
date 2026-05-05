@@ -2,6 +2,7 @@ package com.chat2pay.app.application.conversation;
 
 import com.chat2pay.app.api.dto.ChatDtos.ChatMessage;
 import com.chat2pay.app.api.dto.ChatDtos.ChatSessionDetail;
+import com.chat2pay.app.api.dto.ChatDtos.DebitAccountSummary;
 import com.chat2pay.app.api.dto.ChatDtos.PayeeSummary;
 import com.chat2pay.app.api.dto.ChatDtos.PaymentDraft;
 import com.chat2pay.app.api.dto.ContentBlock;
@@ -18,6 +19,7 @@ import com.chat2pay.app.persistence.repository.PayeeStore;
 import com.chat2pay.app.persistence.repository.PayeeStore.PayeeAccountRef;
 import com.chat2pay.app.persistence.repository.PayeeStore.RegisteredAccount;
 import com.chat2pay.app.persistence.repository.PayeeStore.RegisteredPayee;
+import com.chat2pay.app.persistence.repository.ProfileDebitAccountStore;
 import com.chat2pay.app.persistence.repository.ProfileStore;
 import com.chat2pay.app.persistence.repository.SessionStore.SessionRecord;
 import org.junit.jupiter.api.Test;
@@ -43,6 +45,7 @@ class DomesticPaymentJourneyServiceTests {
 
     private final PayeeStore payees = mock(PayeeStore.class);
     private final DomesticPaymentClient domesticPayments = mock(DomesticPaymentClient.class);
+    private final ProfileDebitAccountStore debitAccounts = mock(ProfileDebitAccountStore.class);
     private final ProfileStore profiles = mock(ProfileStore.class);
 
     @Test
@@ -63,6 +66,7 @@ class DomesticPaymentJourneyServiceTests {
         verify(domesticPayments).confirm(request.capture());
         assertThat(request.getValue().profileId()).isEqualTo("profile_1");
         assertThat(request.getValue().payeeIdIndex()).isEqualTo("payee_1");
+        assertThat(request.getValue().selectedDebitAccount().accountId()).isEqualTo("acct_primary");
         assertThat(request.getValue().amount()).isEqualByComparingTo(new BigDecimal("125.50"));
         assertThat(record.session().activeDraft().status()).isEqualTo(PaymentDraftStatus.CONFIRMED);
         assertThat(record.session().activeDraft().downstreamReference()).isEqualTo("DOM-REF-1");
@@ -159,6 +163,7 @@ class DomesticPaymentJourneyServiceTests {
     void confirmationSummaryAdvertisesEditablePaymentDateForTheUiDatePicker() {
         PaymentDraft draft = draft(selectedPayee(), new BigDecimal("125.50"), LocalDate.now().plusDays(1));
         SessionRecord record = recordWithDraft(draft, ConversationState.COLLECTING_DETAILS);
+        when(debitAccounts.list("profile_1")).thenReturn(List.of(primaryDebitAccount()));
 
         ChatMessage response = service().continueDomesticPayment(record, domesticIntent(null, null, null));
 
@@ -233,10 +238,28 @@ class DomesticPaymentJourneyServiceTests {
         assertThat(block.title()).isEqualTo("Cross-border payment not supported");
     }
 
+    @Test
+    void completeDraftWithMultipleDebitAccountsAsksForAccountSelectionBeforeConfirmation() {
+        PaymentDraft draft = draft(selectedPayee(), new BigDecimal("125.50"), LocalDate.now().plusDays(1), null);
+        SessionRecord record = recordWithDraft(draft, ConversationState.COLLECTING_DETAILS);
+        when(debitAccounts.list("profile_1")).thenReturn(List.of(
+                primaryDebitAccount(),
+                secondaryDebitAccount()
+        ));
+
+        ChatMessage response = service().continueDomesticPayment(record, domesticIntent(null, null, null));
+
+        assertThat(record.session().state()).isEqualTo(ConversationState.AWAITING_DEBIT_ACCOUNT_SELECTION);
+        ContentBlock.SelectableListBlock block = (ContentBlock.SelectableListBlock) response.contentBlocks().get(1);
+        assertThat(block.metadata()).containsEntry("purpose", "debit-account-selection");
+        assertThat(block.items()).hasSize(2);
+    }
+
     private DomesticPaymentJourneyService service() {
         return new DomesticPaymentJourneyService(
                 payees,
                 domesticPayments,
+                debitAccounts,
                 profiles,
                 new ChatBlockFactory(),
                 new ConversationStateMachine(),
@@ -261,7 +284,7 @@ class DomesticPaymentJourneyServiceTests {
     }
 
     private ChatSessionDetail sessionWithDraft() {
-        return sessionWithDraft(draft(selectedPayee(), new BigDecimal("125.50"), LocalDate.now()),
+        return sessionWithDraft(draft(selectedPayee(), new BigDecimal("125.50"), LocalDate.now(), primaryDebitAccount()),
                 ConversationState.AWAITING_CONFIRMATION);
     }
 
@@ -281,6 +304,11 @@ class DomesticPaymentJourneyServiceTests {
     }
 
     private PaymentDraft draft(PayeeSummary payee, BigDecimal amount, LocalDate date) {
+        return draft(payee, amount, date, primaryDebitAccount());
+    }
+
+    private PaymentDraft draft(PayeeSummary payee, BigDecimal amount, LocalDate date,
+                               DebitAccountSummary selectedDebitAccount) {
         return new PaymentDraft(
                 "draft_1",
                 "session_1",
@@ -288,6 +316,7 @@ class DomesticPaymentJourneyServiceTests {
                 PaymentDraftStatus.DRAFT,
                 "alice",
                 payee,
+                selectedDebitAccount,
                 amount,
                 "HKD",
                 date,
@@ -307,6 +336,26 @@ class DomesticPaymentJourneyServiceTests {
                 "Test Bank",
                 "123456",
                 "Current - 123456"
+        );
+    }
+
+    private DebitAccountSummary primaryDebitAccount() {
+        return new DebitAccountSummary(
+                "acct_primary",
+                "123-000-001",
+                "CUR",
+                "HKD primary account • 123-000-001",
+                "HKD"
+        );
+    }
+
+    private DebitAccountSummary secondaryDebitAccount() {
+        return new DebitAccountSummary(
+                "acct_secondary",
+                "123-000-002",
+                "SAV",
+                "HKD savings account • 123-000-002",
+                "HKD"
         );
     }
 

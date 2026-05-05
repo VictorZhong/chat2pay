@@ -2,6 +2,8 @@ package com.chat2pay.app.application.conversation.tool;
 
 public interface PaymentToolActions {
 
+    PaymentToolExecution executeListDebitAccountsTool(PaymentToolContext context);
+
     PaymentToolExecution executeRegisteredPayeesTool(PaymentToolContext context);
 
     PaymentToolExecution executePrepareDomesticPaymentTool(PaymentToolContext context);

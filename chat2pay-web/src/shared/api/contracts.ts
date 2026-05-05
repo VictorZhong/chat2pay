@@ -11,6 +11,7 @@ export type ConversationState =
   | 'IDLE'
   | 'COLLECTING_DETAILS'
   | 'AWAITING_PAYEE_SELECTION'
+  | 'AWAITING_DEBIT_ACCOUNT_SELECTION'
   | 'AWAITING_CONFIRMATION'
   | 'EXECUTING'
   | 'COMPLETED'
@@ -163,6 +164,14 @@ export interface PayeeSummary {
   displayLabel?: string | null;
 }
 
+export interface DebitAccountSummary {
+  accountId: string;
+  accountNumber?: string | null;
+  productCategoryCode?: string | null;
+  displayLabel?: string | null;
+  currency?: string | null;
+}
+
 export interface ErrorSummary {
   code: string;
   message: string;
@@ -175,6 +184,7 @@ export interface PaymentDraft {
   status: PaymentDraftStatus;
   payeeQueryText?: string | null;
   selectedPayee?: PayeeSummary | null;
+  selectedDebitAccount?: DebitAccountSummary | null;
   amount?: number | null;
   currency?: string | null;
   paymentDate?: string | null;

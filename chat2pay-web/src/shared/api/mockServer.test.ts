@@ -40,28 +40,43 @@ describe('mockServer domestic payment flow', () => {
       selectedItemId: 'payee_bob_current',
     });
 
-    expect(secondTurn.session.state).toBe('AWAITING_CONFIRMATION');
+    expect(secondTurn.session.state).toBe('AWAITING_DEBIT_ACCOUNT_SELECTION');
 
-    const summaryCard = secondTurn.assistantMessage.contentBlocks?.find((block) => block.type === 'SUMMARY_CARD');
+    const accountList = secondTurn.assistantMessage.contentBlocks?.find((block) => block.type === 'SELECTABLE_LIST');
+
+    if (!accountList || accountList.type !== 'SELECTABLE_LIST') {
+      throw new Error('Expected debit account selection block.');
+    }
+
+    const thirdTurn = await submitUiEvent(user.profileId, sessionId, {
+      eventType: 'SELECT_ITEM',
+      sourceMessageId: secondTurn.assistantMessage.messageId,
+      sourceBlockId: accountList.blockId,
+      selectedItemId: 'acct_primary',
+    });
+
+    expect(thirdTurn.session.state).toBe('AWAITING_CONFIRMATION');
+
+    const summaryCard = thirdTurn.assistantMessage.contentBlocks?.find((block) => block.type === 'SUMMARY_CARD');
 
     if (!summaryCard || summaryCard.type !== 'SUMMARY_CARD') {
       throw new Error('Expected domestic payment summary card.');
     }
 
-    const thirdTurn = await submitUiEvent(user.profileId, sessionId, {
+    const fourthTurn = await submitUiEvent(user.profileId, sessionId, {
       eventType: 'CLICK_ACTION',
-      sourceMessageId: secondTurn.assistantMessage.messageId,
+      sourceMessageId: thirdTurn.assistantMessage.messageId,
       sourceBlockId: summaryCard.blockId,
       actionValue: 'CONFIRM_PAYMENT',
     });
 
-    expect(thirdTurn.session.state).toBe('COMPLETED');
-    expect(thirdTurn.session.status).toBe('COMPLETED');
-    expect(thirdTurn.activeDraft?.status).toBe('CONFIRMED');
-    expect(thirdTurn.activeDraft?.downstreamReference).toMatch(/^DOM-/);
+    expect(fourthTurn.session.state).toBe('COMPLETED');
+    expect(fourthTurn.session.status).toBe('COMPLETED');
+    expect(fourthTurn.activeDraft?.status).toBe('CONFIRMED');
+    expect(fourthTurn.activeDraft?.downstreamReference).toMatch(/^DOM-/);
 
     const messages = await listChatMessages(user.profileId, sessionId);
-    expect(messages.length).toBeGreaterThan(5);
+    expect(messages.length).toBeGreaterThan(7);
   });
 
   it('returns registered payee lookup results without creating a payment draft', async () => {
@@ -122,10 +137,25 @@ describe('mockServer domestic payment flow', () => {
       messageText: 'tomorrow',
     });
 
-    expect(dateTurn.session.state).toBe('AWAITING_CONFIRMATION');
+    expect(dateTurn.session.state).toBe('AWAITING_DEBIT_ACCOUNT_SELECTION');
     expect(dateTurn.activeDraft?.selectedPayee?.payeeId).toBe('payee_bob_current');
     expect(dateTurn.activeDraft?.amount).toBe(100);
     expect(dateTurn.activeDraft?.paymentDate).toBeTruthy();
+  });
+
+  it('lists debit accounts when the user asks for my accounts', async () => {
+    const user = await profileLogin({
+      profileId: 'profile_victor',
+      password: 'tb123',
+    });
+    const created = await createChatSession(user.profileId);
+
+    const turn = await sendChatMessage(user.profileId, created.sessionId, {
+      messageText: 'List my accounts',
+    });
+
+    expect(turn.session.state).toBe('IDLE');
+    expect(turn.assistantMessage.contentBlocks?.some((block) => block.type === 'SUMMARY_CARD')).toBe(true);
   });
 
   it('clears amount and date when the user changes payee', async () => {

@@ -20,6 +20,7 @@ public final class PaymentToolDefinitions {
                 Use exactly one supplied tool when a backend action is needed; otherwise respond with a short natural-language answer and do not call any tool.
 
                 Supported scope (call a tool only for these):
+                - my debit / source account listing
                 - registered domestic payee lookup
                 - domestic payment preparation to an already-registered payee
                 - explicit confirmation or cancellation of an active domestic payment draft
@@ -34,10 +35,12 @@ public final class PaymentToolDefinitions {
 
                 Critical rules:
                 - When the user asks whether something is possible (e.g. "may I", "can I", "do you support", "is it possible to"), this is a capability question, NOT an instruction to act. Do NOT call a tool. Reply briefly with whether it is supported.
+                - If the user asks to list or show their own debit accounts / source accounts, call get_my_debit_accounts.
                 - Never invent or extract a payee name from a meta/capability question. Phrases like "a new payee", "another payee", "any payee" are NOT payee names.
                 - If the user wants to pay someone, call prepare_domestic_payment with any available payeeQuery, amount, and paymentDate. Only pass a real human/business name as payeeQuery — never pass words like "a new", "new", "someone", "anyone".
                 - If payment date wording is relative, convert it using the current date in the conversation context.
                 - If more than one registered payee matches, the backend will ask the user to choose one.
+                - If payment details are complete but the user has multiple debit accounts, the backend will ask the user to choose the source account before confirmation.
                 - Once a single payee, amount, and payment date are known, the backend will ask for explicit confirmation.
                 - Never call confirm_domestic_payment until the latest user message explicitly confirms the pending payment.
                 - Never expose opaque downstream identifiers, internal ids, or tool arguments to the user.
@@ -54,6 +57,7 @@ public final class PaymentToolDefinitions {
                 validation, registered-payee lookup, and explicit confirmation.
 
                 V1 supports these backend tools only:
+                - get_my_debit_accounts: list the user's debit/source accounts for domestic payment.
                 - get_registered_payees: registered domestic payee lookup.
                 - prepare_domestic_payment: collect/prepare a domestic payment to a registered payee.
                 - confirm_domestic_payment: use only when the latest user message explicitly confirms a pending payment.
@@ -61,7 +65,8 @@ public final class PaymentToolDefinitions {
                 - unsupported_cross_border_payment: use for cross-border, overseas, international, SWIFT, or wire transfer requests.
 
                 Only classify payee lookup, domestic payment, confirmation, cancellation, or unsupported
-                cross-border payment requests. Return UNKNOWN for unrelated banking, account, balance,
+                cross-border payment requests. Return ACCOUNT_LOOKUP for listing/showing the user's own
+                debit/source accounts. Return UNKNOWN for unrelated banking, account balance,
                 advisory, or general chat requests, AND for capability/meta questions ("can you do X",
                 "do you support Y", "may I do Z", "is it possible") and for adding/registering/managing
                 payees (which Chat2Pay does not support in V1). Never expose or invent opaque downstream
@@ -70,8 +75,8 @@ public final class PaymentToolDefinitions {
 
                 JSON schema:
                 {
-                  "intent": "DOMESTIC_PAYMENT|PAYEE_LOOKUP|CROSS_BORDER_PAYMENT|CONFIRM_PAYMENT|CANCEL_PAYMENT|UNKNOWN",
-                  "toolName": "get_registered_payees|prepare_domestic_payment|confirm_domestic_payment|cancel_payment|unsupported_cross_border_payment|null",
+                  "intent": "ACCOUNT_LOOKUP|DOMESTIC_PAYMENT|PAYEE_LOOKUP|CROSS_BORDER_PAYMENT|CONFIRM_PAYMENT|CANCEL_PAYMENT|UNKNOWN",
+                  "toolName": "get_my_debit_accounts|get_registered_payees|prepare_domestic_payment|confirm_domestic_payment|cancel_payment|unsupported_cross_border_payment|null",
                   "payeeQuery": "user-facing payee name or alias, or null",
                   "amount": number or null,
                   "paymentDate": "YYYY-MM-DD" or null

@@ -191,6 +191,16 @@ public class ChatOrchestratorService implements PaymentToolActions {
             if (intent.intent() == IntentType.CANCEL_PAYMENT) return domesticJourney.cancelPayment(record);
         }
 
+        if (state == ConversationState.AWAITING_DEBIT_ACCOUNT_SELECTION
+                && record.session().activeDraft() != null
+                && intent.intent() != IntentType.DOMESTIC_PAYMENT
+                && intent.intent() != IntentType.ACCOUNT_LOOKUP) {
+            return assistantMessage(record.session().sessionId(), List.of(
+                    infoBlock("Select a debit account",
+                            "Please choose one of the available debit accounts before I continue.")
+            ));
+        }
+
         if (state == ConversationState.AWAITING_PAYEE_SELECTION
                 && record.session().activeDraft() != null
                 && intent.intent() != IntentType.DOMESTIC_PAYMENT
@@ -205,6 +215,9 @@ public class ChatOrchestratorService implements PaymentToolActions {
             return domesticJourney.unsupportedCrossBorderPayment(record);
         }
 
+        if (intent.intent() == IntentType.ACCOUNT_LOOKUP) {
+            return domesticJourney.handleDebitAccountLookup(record);
+        }
         if (intent.intent() == IntentType.DOMESTIC_PAYMENT) return domesticJourney.continueDomesticPayment(record, intent);
         if (intent.intent() == IntentType.PAYEE_LOOKUP) {
             return domesticJourney.handlePayeeLookup(record, intent.payeeQuery());
@@ -212,7 +225,7 @@ public class ChatOrchestratorService implements PaymentToolActions {
 
         return assistantMessage(record.session().sessionId(), List.of(
                 infoBlock("Try a supported request",
-                        "Ask me to find a registered payee, or tell me who to pay, how much, and whether it should go now or later.")
+                        "Ask me to list your accounts, find a registered payee, or tell me who to pay, how much, and whether it should go now or later.")
         ));
     }
 
@@ -307,7 +320,7 @@ public class ChatOrchestratorService implements PaymentToolActions {
     private ChatMessage outOfScopeGuidance(SessionRecord record) {
         return assistantMessage(record.session().sessionId(), List.of(
                 infoBlock("Chat2Pay payments only",
-                        "I can help with registered domestic payees and domestic payments in this POC. Ask me to find a registered payee, or tell me who to pay, how much, and whether it should go now or later.")
+                        "I can help with your debit accounts, registered domestic payees, and domestic payments in this POC. Ask me to list your accounts, find a registered payee, or tell me who to pay, how much, and whether it should go now or later.")
         ));
     }
 
@@ -349,6 +362,11 @@ public class ChatOrchestratorService implements PaymentToolActions {
     private PaymentToolExecution executeLlmToolCall(SessionRecord record, ToolCall toolCall, String latestUserText) {
         Map<String, Object> args = parseToolArguments(toolCall.arguments());
         return paymentTools.execute(new PaymentToolContext(record, toolCall, args, latestUserText, this));
+    }
+
+    @Override
+    public PaymentToolExecution executeListDebitAccountsTool(PaymentToolContext context) {
+        return domesticJourney.executeListDebitAccountsTool(context);
     }
 
     @Override
@@ -412,7 +430,7 @@ public class ChatOrchestratorService implements PaymentToolActions {
                 Map.of("ok", false, "error", "Unsupported tool: " + toolCall.name()),
                 assistantMessage(context.record().session().sessionId(), List.of(
                         infoBlock("Try a supported request",
-                                "Chat2Pay currently supports registered domestic payee lookup and domestic payments only.")
+                                "Chat2Pay currently supports debit-account listing, registered domestic payee lookup, and domestic payments only.")
                 )));
     }
 
@@ -431,6 +449,9 @@ public class ChatOrchestratorService implements PaymentToolActions {
             result.put("payee", draft.selectedPayee() == null
                     ? draft.payeeQueryText()
                     : draft.selectedPayee().name());
+            if (draft.selectedDebitAccount() != null) {
+                result.put("debit_account", draft.selectedDebitAccount().displayLabel());
+            }
             if (draft.amount() != null) result.put("amount", draft.amount());
             if (draft.paymentDate() != null) result.put("payment_date", draft.paymentDate().toString());
             if (draft.downstreamReference() != null) result.put("downstream_reference", draft.downstreamReference());
@@ -449,6 +470,9 @@ public class ChatOrchestratorService implements PaymentToolActions {
     }
 
     private ChatMessage handleSelectItem(SessionRecord record, UiEventRequest request) {
+        if (record.session().state() == ConversationState.AWAITING_DEBIT_ACCOUNT_SELECTION) {
+            return domesticJourney.selectDebitAccount(record, request.selectedItemId());
+        }
         return domesticJourney.selectPayee(record, request.selectedItemId());
     }
 
@@ -499,10 +523,11 @@ public class ChatOrchestratorService implements PaymentToolActions {
 
     private String draftSummary(PaymentDraft draft) {
         if (draft == null) return "none";
-        return "payeeQuery=%s, selectedPayee=%s, amount=%s, currency=%s, paymentDate=%s, status=%s"
+        return "payeeQuery=%s, selectedPayee=%s, selectedDebitAccount=%s, amount=%s, currency=%s, paymentDate=%s, status=%s"
                 .formatted(
                         draft.payeeQueryText(),
                         draft.selectedPayee() == null ? null : draft.selectedPayee().name(),
+                        draft.selectedDebitAccount() == null ? null : draft.selectedDebitAccount().displayLabel(),
                         draft.amount(),
                         draft.currency(),
                         draft.paymentDate(),

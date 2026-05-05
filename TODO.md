@@ -4,6 +4,9 @@ Living checklist for the V1 → V1.x cleanup pass. Items are grouped by priority
 not by component. Tick a box when the change is merged. Add a one-line note when
 something is intentionally deferred.
 
+Architecture sequencing now lives in [PLAN.md](PLAN.md). Keep this file for
+implementation-level tasks inside the current phase.
+
 Legend: `[ ]` open · `[x]` done · `[~]` in progress · `[-]` won't do (POC)
 
 ---
@@ -158,6 +161,11 @@ changes.
 
 ### P0 — Do before adding many downstream APIs
 
+- [ ] **Make debit account a first-class payment choice.** Add selected source
+      account data to the active draft, show it in the confirmation summary,
+      and stop executing domestic payments from the hidden profile debit-account
+      default alone. This is the first V2 change to land before real
+      cross-border work.
 - [x] **Define the semantic capability model.** Create a short design doc or
       section listing V2 capabilities (`listAccounts`, `getAccountDetails`,
       `listPayees`, `getPayeeDetails`, `listTransactionHistory`,

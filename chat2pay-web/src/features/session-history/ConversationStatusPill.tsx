@@ -25,6 +25,8 @@ function derive(view: ConversationView): Pill | null {
       return { label: 'Collecting details', tone: 'attention' };
     case 'AWAITING_PAYEE_SELECTION':
       return { label: 'Awaiting payee selection', tone: 'attention' };
+    case 'AWAITING_DEBIT_ACCOUNT_SELECTION':
+      return { label: 'Awaiting debit account selection', tone: 'attention' };
     case 'AWAITING_CONFIRMATION':
       return { label: 'Awaiting confirmation', tone: 'attention' };
     case 'EXECUTING':

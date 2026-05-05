@@ -64,6 +64,22 @@ public class CapabilityRegistry {
     public static List<CapabilityDefinition> defaultDefinitions() {
         return List.of(
                 new CapabilityDefinition(
+                        CapabilityId.LIST_DEBIT_ACCOUNTS,
+                        "get_my_debit_accounts",
+                        List.of(),
+                        "Fetch the user's available debit/source accounts for domestic payment.",
+                        Map.of(),
+                        List.of(),
+                        "debitAccountList",
+                        CapabilityRiskLevel.READ_ONLY,
+                        ConfirmationPolicy.NONE,
+                        Set.of(ConversationState.IDLE, ConversationState.COLLECTING_DETAILS,
+                                ConversationState.AWAITING_PAYEE_SELECTION,
+                                ConversationState.AWAITING_DEBIT_ACCOUNT_SELECTION,
+                                ConversationState.AWAITING_CONFIRMATION),
+                        true
+                ),
+                new CapabilityDefinition(
                         CapabilityId.LIST_PAYEES,
                         "get_registered_payees",
                         List.of(),
@@ -108,6 +124,7 @@ public class CapabilityRegistry {
                         ConfirmationPolicy.NONE,
                         Set.of(ConversationState.IDLE, ConversationState.COLLECTING_DETAILS,
                                 ConversationState.AWAITING_PAYEE_SELECTION,
+                                ConversationState.AWAITING_DEBIT_ACCOUNT_SELECTION,
                                 ConversationState.AWAITING_CONFIRMATION),
                         true
                 ),
@@ -135,6 +152,7 @@ public class CapabilityRegistry {
                         CapabilityRiskLevel.DRAFT_MUTATION,
                         ConfirmationPolicy.NONE,
                         Set.of(ConversationState.COLLECTING_DETAILS, ConversationState.AWAITING_PAYEE_SELECTION,
+                                ConversationState.AWAITING_DEBIT_ACCOUNT_SELECTION,
                                 ConversationState.AWAITING_CONFIRMATION),
                         true
                 ),

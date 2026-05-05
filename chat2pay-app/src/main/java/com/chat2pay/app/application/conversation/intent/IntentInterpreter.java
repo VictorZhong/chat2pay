@@ -35,6 +35,11 @@ public class IntentInterpreter {
     private static final Pattern AMOUNT = Pattern.compile("(?:hkd\\s*)?(\\d+(?:\\.\\d{1,2})?)", Pattern.CASE_INSENSITIVE);
     private static final Pattern PAYMENT_INTENT = Pattern.compile("\\b(pay|payment|send|transfer)\\b", Pattern.CASE_INSENSITIVE);
     private static final Pattern LOOKUP_INTENT = Pattern.compile("\\b(payee|payees|registered|lookup|look up|find|show|list)\\b", Pattern.CASE_INSENSITIVE);
+    private static final Pattern ACCOUNT_LOOKUP_INTENT = Pattern.compile(
+            "\\b(list|show|view|check)\\s+my\\s+(accounts?|debit accounts?|source accounts?)\\b"
+                    + "|\\bmy\\s+(accounts?|debit accounts?|source accounts?)\\b"
+                    + "|\\b(debit account|source account)\\b",
+            Pattern.CASE_INSENSITIVE);
     private static final Pattern CROSS_BORDER_INTENT = Pattern.compile("\\b(cross[- ]?border|international|overseas|swift|wire)\\b", Pattern.CASE_INSENSITIVE);
     private static final Pattern DO_I_HAVE = Pattern.compile("do i have", Pattern.CASE_INSENSITIVE);
     private static final Pattern POSITIVE_CONFIRM = Pattern.compile("\\b(confirm|confirmed|yes|okay|ok|go ahead|proceed|send it|approve)\\b", Pattern.CASE_INSENSITIVE);
@@ -148,6 +153,7 @@ public class IntentInterpreter {
         }
 
         IntentType intent = switch (toolCall.name()) {
+            case "get_my_debit_accounts" -> IntentType.ACCOUNT_LOOKUP;
             case "get_registered_payees" -> IntentType.PAYEE_LOOKUP;
             case "prepare_domestic_payment" -> IntentType.DOMESTIC_PAYMENT;
             case "confirm_domestic_payment" -> IntentType.CONFIRM_PAYMENT;
@@ -178,10 +184,11 @@ public class IntentInterpreter {
 
     private String draftSummary(PaymentDraft draft) {
         if (draft == null) return "none";
-        return "payeeQuery=%s, selectedPayee=%s, amount=%s, currency=%s, paymentDate=%s, status=%s"
+        return "payeeQuery=%s, selectedPayee=%s, selectedDebitAccount=%s, amount=%s, currency=%s, paymentDate=%s, status=%s"
                 .formatted(
                         draft.payeeQueryText(),
                         draft.selectedPayee() == null ? null : draft.selectedPayee().name(),
+                        draft.selectedDebitAccount() == null ? null : draft.selectedDebitAccount().displayLabel(),
                         draft.amount(),
                         draft.currency(),
                         draft.paymentDate(),
@@ -198,6 +205,9 @@ public class IntentInterpreter {
 
         if (CROSS_BORDER_INTENT.matcher(text).find()) {
             return analysis(IntentType.CROSS_BORDER_PAYMENT, null, null, null);
+        }
+        if (ACCOUNT_LOOKUP_INTENT.matcher(text).find()) {
+            return analysis(IntentType.ACCOUNT_LOOKUP, null, null, null);
         }
 
         String payeeQuery = extractPayeeQuery(profileId, text);

@@ -2,6 +2,7 @@ package com.chat2pay.app.persistence.repository;
 
 import com.chat2pay.app.api.dto.ChatDtos.ChatMessage;
 import com.chat2pay.app.api.dto.ChatDtos.ChatSessionDetail;
+import com.chat2pay.app.api.dto.ChatDtos.DebitAccountSummary;
 import com.chat2pay.app.api.dto.ChatDtos.ErrorSummary;
 import com.chat2pay.app.api.dto.ChatDtos.PayeeSummary;
 import com.chat2pay.app.api.dto.ChatDtos.PaymentDraft;
@@ -267,6 +268,12 @@ public class SessionStore {
         entity.setSelectedBankName(p == null ? null : p.bankName());
         entity.setSelectedAccountNumber(p == null ? null : p.accountNumber());
         entity.setSelectedDisplayLabel(p == null ? null : p.displayLabel());
+        DebitAccountSummary debit = d.selectedDebitAccount();
+        entity.setSelectedDebitAccountId(debit == null ? null : debit.accountId());
+        entity.setSelectedDebitAccountNumber(debit == null ? null : debit.accountNumber());
+        entity.setSelectedDebitProductCategoryCode(debit == null ? null : debit.productCategoryCode());
+        entity.setSelectedDebitDisplayLabel(debit == null ? null : debit.displayLabel());
+        entity.setSelectedDebitCurrency(debit == null ? null : debit.currency());
         entity.setAmount(d.amount() == null ? null : d.amount().setScale(2, RoundingMode.HALF_UP));
         entity.setCurrency(d.currency());
         entity.setPaymentDate(d.paymentDate());
@@ -320,6 +327,16 @@ public class SessionStore {
                     e.getSelectedDisplayLabel()
             );
         }
+        DebitAccountSummary debitAccount = null;
+        if (e.getSelectedDebitAccountId() != null || e.getSelectedDebitAccountNumber() != null) {
+            debitAccount = new DebitAccountSummary(
+                    e.getSelectedDebitAccountId(),
+                    e.getSelectedDebitAccountNumber(),
+                    e.getSelectedDebitProductCategoryCode(),
+                    e.getSelectedDebitDisplayLabel(),
+                    e.getSelectedDebitCurrency()
+            );
+        }
         ErrorSummary lastError = (e.getLastErrorCode() == null && e.getLastErrorMessage() == null)
                 ? null
                 : new ErrorSummary(e.getLastErrorCode(), e.getLastErrorMessage());
@@ -330,6 +347,7 @@ public class SessionStore {
                 e.getStatus(),
                 e.getPayeeQueryText(),
                 payee,
+                debitAccount,
                 e.getAmount(),
                 e.getCurrency(),
                 e.getPaymentDate(),

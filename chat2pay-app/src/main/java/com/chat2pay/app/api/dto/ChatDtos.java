@@ -95,6 +95,14 @@ public final class ChatDtos {
             String displayLabel
     ) {}
 
+    public record DebitAccountSummary(
+            String accountId,
+            String accountNumber,
+            String productCategoryCode,
+            String displayLabel,
+            String currency
+    ) {}
+
     public record ErrorSummary(String code, String message) {}
 
     public record PaymentDraft(
@@ -104,6 +112,7 @@ public final class ChatDtos {
             PaymentDraftStatus status,
             String payeeQueryText,
             PayeeSummary selectedPayee,
+            DebitAccountSummary selectedDebitAccount,
             @JsonFormat(shape = JsonFormat.Shape.STRING)
             BigDecimal amount,
             String currency,

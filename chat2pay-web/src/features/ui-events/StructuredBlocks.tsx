@@ -287,6 +287,14 @@ type PayeeNode = {
   accounts: PayeeAccountNode[];
 };
 
+type DebitAccountCardData = {
+  accountId: string;
+  accountNumber: string | null;
+  productCategoryCode: string | null;
+  displayLabel: string | null;
+  currency: string | null;
+};
+
 function parsePayeeDirectory(metadata: Record<string, unknown> | null | undefined): PayeeNode[] {
   const raw = metadata?.payees;
   if (!Array.isArray(raw)) return [];
@@ -330,6 +338,42 @@ function payeeMetadataPageSize(metadata: Record<string, unknown> | null | undefi
   const raw = metadata?.[key];
   if (typeof raw === 'number' && raw > 0 && Number.isFinite(raw)) return Math.floor(raw);
   return fallback;
+}
+
+function parseDebitAccounts(metadata: Record<string, unknown> | null | undefined): DebitAccountCardData[] {
+  const raw = metadata?.accounts;
+  if (!Array.isArray(raw)) return [];
+  const result: DebitAccountCardData[] = [];
+  for (const item of raw) {
+    if (!isRecord(item)) continue;
+    const accountId = cleanText(item.accountId);
+    if (!accountId) continue;
+    result.push({
+      accountId,
+      accountNumber: cleanText(item.accountNumber),
+      productCategoryCode: cleanText(item.productCategoryCode),
+      displayLabel: cleanText(item.displayLabel),
+      currency: cleanText(item.currency),
+    });
+  }
+  return result;
+}
+
+function debitAccountFromSelectableItem(item: SelectableListBlock['items'][number]): DebitAccountCardData | null {
+  const metadata = isRecord(item.metadata) ? item.metadata : null;
+  const accountId = cleanText(item.itemId) ?? cleanText(metadata?.accountId);
+  if (!accountId) return null;
+  return {
+    accountId,
+    accountNumber: cleanText(metadata?.accountNumber),
+    productCategoryCode: cleanText(metadata?.productCategoryCode),
+    displayLabel: cleanText(metadata?.displayLabel) ?? cleanText(item.label),
+    currency: cleanText(metadata?.currency),
+  };
+}
+
+function isDebitAccountResultsBlock(block: SummaryCardBlock) {
+  return block.metadata?.purpose === 'debit-account-results';
 }
 
 function PayeeDirectory({
@@ -611,6 +655,86 @@ function PayeeLabelBadge({ label }: { label: string | null }) {
   );
 }
 
+function DebitAccountCardContent({ account }: { account: DebitAccountCardData }) {
+  return (
+    <div className="grid gap-3">
+      <div>
+        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-brand-gray">
+          Debit account
+        </p>
+        <h4 className="mt-1 break-words text-base font-semibold leading-6 text-brand-black">
+          {account.displayLabel ?? account.accountNumber ?? 'Unnamed account'}
+        </h4>
+      </div>
+      <div className="grid gap-2">
+        <PayeeDetail label="Number" value={account.accountNumber} />
+        <PayeeDetail label="Product" value={account.productCategoryCode} />
+        <PayeeDetail label="Currency" value={account.currency} />
+      </div>
+    </div>
+  );
+}
+
+function DebitAccountList({
+  title,
+  accounts,
+  mode,
+  pageSize = 10,
+  disabled = false,
+  onSelectAccount,
+}: {
+  title: string;
+  accounts: DebitAccountCardData[];
+  mode: 'view' | 'select';
+  pageSize?: number;
+  disabled?: boolean;
+  onSelectAccount?: (accountId: string) => void;
+}) {
+  const [page, setPage] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(accounts.length / pageSize));
+  const safePage = Math.min(page, totalPages - 1);
+  const start = safePage * pageSize;
+  const visible = accounts.slice(start, start + pageSize);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-end justify-between gap-3 border-b border-brand-line pb-3">
+        <h4 className="text-base font-semibold text-brand-black">{title}</h4>
+        <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-brand-gray">
+          {accounts.length} {accounts.length === 1 ? 'account' : 'accounts'}
+        </span>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {visible.map((account) => (
+          <article
+            key={account.accountId}
+            className="border border-brand-line bg-white p-4 shadow-[0_10px_24px_rgba(17,17,17,0.06)]"
+          >
+            <DebitAccountCardContent account={account} />
+            {mode === 'select' ? (
+              <div className="mt-4 flex justify-end border-t border-brand-line pt-3">
+                <BrandButton disabled={disabled} onClick={() => onSelectAccount?.(account.accountId)}>
+                  Choose
+                </BrandButton>
+              </div>
+            ) : null}
+          </article>
+        ))}
+      </div>
+      {totalPages > 1 ? (
+        <Pagination
+          page={safePage}
+          totalPages={totalPages}
+          onPageChange={setPage}
+          itemLabel="accounts"
+          totalItems={accounts.length}
+          pageSize={pageSize}
+        />
+      ) : null}
+    </div>
+  );
+}
+
 function Pagination({
   page,
   totalPages,
@@ -678,6 +802,7 @@ function SelectableListCard({
 }) {
   const isPayeeSelection = block.metadata?.purpose === 'payee-selection';
   const isPayeeAccountSelection = block.metadata?.purpose === 'payee-account-selection';
+  const isDebitAccountSelection = block.metadata?.purpose === 'debit-account-selection';
 
   if (isPayeeAccountSelection) {
     const directory = parsePayeeDirectory(block.metadata);
@@ -696,6 +821,34 @@ function SelectableListCard({
               sourceMessageId: messageId,
               sourceBlockId: block.blockId,
               selectedItemId: addressId,
+            })
+          }
+        />
+      );
+    }
+  }
+
+  if (isDebitAccountSelection) {
+    const accountsFromMetadata = parseDebitAccounts(block.metadata);
+    const accounts = accountsFromMetadata.length
+      ? accountsFromMetadata
+      : block.items
+          .map(debitAccountFromSelectableItem)
+          .filter((item): item is DebitAccountCardData => item !== null);
+    if (accounts.length) {
+      return (
+        <DebitAccountList
+          title={block.title}
+          accounts={accounts}
+          mode="select"
+          pageSize={payeeMetadataPageSize(block.metadata, 'pageSize', 10)}
+          disabled={disabled}
+          onSelectAccount={(accountId) =>
+            onSubmit({
+              eventType: 'SELECT_ITEM',
+              sourceMessageId: messageId,
+              sourceBlockId: block.blockId,
+              selectedItemId: accountId,
             })
           }
         />
@@ -828,6 +981,19 @@ function SummaryCardView({
 
   if (isPayeeResultsBlock(block)) {
     return <PayeeResultsCardList block={block} />;
+  }
+  if (isDebitAccountResultsBlock(block)) {
+    const accounts = parseDebitAccounts(block.metadata);
+    if (accounts.length) {
+      return (
+        <DebitAccountList
+          title={block.title}
+          accounts={accounts}
+          mode="view"
+          pageSize={payeeMetadataPageSize(block.metadata, 'pageSize', 10)}
+        />
+      );
+    }
   }
 
   const formValuesForActions = (action: { id: string }) =>

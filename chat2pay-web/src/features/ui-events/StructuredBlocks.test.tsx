@@ -165,6 +165,97 @@ describe('StructuredBlock', () => {
     });
   });
 
+  it('renders debit account results as account cards', () => {
+    const block: ContentBlock = {
+      blockId: 'blk_summary_accounts',
+      type: 'SUMMARY_CARD',
+      title: 'Available debit accounts',
+      fields: [],
+      metadata: {
+        purpose: 'debit-account-results',
+        accountCount: 2,
+        accounts: [
+          {
+            accountId: 'acct_1',
+            accountNumber: '123-000-001',
+            productCategoryCode: 'CUR',
+            displayLabel: 'HKD primary account • 123-000-001',
+            currency: 'HKD',
+          },
+          {
+            accountId: 'acct_2',
+            accountNumber: '123-000-002',
+            productCategoryCode: 'SAV',
+            displayLabel: 'HKD savings account • 123-000-002',
+            currency: 'HKD',
+          },
+        ],
+      },
+    };
+
+    render(<StructuredBlock messageId="msg_accounts" block={block} onSubmit={vi.fn()} />);
+
+    expect(screen.getByText('Available debit accounts')).toBeInTheDocument();
+    expect(screen.getByText('2 accounts')).toBeInTheDocument();
+    expect(screen.getByText('HKD primary account • 123-000-001')).toBeInTheDocument();
+    expect(screen.getAllByText('HKD')).toHaveLength(2);
+  });
+
+  it('renders debit account selection cards and submits the selected account', () => {
+    const onSubmit = vi.fn();
+    const block: ContentBlock = {
+      blockId: 'blk_list_accounts',
+      type: 'SELECTABLE_LIST',
+      title: 'Available debit accounts',
+      metadata: {
+        purpose: 'debit-account-selection',
+        accountCount: 2,
+        pageSize: 10,
+        accounts: [
+          {
+            accountId: 'acct_1',
+            accountNumber: '123-000-001',
+            productCategoryCode: 'CUR',
+            displayLabel: 'HKD primary account • 123-000-001',
+            currency: 'HKD',
+          },
+          {
+            accountId: 'acct_2',
+            accountNumber: '123-000-002',
+            productCategoryCode: 'SAV',
+            displayLabel: 'HKD savings account • 123-000-002',
+            currency: 'HKD',
+          },
+        ],
+      },
+      items: [
+        {
+          itemId: 'acct_1',
+          label: 'HKD primary account • 123-000-001',
+          description: 'HKD • CUR',
+          metadata: {
+            accountId: 'acct_1',
+            accountNumber: '123-000-001',
+            productCategoryCode: 'CUR',
+            displayLabel: 'HKD primary account • 123-000-001',
+            currency: 'HKD',
+          },
+        },
+      ],
+    };
+
+    render(<StructuredBlock messageId="msg_accounts" block={block} onSubmit={onSubmit} />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Choose' })[0]);
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      eventType: 'SELECT_ITEM',
+      sourceMessageId: 'msg_accounts',
+      sourceBlockId: 'blk_list_accounts',
+      selectedItemId: 'acct_1',
+    });
+  });
+
   it('does not submit selectable items while disabled', () => {
     const onSubmit = vi.fn();
     const block: ContentBlock = {

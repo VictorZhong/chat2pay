@@ -4,7 +4,8 @@ Chat2Pay is a Spring Boot + React POC for registered-payee lookup and domestic-p
 
 The backend owns payment guardrails, PostgreSQL persistence, Flyway migrations, downstream payment calls, and the LLM tool loop. The frontend renders chat history and structured interaction blocks.
 
-See [TODO.md](TODO.md) for the living cleanup checklist and current implementation priorities.
+See [PLAN.md](PLAN.md) for architecture sequencing and [TODO.md](TODO.md) for
+the living implementation checklist.
 
 ## Project Structure
 

@@ -1,5 +1,6 @@
 package com.chat2pay.app.integration.downstream.domestic;
 
+import com.chat2pay.app.api.dto.ChatDtos.DebitAccountSummary;
 import com.fasterxml.jackson.annotation.JsonFormat;
 
 import java.math.BigDecimal;
@@ -17,6 +18,7 @@ public interface DomesticPaymentClient {
             String profileId,
             String payeeIdIndex,
             String payeeName,
+            DebitAccountSummary selectedDebitAccount,
             @JsonFormat(shape = JsonFormat.Shape.STRING)
             BigDecimal amount,
             LocalDate paymentDate
