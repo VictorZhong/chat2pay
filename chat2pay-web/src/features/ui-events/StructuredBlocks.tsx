@@ -649,7 +649,6 @@ function PayeeAccountCard({
         <p className="text-xs text-brand-gray">
           {account.accountProductType ?? '—'}
           {account.bankName ? ` • ${account.bankName}` : ''}
-          {account.bankCode ? ` (${account.bankCode})` : ''}
         </p>
         <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
           <PayeeLabelBadge label={account.payeeAccountLabel} />
@@ -908,9 +907,6 @@ function DebitSubAccountCard({
               <span className="border border-brand-line bg-white px-2 py-0.5 font-semibold uppercase tracking-[0.12em] text-brand-gray">
                 {balanceLabel}
               </span>
-            ) : null}
-            {account.productCategoryCode ? (
-              <span className="text-[11px] text-brand-gray">{account.productCategoryCode}</span>
             ) : null}
           </div>
         </div>
