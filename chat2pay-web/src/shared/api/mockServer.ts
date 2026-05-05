@@ -304,10 +304,18 @@ function normalize(value: string) {
 }
 
 function titleCaseWords(value: string) {
+  const uppercaseTokens = new Set([
+    'hkd', 'usd', 'aud', 'cad', 'chf', 'cny', 'eur', 'gbp', 'jpy', 'rmb', 'fx', 'swift', 'api', 'llm',
+  ]);
   return value
     .split(' ')
     .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .map((part) => {
+      const normalized = part.toLowerCase();
+      return uppercaseTokens.has(normalized)
+        ? normalized.toUpperCase()
+        : part.charAt(0).toUpperCase() + part.slice(1).toLowerCase();
+    })
     .join(' ');
 }
 
@@ -405,6 +413,120 @@ function buildUserEventMessage(sessionId: string, text: string) {
     contentBlocks: null,
     metadata: null,
   });
+}
+
+function cleanText(value: unknown) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : null;
+}
+
+function metadataText(metadata: Record<string, unknown> | null | undefined, key: string) {
+  return cleanText(metadata?.[key]);
+}
+
+function joinNonBlank(separator: string, ...values: Array<string | null | undefined>) {
+  const parts = values.map((value) => cleanText(value)).filter((value): value is string => Boolean(value));
+  return parts.length ? parts.join(separator) : null;
+}
+
+function sourceBlockFromRecord(record: MockSessionRecord, request: UiEventRequest) {
+  const sourceMessage = record.messages.find((message) => message.messageId === request.sourceMessageId);
+  return sourceMessage?.contentBlocks?.find((block) => block.blockId === request.sourceBlockId);
+}
+
+function actionLabelFromSummaryBlock(block: ContentBlock | undefined, actionId: string) {
+  if (!block || block.type !== 'SUMMARY_CARD') {
+    return actionId;
+  }
+
+  const actions = Array.isArray(block.metadata?.actions) ? block.metadata.actions : [];
+  const matched = actions.find(
+    (item): item is { id: string; label: string } =>
+      typeof item === 'object'
+      && item !== null
+      && 'id' in item
+      && 'label' in item
+      && item.id === actionId
+      && typeof item.label === 'string',
+  );
+
+  return matched?.label ?? actionId;
+}
+
+function describeSelectableItem(block: Extract<ContentBlock, { type: 'SELECTABLE_LIST' }>, selectedId: string) {
+  const item = block.items.find((candidate) => candidate.itemId === selectedId);
+  if (!item) return null;
+  const metadata =
+    item.metadata && typeof item.metadata === 'object' && !Array.isArray(item.metadata)
+      ? item.metadata as Record<string, unknown>
+      : null;
+  const purpose = metadataText(block.metadata as Record<string, unknown> | undefined, 'purpose');
+
+  if (purpose === 'debit-account-selection') {
+    const label = joinNonBlank(
+      ' • ',
+      metadataText(metadata, 'productDescription'),
+      metadataText(metadata, 'accountDisplay'),
+    ) ?? cleanText(item.label) ?? cleanText(item.description) ?? selectedId;
+    return `Chose debit account ${label}`;
+  }
+
+  if (purpose === 'payee-selection' || purpose === 'payee-account-selection') {
+    const accountLabel =
+      metadataText(metadata, 'displayLabel')
+      ?? joinNonBlank(' - ', metadataText(metadata, 'accountProductType'), metadataText(metadata, 'accountNumber'))
+      ?? cleanText(item.description);
+    const label = joinNonBlank(
+      ' • ',
+      metadataText(metadata, 'payeeNickName') ?? cleanText(item.label),
+      accountLabel,
+    ) ?? cleanText(item.label) ?? selectedId;
+    return `Chose payee ${label}`;
+  }
+
+  return `Chose ${cleanText(item.label) ?? selectedId}`;
+}
+
+function describeFormEvent(request: UiEventRequest) {
+  const formValues = request.formValues ?? {};
+  const payee = cleanText(formValues.payee);
+  const amount = cleanText(formValues.amount);
+  const paymentDate = cleanText(formValues.paymentDate);
+
+  if (Object.keys(formValues).length === 1 && paymentDate) return `Chose payment date ${paymentDate}`;
+  if (Object.keys(formValues).length === 1 && amount) return `Entered amount ${amount}`;
+  if (Object.keys(formValues).length === 1 && payee) return `Entered payee ${payee}`;
+
+  const parts = [
+    payee ? `payee ${payee}` : null,
+    amount ? `amount ${amount}` : null,
+    paymentDate ? `payment date ${paymentDate}` : null,
+  ].filter((value): value is string => Boolean(value));
+  return parts.length ? `Submitted details: ${parts.join(', ')}` : 'Submitted details';
+}
+
+function describeUiEvent(record: MockSessionRecord, request: UiEventRequest) {
+  if (request.eventType === 'SUBMIT_FORM') {
+    return describeFormEvent(request);
+  }
+
+  const sourceBlock = sourceBlockFromRecord(record, request);
+  const selectedId = request.selectedItemId ?? request.actionValue;
+
+  if (!selectedId) {
+    return 'Submitted action';
+  }
+
+  if (request.eventType === 'CLICK_ACTION') {
+    return actionLabelFromSummaryBlock(sourceBlock, selectedId);
+  }
+
+  if (sourceBlock?.type === 'SELECTABLE_LIST') {
+    return describeSelectableItem(sourceBlock, selectedId) ?? 'Chose item';
+  }
+
+  return 'Submitted action';
 }
 
 function previewFromMessage(message: ChatMessage) {
@@ -1682,16 +1804,7 @@ export function sendChatMessage(profileId: string, sessionId: string, request: S
 export function submitUiEvent(profileId: string, sessionId: string, request: UiEventRequest) {
   return withLatency<ChatTurnResponse>(() => {
     const record = getRecord(profileId, sessionId);
-    const userText =
-      request.eventType === 'SELECT_ITEM'
-        ? 'Payee chosen'
-        : request.eventType === 'CLICK_ACTION'
-          ? request.actionValue === 'CONFIRM_PAYMENT'
-            ? 'Confirm payment'
-            : request.actionValue === 'CANCEL_PAYMENT'
-              ? 'Cancel payment'
-              : 'Clicked action'
-          : 'Submitted details';
+    const userText = describeUiEvent(record, request);
 
     const userMessage = buildUserEventMessage(sessionId, userText);
     appendMessage(record, userMessage);

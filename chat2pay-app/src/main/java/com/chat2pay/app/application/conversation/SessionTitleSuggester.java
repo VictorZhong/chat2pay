@@ -17,7 +17,9 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Asks the active LLM provider for a short (4–6 word) title that summarises the
@@ -38,6 +40,9 @@ public class SessionTitleSuggester {
     private static final int MIN_USER_MESSAGES_BEFORE_SUGGEST = 2;
     private static final int MAX_TITLE_CHARS = 100;
     private static final String FINISH_REASON_STOP = "stop";
+    private static final Set<String> UPPERCASE_TITLE_TOKENS = Set.of(
+            "hkd", "usd", "aud", "cad", "chf", "cny", "eur", "gbp", "jpy", "rmb", "fx", "swift", "api", "llm"
+    );
 
     private final LlmRouter router;
     private final SessionStore sessions;
@@ -167,6 +172,18 @@ public class SessionTitleSuggester {
         int newline = trimmed.indexOf('\n');
         if (newline > 0) trimmed = trimmed.substring(0, newline).trim();
         if (trimmed.length() > MAX_TITLE_CHARS) trimmed = trimmed.substring(0, MAX_TITLE_CHARS).trim();
+        trimmed = normalizeTitleTokenCasing(trimmed);
         return trimmed.isBlank() ? null : trimmed;
+    }
+
+    private static String normalizeTitleTokenCasing(String value) {
+        String[] parts = value.split("\\s+");
+        for (int i = 0; i < parts.length; i++) {
+            String normalized = parts[i].toLowerCase(Locale.ROOT);
+            if (UPPERCASE_TITLE_TOKENS.contains(normalized)) {
+                parts[i] = normalized.toUpperCase(Locale.ROOT);
+            }
+        }
+        return String.join(" ", parts).trim();
     }
 }

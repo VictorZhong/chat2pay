@@ -135,7 +135,7 @@ public class ChatOrchestratorService implements PaymentToolActions {
     public ChatTurnResponse handleUiEvent(String profileId, String sessionId, UiEventRequest request) {
         long startedNanos = System.nanoTime();
         CompletedTurn turn = sessions.applyTurn(profileId, sessionId, record -> {
-            String userText = describeEvent(request);
+            String userText = describeEvent(record, request);
             ChatMessage userMessage = new ChatMessage(
                     newMessageId(), sessionId, MessageRole.USER, MessageKind.UI_EVENT,
                     userText, null, null, Instant.now()
@@ -696,14 +696,132 @@ public class ChatOrchestratorService implements PaymentToolActions {
         return blocks.userTextMessage(sessionId, text);
     }
 
-    private String describeEvent(UiEventRequest request) {
+    private String describeEvent(SessionRecord record, UiEventRequest request) {
         return switch (request.eventType()) {
-            case CLICK_ACTION -> "CONFIRM_PAYMENT".equals(request.actionValue()) ? "Confirm payment"
-                    : "CANCEL_PAYMENT".equals(request.actionValue()) ? "Cancel payment"
-                    : "Clicked action";
-            case SELECT_ITEM -> "Payee chosen";
-            case SUBMIT_FORM -> "Submitted details";
+            case CLICK_ACTION -> describeActionEvent(record, request);
+            case SELECT_ITEM -> describeSelectionEvent(record, request);
+            case SUBMIT_FORM -> describeFormEvent(request);
         };
+    }
+
+    private String describeActionEvent(SessionRecord record, UiEventRequest request) {
+        ContentBlock sourceBlock = sourceBlock(record, request).orElse(null);
+        String actionValue = trim(request.actionValue());
+        if (sourceBlock instanceof ContentBlock.SummaryCardBlock summary
+                && summary.metadata() != null
+                && summary.metadata().get("actions") instanceof List<?> actions
+                && actionValue != null) {
+            for (Object action : actions) {
+                if (!(action instanceof Map<?, ?> map)) continue;
+                String id = trim(map.get("id") == null ? null : map.get("id").toString());
+                String label = trim(map.get("label") == null ? null : map.get("label").toString());
+                if (actionValue.equals(id) && label != null) return label;
+            }
+        }
+        return "CONFIRM_PAYMENT".equals(actionValue) ? "Confirm payment"
+                : "CANCEL_PAYMENT".equals(actionValue) ? "Cancel payment"
+                : "Clicked action";
+    }
+
+    private String describeSelectionEvent(SessionRecord record, UiEventRequest request) {
+        String selectedId = trim(request.selectedItemId());
+        if (selectedId == null) return "Chose item";
+        ContentBlock sourceBlock = sourceBlock(record, request).orElse(null);
+        if (sourceBlock instanceof ContentBlock.SelectableListBlock list) {
+            ContentBlock.SelectableItem item = list.items().stream()
+                    .filter(candidate -> selectedId.equals(candidate.itemId()))
+                    .findFirst()
+                    .orElse(null);
+            if (item != null) {
+                String purpose = metadataText(list.metadata(), "purpose");
+                String itemText = describeSelectableItem(item, purpose);
+                if ("debit-account-selection".equals(purpose)) return "Chose debit account " + itemText;
+                if ("payee-selection".equals(purpose) || "payee-account-selection".equals(purpose)) {
+                    return "Chose payee " + itemText;
+                }
+                return "Chose " + itemText;
+            }
+        }
+        return "Chose item " + selectedId;
+    }
+
+    private String describeFormEvent(UiEventRequest request) {
+        Map<String, String> formValues = request.formValues();
+        if (formValues == null || formValues.isEmpty()) return "Submitted details";
+
+        String paymentDate = trim(formValues.get("paymentDate"));
+        String payee = trim(formValues.get("payee"));
+        String amount = trim(formValues.get("amount"));
+        if (formValues.size() == 1 && paymentDate != null) return "Chose payment date " + paymentDate;
+        if (formValues.size() == 1 && amount != null) return "Entered amount " + amount;
+        if (formValues.size() == 1 && payee != null) return "Entered payee " + payee;
+
+        List<String> parts = new ArrayList<>();
+        if (payee != null) parts.add("payee " + payee);
+        if (amount != null) parts.add("amount " + amount);
+        if (paymentDate != null) parts.add("payment date " + paymentDate);
+        return parts.isEmpty() ? "Submitted details" : "Submitted details: " + String.join(", ", parts);
+    }
+
+    private Optional<ContentBlock> sourceBlock(SessionRecord record, UiEventRequest request) {
+        String sourceMessageId = trim(request.sourceMessageId());
+        String sourceBlockId = trim(request.sourceBlockId());
+        if (sourceMessageId == null || sourceBlockId == null) return Optional.empty();
+        return record.messages().stream()
+                .filter(message -> sourceMessageId.equals(message.messageId()))
+                .findFirst()
+                .flatMap(message -> message.contentBlocks() == null
+                        ? Optional.empty()
+                        : message.contentBlocks().stream()
+                        .filter(block -> sourceBlockId.equals(block.blockId()))
+                        .findFirst());
+    }
+
+    private String describeSelectableItem(ContentBlock.SelectableItem item, String purpose) {
+        Map<String, Object> metadata = item.metadata();
+        if ("debit-account-selection".equals(purpose)) {
+            return firstNonBlank(
+                    metadataText(metadata, "displayLabel"),
+                    joinNonBlank(" • ", metadataText(metadata, "productDescription"), metadataText(metadata, "accountDisplay")),
+                    item.label(),
+                    item.description(),
+                    item.itemId());
+        }
+        if ("payee-selection".equals(purpose) || "payee-account-selection".equals(purpose)) {
+            String payeeName = firstNonBlank(
+                    metadataText(metadata, "payeeNickName"),
+                    metadataText(metadata, "payeeContactFullName"),
+                    item.label());
+            String accountDisplay = firstNonBlank(
+                    metadataText(metadata, "displayLabel"),
+                    joinNonBlank(" - ", metadataText(metadata, "accountProductType"), metadataText(metadata, "accountNumber")),
+                    item.description());
+            return joinNonBlank(" • ", payeeName, accountDisplay);
+        }
+        return firstNonBlank(item.label(), item.description(), item.itemId());
+    }
+
+    private String metadataText(Map<String, Object> metadata, String key) {
+        if (metadata == null || key == null) return null;
+        Object raw = metadata.get(key);
+        return trim(raw == null ? null : raw.toString());
+    }
+
+    private String joinNonBlank(String separator, String... values) {
+        List<String> parts = new ArrayList<>();
+        for (String value : values) {
+            String trimmed = trim(value);
+            if (trimmed != null) parts.add(trimmed);
+        }
+        return parts.isEmpty() ? null : String.join(separator, parts);
+    }
+
+    private String firstNonBlank(String... values) {
+        for (String value : values) {
+            String trimmed = trim(value);
+            if (trimmed != null) return trimmed;
+        }
+        return null;
     }
 
     private static String trim(String s) {

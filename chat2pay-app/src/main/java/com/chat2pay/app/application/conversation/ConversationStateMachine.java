@@ -16,13 +16,18 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 @Component
 public class ConversationStateMachine {
 
     private static final String DEFAULT_CURRENCY = "HKD";
+    private static final Set<String> UPPERCASE_TITLE_TOKENS = Set.of(
+            "hkd", "usd", "aud", "cad", "chf", "cny", "eur", "gbp", "jpy", "rmb", "fx", "swift", "api", "llm"
+    );
 
     public PaymentDraft ensureDraft(SessionRecord record, String currency) {
         PaymentDraft existing = record.session().activeDraft();
@@ -113,7 +118,12 @@ public class ConversationStateMachine {
         for (String p : parts) {
             if (p.isEmpty()) continue;
             if (!b.isEmpty()) b.append(' ');
-            b.append(Character.toUpperCase(p.charAt(0))).append(p.substring(1));
+            String normalized = p.toLowerCase(Locale.ROOT);
+            if (UPPERCASE_TITLE_TOKENS.contains(normalized)) {
+                b.append(normalized.toUpperCase(Locale.ROOT));
+            } else {
+                b.append(Character.toUpperCase(p.charAt(0))).append(p.substring(1).toLowerCase(Locale.ROOT));
+            }
         }
         return b.toString();
     }

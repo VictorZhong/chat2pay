@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import type {
   ChatMessage,
+  ChatSessionDetail,
   ChatSessionSummary,
   ContentBlock,
   SendMessageRequest,
@@ -45,13 +46,84 @@ function actionLabelFromSummaryBlock(block: ContentBlock | undefined, actionId: 
   return matched?.label ?? actionId;
 }
 
-function derivePendingUiEventText(messages: ChatMessage[], payload: UiEventRequest) {
-  if (payload.eventType === 'SUBMIT_FORM') {
-    return 'Submitted payment details';
+function cleanText(value: unknown) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : null;
+}
+
+function metadataText(metadata: Record<string, unknown> | null | undefined, key: string) {
+  return cleanText(metadata?.[key]);
+}
+
+function sourceBlockFromMessages(messages: ChatMessage[], payload: UiEventRequest) {
+  const sourceMessage = messages.find((message) => message.messageId === payload.sourceMessageId);
+  return sourceMessage?.contentBlocks?.find((block) => block.blockId === payload.sourceBlockId);
+}
+
+function joinNonBlank(separator: string, ...values: Array<string | null | undefined>) {
+  const parts = values.map((value) => cleanText(value)).filter((value): value is string => Boolean(value));
+  return parts.length ? parts.join(separator) : null;
+}
+
+function describeSelectableItem(block: Extract<ContentBlock, { type: 'SELECTABLE_LIST' }>, selectedId: string) {
+  const item = block.items.find((candidate) => candidate.itemId === selectedId);
+  if (!item) return null;
+  const metadata =
+    item.metadata && typeof item.metadata === 'object' && !Array.isArray(item.metadata)
+      ? item.metadata as Record<string, unknown>
+      : null;
+  const purpose = metadataText(block.metadata as Record<string, unknown> | undefined, 'purpose');
+
+  if (purpose === 'debit-account-selection') {
+    const label = joinNonBlank(
+      ' • ',
+      metadataText(metadata, 'productDescription'),
+      metadataText(metadata, 'accountDisplay'),
+    ) ?? cleanText(item.label) ?? cleanText(item.description) ?? selectedId;
+    return `Chose debit account ${label}`;
   }
 
-  const sourceMessage = messages.find((message) => message.messageId === payload.sourceMessageId);
-  const sourceBlock = sourceMessage?.contentBlocks?.find((block) => block.blockId === payload.sourceBlockId);
+  if (purpose === 'payee-selection' || purpose === 'payee-account-selection') {
+    const accountLabel =
+      metadataText(metadata, 'displayLabel')
+      ?? joinNonBlank(' - ', metadataText(metadata, 'accountProductType'), metadataText(metadata, 'accountNumber'))
+      ?? cleanText(item.description);
+    const label = joinNonBlank(
+      ' • ',
+      metadataText(metadata, 'payeeNickName') ?? cleanText(item.label),
+      accountLabel,
+    ) ?? cleanText(item.label) ?? selectedId;
+    return `Chose payee ${label}`;
+  }
+
+  return `Chose ${cleanText(item.label) ?? selectedId}`;
+}
+
+function describeFormEvent(payload: UiEventRequest) {
+  const formValues = payload.formValues ?? {};
+  const payee = cleanText(formValues.payee);
+  const amount = cleanText(formValues.amount);
+  const paymentDate = cleanText(formValues.paymentDate);
+
+  if (Object.keys(formValues).length === 1 && paymentDate) return `Chose payment date ${paymentDate}`;
+  if (Object.keys(formValues).length === 1 && amount) return `Entered amount ${amount}`;
+  if (Object.keys(formValues).length === 1 && payee) return `Entered payee ${payee}`;
+
+  const parts = [
+    payee ? `payee ${payee}` : null,
+    amount ? `amount ${amount}` : null,
+    paymentDate ? `payment date ${paymentDate}` : null,
+  ].filter((value): value is string => Boolean(value));
+  return parts.length ? `Submitted details: ${parts.join(', ')}` : 'Submitted details';
+}
+
+function derivePendingUiEventText(messages: ChatMessage[], payload: UiEventRequest) {
+  if (payload.eventType === 'SUBMIT_FORM') {
+    return describeFormEvent(payload);
+  }
+
+  const sourceBlock = sourceBlockFromMessages(messages, payload);
   const selectedId = payload.selectedItemId ?? payload.actionValue;
 
   if (!selectedId) {
@@ -63,10 +135,51 @@ function derivePendingUiEventText(messages: ChatMessage[], payload: UiEventReque
   }
 
   if (sourceBlock?.type === 'SELECTABLE_LIST') {
-    return 'Payee chosen';
+    return describeSelectableItem(sourceBlock, selectedId) ?? 'Chose item';
   }
 
   return 'Submitted action';
+}
+
+function optimisticMessage(sessionId: string, text: string, kind: ChatMessage['kind']): ChatMessage {
+  return {
+    messageId: createId('msg_optimistic'),
+    sessionId,
+    role: 'USER',
+    kind,
+    text,
+    contentBlocks: null,
+    metadata: { optimistic: true },
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function replaceOptimisticUserMessage(messages: ChatMessage[], nextMessage: ChatMessage) {
+  const optimisticIndex = messages.findIndex(
+    (message) => message.role === 'USER' && Boolean(message.metadata?.optimistic),
+  );
+  if (optimisticIndex < 0) {
+    return messages.some((message) => message.messageId === nextMessage.messageId)
+      ? messages
+      : [...messages, nextMessage];
+  }
+  const next = [...messages];
+  next[optimisticIndex] = nextMessage;
+  return next;
+}
+
+function sessionSummaryFromDetail(session: ChatSessionDetail): ChatSessionSummary {
+  return {
+    sessionId: session.sessionId,
+    title: session.title,
+    titleLocked: session.titleLocked,
+    status: session.status,
+    state: session.state,
+    llmProvider: session.llmProvider ?? null,
+    lastMessagePreview: session.lastMessagePreview ?? null,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+  };
 }
 
 function summaryActions(block: ContentBlock) {
@@ -158,6 +271,7 @@ export function ChatWorkspacePage() {
   const clearCurrentUser = useAuthStore((state) => state.clearCurrentUser);
   const collapsed = useSidebarStore((state) => state.collapsed);
   const setCollapsed = useSidebarStore((state) => state.setCollapsed);
+  const pendingQuickActionSessionIdRef = useRef<string | null>(null);
   const [textInputOverrideKey, setTextInputOverrideKey] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ChatSessionSummary | null>(null);
 
@@ -197,6 +311,19 @@ export function ChatWorkspacePage() {
   const startChatWithMessageMutation = useMutation({
     mutationFn: async (messageText: string) => {
       const session = await chat2payClient.createChatSession(currentUser.profileId);
+      pendingQuickActionSessionIdRef.current = session.sessionId;
+      queryClient.setQueryData(queryKeys.session(currentUser.profileId, session.sessionId), session);
+      queryClient.setQueryData<ChatSessionSummary[]>(
+        queryKeys.sessions(currentUser.profileId),
+        (prev = []) =>
+          prev.some((item) => item.sessionId === session.sessionId)
+            ? prev
+            : [sessionSummaryFromDetail(session), ...prev],
+      );
+      queryClient.setQueryData<ChatMessage[]>(
+        queryKeys.messages(currentUser.profileId, session.sessionId),
+        [optimisticMessage(session.sessionId, messageText, 'TEXT')],
+      );
       navigate(`/chat/${session.sessionId}`);
       await chat2payClient.sendChatMessage(currentUser.profileId, session.sessionId, {
         messageText,
@@ -204,7 +331,15 @@ export function ChatWorkspacePage() {
       return session;
     },
     onSuccess: async (session) => {
+      pendingQuickActionSessionIdRef.current = null;
       await refreshCurrentSession(session.sessionId);
+    },
+    onError: (error) => {
+      const targetSessionId = pendingQuickActionSessionIdRef.current;
+      if (targetSessionId && !wasDisplayedInChat(error)) {
+        appendRequestError(targetSessionId, error);
+      }
+      pendingQuickActionSessionIdRef.current = null;
     },
   });
 
@@ -249,7 +384,7 @@ export function ChatWorkspacePage() {
     for await (const evt of iter) {
       if (evt.type === 'user-message') {
         queryClient.setQueryData<ChatMessage[]>(messagesKey, (prev = []) =>
-          prev.some((m) => m.messageId === evt.message.messageId) ? prev : [...prev, evt.message],
+          replaceOptimisticUserMessage(prev, evt.message),
         );
       } else if (evt.type === 'assistant-message-start') {
         pendingMessageId = evt.messageId;
@@ -332,6 +467,13 @@ export function ChatWorkspacePage() {
   });
 
   const submitUiEventMutation = useMutation({
+    onMutate: (payload) => {
+      if (!sessionId) return;
+      queryClient.setQueryData<ChatMessage[]>(queryKeys.messages(currentUser.profileId, sessionId), (prev = []) => [
+        ...prev,
+        optimisticMessage(sessionId, derivePendingUiEventText(prev, payload), 'UI_EVENT'),
+      ]);
+    },
     mutationFn: async (payload: UiEventRequest) => {
       const targetSessionId = sessionId ?? '';
       if (USE_MOCK_API) {
@@ -378,10 +520,9 @@ export function ChatWorkspacePage() {
     && !readOnly;
   const pendingUserText = sendMessageMutation.isPending
     ? sendMessageMutation.variables
-    : submitUiEventMutation.isPending
-      ? derivePendingUiEventText(messages, submitUiEventMutation.variables)
-      : undefined;
-  const showAssistantLoading = sendMessageMutation.isPending || submitUiEventMutation.isPending;
+    : undefined;
+  const showAssistantLoading =
+    sendMessageMutation.isPending || submitUiEventMutation.isPending || startChatWithMessageMutation.isPending;
 
   return (
     <main className="brand-shell flex min-h-screen flex-col gap-3 bg-transparent p-3 lg:h-screen lg:flex-row">
