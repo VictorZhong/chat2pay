@@ -16,18 +16,20 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.Currency;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Component
 public class ConversationStateMachine {
 
     private static final String DEFAULT_CURRENCY = "HKD";
-    private static final Set<String> UPPERCASE_TITLE_TOKENS = Set.of(
-            "hkd", "usd", "aud", "cad", "chf", "cny", "eur", "gbp", "jpy", "rmb", "fx", "swift", "api", "llm"
-    );
+    private static final Set<String> ISO_CURRENCY_CODES = Currency.getAvailableCurrencies().stream()
+            .map(currency -> currency.getCurrencyCode().toLowerCase(Locale.ROOT))
+            .collect(Collectors.toUnmodifiableSet());
 
     public PaymentDraft ensureDraft(SessionRecord record, String currency) {
         PaymentDraft existing = record.session().activeDraft();
@@ -119,7 +121,7 @@ public class ConversationStateMachine {
             if (p.isEmpty()) continue;
             if (!b.isEmpty()) b.append(' ');
             String normalized = p.toLowerCase(Locale.ROOT);
-            if (UPPERCASE_TITLE_TOKENS.contains(normalized)) {
+            if (ISO_CURRENCY_CODES.contains(normalized)) {
                 b.append(normalized.toUpperCase(Locale.ROOT));
             } else {
                 b.append(Character.toUpperCase(p.charAt(0))).append(p.substring(1).toLowerCase(Locale.ROOT));

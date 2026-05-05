@@ -16,10 +16,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Currency;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Asks the active LLM provider for a short (4–6 word) title that summarises the
@@ -40,9 +42,9 @@ public class SessionTitleSuggester {
     private static final int MIN_USER_MESSAGES_BEFORE_SUGGEST = 2;
     private static final int MAX_TITLE_CHARS = 100;
     private static final String FINISH_REASON_STOP = "stop";
-    private static final Set<String> UPPERCASE_TITLE_TOKENS = Set.of(
-            "hkd", "usd", "aud", "cad", "chf", "cny", "eur", "gbp", "jpy", "rmb", "fx", "swift", "api", "llm"
-    );
+    private static final Set<String> ISO_CURRENCY_CODES = Currency.getAvailableCurrencies().stream()
+            .map(currency -> currency.getCurrencyCode().toLowerCase(Locale.ROOT))
+            .collect(Collectors.toUnmodifiableSet());
 
     private final LlmRouter router;
     private final SessionStore sessions;
@@ -114,6 +116,7 @@ public class SessionTitleSuggester {
                 Read the conversation transcript and answer with a SHORT title:
                   - 4 to 8 words
                   - Title Case (e.g. "Pay Bob 500 HKD")
+                  - keep ISO currency codes and banking acronyms uppercase
                   - no punctuation other than spaces
                   - no quotes, no trailing period
                 Reply with the title only, nothing else.
@@ -180,7 +183,7 @@ public class SessionTitleSuggester {
         String[] parts = value.split("\\s+");
         for (int i = 0; i < parts.length; i++) {
             String normalized = parts[i].toLowerCase(Locale.ROOT);
-            if (UPPERCASE_TITLE_TOKENS.contains(normalized)) {
+            if (ISO_CURRENCY_CODES.contains(normalized)) {
                 parts[i] = normalized.toUpperCase(Locale.ROOT);
             }
         }

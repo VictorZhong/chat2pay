@@ -303,16 +303,27 @@ function normalize(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+function knownMockCurrencyCodes() {
+  return new Set(
+    [
+      ...REGISTERED_PAYEES.flatMap((payee) => [payee.accountLimitCurrency, payee.remittanceCurrencyCode]),
+      ...DEBIT_ACCOUNT_GROUPS.flatMap((group) =>
+        group.subAccounts.flatMap((account) => [account.currency, account.ledgerBalanceCurrency]),
+      ),
+    ]
+      .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      .map((value) => value.toLowerCase()),
+  );
+}
+
 function titleCaseWords(value: string) {
-  const uppercaseTokens = new Set([
-    'hkd', 'usd', 'aud', 'cad', 'chf', 'cny', 'eur', 'gbp', 'jpy', 'rmb', 'fx', 'swift', 'api', 'llm',
-  ]);
+  const currencyCodes = knownMockCurrencyCodes();
   return value
     .split(' ')
     .filter(Boolean)
     .map((part) => {
       const normalized = part.toLowerCase();
-      return uppercaseTokens.has(normalized)
+      return currencyCodes.has(normalized)
         ? normalized.toUpperCase()
         : part.charAt(0).toUpperCase() + part.slice(1).toLowerCase();
     })
