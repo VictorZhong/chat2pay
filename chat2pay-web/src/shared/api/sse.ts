@@ -11,6 +11,7 @@ export async function* parseSseStream(
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  let completed = false;
 
   const onAbort = () => reader.cancel().catch(() => {});
   signal?.addEventListener('abort', onAbort);
@@ -18,7 +19,10 @@ export async function* parseSseStream(
   try {
     while (true) {
       const { value, done } = await reader.read();
-      if (done) break;
+      if (done) {
+        completed = true;
+        break;
+      }
 
       buffer += decoder.decode(value, { stream: true });
 
@@ -42,6 +46,9 @@ export async function* parseSseStream(
     }
   } finally {
     signal?.removeEventListener('abort', onAbort);
+    if (!completed) {
+      await reader.cancel().catch(() => {});
+    }
     reader.releaseLock();
   }
 }

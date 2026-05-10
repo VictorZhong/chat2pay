@@ -5,6 +5,7 @@ import type {
   ChatMessage,
   ChatSessionDetail,
   ChatSessionSummary,
+  ChatTurnResponse,
   ContentBlock,
   SendMessageRequest,
   UiEventRequest,
@@ -168,6 +169,16 @@ function replaceOptimisticUserMessage(messages: ChatMessage[], nextMessage: Chat
   return next;
 }
 
+function upsertAssistantMessage(messages: ChatMessage[], nextMessage: ChatMessage) {
+  const existingIndex = messages.findIndex((message) => message.messageId === nextMessage.messageId);
+  if (existingIndex < 0) {
+    return [...messages, nextMessage];
+  }
+  const next = [...messages];
+  next[existingIndex] = nextMessage;
+  return next;
+}
+
 function sessionSummaryFromDetail(session: ChatSessionDetail): ChatSessionSummary {
   return {
     sessionId: session.sessionId,
@@ -300,6 +311,36 @@ export function ChatWorkspacePage() {
     ]);
   }
 
+  function refreshCurrentSessionInBackground(nextSessionId: string) {
+    void refreshCurrentSession(nextSessionId).catch((error) => {
+      console.warn('[chat2pay] session refresh failed', error);
+    });
+  }
+
+  function setSessionCaches(session: ChatSessionDetail) {
+    queryClient.setQueryData(queryKeys.session(currentUser.profileId, session.sessionId), session);
+    queryClient.setQueryData<ChatSessionSummary[]>(
+      queryKeys.sessions(currentUser.profileId),
+      (prev = []) => {
+        const summary = sessionSummaryFromDetail(session);
+        return prev.some((item) => item.sessionId === session.sessionId)
+          ? prev.map((item) => (item.sessionId === session.sessionId ? summary : item))
+          : [summary, ...prev];
+      },
+    );
+  }
+
+  function applyTurnResponse(nextSessionId: string, turn: ChatTurnResponse) {
+    const messagesKey = queryKeys.messages(currentUser.profileId, nextSessionId);
+    queryClient.setQueryData<ChatMessage[]>(messagesKey, (prev = []) => {
+      const withUserMessage = turn.userMessage
+        ? replaceOptimisticUserMessage(prev, turn.userMessage)
+        : prev;
+      return upsertAssistantMessage(withUserMessage, turn.assistantMessage);
+    });
+    setSessionCaches(turn.session);
+  }
+
   const createSessionMutation = useMutation({
     mutationFn: () => chat2payClient.createChatSession(currentUser.profileId),
     onSuccess: async (session) => {
@@ -325,14 +366,15 @@ export function ChatWorkspacePage() {
         [optimisticMessage(session.sessionId, messageText, 'TEXT')],
       );
       navigate(`/chat/${session.sessionId}`);
-      await chat2payClient.sendChatMessage(currentUser.profileId, session.sessionId, {
+      const turn = await chat2payClient.sendChatMessage(currentUser.profileId, session.sessionId, {
         messageText,
       });
+      applyTurnResponse(session.sessionId, turn);
       return session;
     },
-    onSuccess: async (session) => {
+    onSuccess: (session) => {
       pendingQuickActionSessionIdRef.current = null;
-      await refreshCurrentSession(session.sessionId);
+      refreshCurrentSessionInBackground(session.sessionId);
     },
     onError: (error) => {
       const targetSessionId = pendingQuickActionSessionIdRef.current;
@@ -414,9 +456,9 @@ export function ChatWorkspacePage() {
         );
       } else if (evt.type === 'assistant-message-complete') {
         queryClient.setQueryData<ChatMessage[]>(messagesKey, (prev = []) =>
-          prev.map((m) => (m.messageId === evt.message.messageId ? evt.message : m)),
+          upsertAssistantMessage(prev, evt.message),
         );
-        queryClient.setQueryData(queryKeys.session(currentUser.profileId, nextSessionId), evt.session);
+        setSessionCaches(evt.session);
       } else if (evt.type === 'turn-error') {
         const errorMessage = turnErrorMessage(nextSessionId, evt);
         queryClient.setQueryData<ChatMessage[]>(messagesKey, (prev = []) => {
@@ -448,15 +490,17 @@ export function ChatWorkspacePage() {
       const payload: SendMessageRequest = { messageText };
       if (USE_MOCK_API) {
         await wait(INTERACTION_DELAY_MS);
-        return chat2payClient.sendChatMessage(currentUser.profileId, targetSessionId, payload);
+        const turn = await chat2payClient.sendChatMessage(currentUser.profileId, targetSessionId, payload);
+        applyTurnResponse(targetSessionId, turn);
+        return turn;
       }
       const iter = chat2payClient.streamChatMessage(currentUser.profileId, targetSessionId, payload);
       await consumeTurnStream(targetSessionId, iter);
       return null;
     },
-    onSuccess: async () => {
+    onSuccess: () => {
       if (sessionId) {
-        await refreshCurrentSession(sessionId);
+        refreshCurrentSessionInBackground(sessionId);
       }
     },
     onError: (error) => {
@@ -478,15 +522,17 @@ export function ChatWorkspacePage() {
       const targetSessionId = sessionId ?? '';
       if (USE_MOCK_API) {
         await wait(INTERACTION_DELAY_MS);
-        return chat2payClient.submitUiEvent(currentUser.profileId, targetSessionId, payload);
+        const turn = await chat2payClient.submitUiEvent(currentUser.profileId, targetSessionId, payload);
+        applyTurnResponse(targetSessionId, turn);
+        return turn;
       }
       const iter = chat2payClient.streamUiEvent(currentUser.profileId, targetSessionId, payload);
       await consumeTurnStream(targetSessionId, iter);
       return null;
     },
-    onSuccess: async () => {
+    onSuccess: () => {
       if (sessionId) {
-        await refreshCurrentSession(sessionId);
+        refreshCurrentSessionInBackground(sessionId);
       }
     },
     onError: (error) => {

@@ -232,7 +232,11 @@ export async function* streamChatTurn(
       payload,
     });
 
-    yield normalizeTurnStreamEvent({ type: frame.event, ...payload } as TurnStreamEvent);
+    const event = normalizeTurnStreamEvent({ type: frame.event, ...payload } as TurnStreamEvent);
+    yield event;
+    if (event.type === 'assistant-message-complete' || event.type === 'turn-error') {
+      return;
+    }
   }
 }
 
